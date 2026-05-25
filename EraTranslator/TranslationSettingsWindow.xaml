@@ -282,6 +282,110 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="EzTransXP">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <GroupBox Header="설치 상태" Padding="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="설치 경로" />
+                            <TextBox Grid.Row="0"
+                                     Grid.Column="1"
+                                     Margin="0,0,8,8"
+                                     Text="{Binding EzTransInstallationPath, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Grid.Row="0"
+                                    Grid.Column="2"
+                                    Width="84"
+                                    Margin="0,0,0,8"
+                                    Click="RefreshEzTransStatus_Click"
+                                    Content="다시 확인" />
+
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Top"
+                                       Text="설치 판정" />
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="1"
+                                       Grid.ColumnSpan="2"
+                                       Margin="0,0,0,8"
+                                       Text="{Binding EzTransStatusText}"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,0"
+                                       VerticalAlignment="Top"
+                                       Text="엔진 상세" />
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="1"
+                                       Grid.ColumnSpan="2"
+                                       Text="{Binding EzTransEngineText}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="1"
+                              Margin="0,12,0,0"
+                              Header="워커 프로세스"
+                              Padding="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="동시 실행 개수" />
+                            <ComboBox Grid.Row="0"
+                                      Grid.Column="1"
+                                      Margin="0,0,0,8"
+                                      ItemsSource="{Binding EzTransProcessCountOptions}"
+                                      SelectedItem="{Binding EzTransProcessCount}" />
+
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="0"
+                                       Grid.ColumnSpan="2"
+                                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                       Text="EzTransXP 전용 워커 하위 프로세스를 여러 개 띄워 병렬 번역합니다. EzTransXP를 사용할 때는 배치 크기가 워커 수보다 작지 않도록 자동 보정됩니다."
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </GroupBox>
+
+                    <TextBlock Grid.Row="2"
+                               Margin="0,12,0,0"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="기본 경로를 비워두면 레지스트리의 ChangShin\\ezTrans 경로를 우선 사용합니다. 포터블 설치본이면 직접 폴더 경로를 지정하세요."
+                               TextWrapping="Wrap" />
+                </Grid>
+            </TabItem>
+
             <TabItem Header="프롬프트">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>

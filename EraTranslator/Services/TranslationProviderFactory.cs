@@ -23,7 +23,7 @@ public sealed class TranslationProviderFactory : ITranslationProviderFactory
             TranslationProviderType.DeepLFree => new DeepLTranslationProvider(_httpClientFactory, logger),
             TranslationProviderType.DeepLPro => new DeepLTranslationProvider(_httpClientFactory, logger),
             TranslationProviderType.Papago => new PapagoTranslationProvider(_httpClientFactory, logger),
-            TranslationProviderType.EzTransXp => new EzTransXpTranslationProvider(),
+            TranslationProviderType.EzTransXp => new EzTransXpTranslationProvider(logger: logger),
             _ => throw new NotSupportedException($"지원되지 않는 공급자입니다: {settings.ProviderType}"),
         };
     }

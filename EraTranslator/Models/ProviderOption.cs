@@ -8,5 +8,5 @@ public sealed class ProviderOption
 
     public required bool IsAvailable { get; init; }
 
-    public string AvailabilityText => IsAvailable ? string.Empty : "준비 중";
+    public string AvailabilityText { get; init; } = string.Empty;
 }

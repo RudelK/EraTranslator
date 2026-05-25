@@ -35,4 +35,20 @@ HTML_PRINT @"<nonbutton title='補足'>本文</nonbutton>"
         Assert.DoesNotContain(values, value => value.Contains("<button", StringComparison.Ordinal));
         Assert.DoesNotContain(values, value => value.Contains("<nonbutton", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Extract_SkipsQuotedSymbolExpressions()
+    {
+        const string source = """
+PRINTFORMW "ABL:index:従順 * 10 + ABL:index:精神依存 * 5 + EXP:index:愛情経験 + CFLAG:index:依存度"
+PRINTFORMW "従順이 높다"
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain("ABL:index:従順 * 10 + ABL:index:精神依存 * 5 + EXP:index:愛情経験 + CFLAG:index:依存度", values);
+        Assert.Contains("従順이 높다", values);
+    }
 }

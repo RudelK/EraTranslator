@@ -1,6 +1,11 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using EraTranslator.Models;
 using EraTranslator.ViewModels;
 using Forms = System.Windows.Forms;
+using WpfBinding = System.Windows.Data.Binding;
+using WpfTextBox = System.Windows.Controls.TextBox;
 using Win32 = Microsoft.Win32;
 
 namespace EraTranslator;
@@ -161,5 +166,24 @@ public partial class MainWindow : Window
         }
 
         dictionaryViewModel.RestorePersistedEntries();
+    }
+
+    private void TranslationGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+    {
+        if (e.EditAction != DataGridEditAction.Commit
+            || e.Row.Item is not ExtractedTextItem item
+            || e.Column is not DataGridBoundColumn boundColumn
+            || boundColumn.Binding is not WpfBinding binding
+            || !string.Equals(binding.Path?.Path, nameof(ExtractedTextItem.TranslatedText), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (e.EditingElement is WpfTextBox textBox)
+        {
+            item.TranslatedText = textBox.Text;
+        }
+
+        _viewModel.HandleTranslatedTextEdited(item);
     }
 }

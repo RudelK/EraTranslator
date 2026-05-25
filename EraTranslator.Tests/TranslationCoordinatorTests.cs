@@ -135,7 +135,7 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
-    public async Task TranslateAsync_MarksPercentPlaceholderDamageAsValidationFailure()
+    public async Task TranslateAsync_MarksPercentPlaceholderDamageAsReviewNeededWithoutSaving()
     {
         var provider = new SequencedProvider(requests =>
         {
@@ -164,8 +164,10 @@ public sealed class TranslationCoordinatorTests
             null,
             CancellationToken.None);
 
-        Assert.Equal("검증 실패", items[0].Status);
+        Assert.Equal("검수 필요", items[0].Status);
         Assert.Equal("변수 삽입 손상", items[0].ValidationStatus);
+        Assert.False(items[0].CanSave);
+        Assert.Equal("__PH1__ 마을 __PH0__", items[0].TranslatedText);
     }
 
     [Fact]
@@ -275,6 +277,53 @@ public sealed class TranslationCoordinatorTests
         Assert.Equal("통과", items[0].ValidationStatus);
         Assert.Equal("대체 후보가 함께 출력되어 검토가 필요합니다.", items[0].TranslationError);
         Assert.Equal("파이판(무모/제모 상태)", items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_EzTransUsesProcessCountToExpandBatch()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            foreach (var request in requests)
+            {
+                result.Translations[request.Id] = $"{request.Text}-번역";
+            }
+
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "첫째"),
+            BuildItem("id-2", "둘째"),
+            BuildItem("id-3", "셋째"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.EzTransXp,
+                BatchSize = 1,
+                EzTransProcessCount = 3,
+                RetryCount = 0,
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Single(provider.RequestHistory);
+        Assert.Equal(["id-1", "id-2", "id-3"], provider.RequestHistory[0]);
+        Assert.All(items, item =>
+        {
+            Assert.False(item.NeedsTranslation);
+            Assert.True(item.CanSave);
+            Assert.False(string.IsNullOrWhiteSpace(item.TranslatedText));
+        });
     }
 
     private static ExtractedTextItem BuildItem(string segmentId, string originalText)

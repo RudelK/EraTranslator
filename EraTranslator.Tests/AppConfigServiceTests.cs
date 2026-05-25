@@ -40,6 +40,8 @@ public sealed class AppConfigServiceTests : IDisposable
             RetryPromptTemplate = "retry",
             PapagoClientId = "papago-id",
             PapagoClientSecret = "papago-secret",
+            EzTransInstallationPath = @"C:\Utils\ezTransXPggudor",
+            EzTransProcessCount = 4,
             ProviderApiKeys = new Dictionary<TranslationProviderType, string>
             {
                 [TranslationProviderType.OpenAi] = "openai-key",
@@ -70,6 +72,8 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.RetryPromptTemplate, actual.RetryPromptTemplate);
         Assert.Equal(expected.PapagoClientId, actual.PapagoClientId);
         Assert.Equal(expected.PapagoClientSecret, actual.PapagoClientSecret);
+        Assert.Equal(expected.EzTransInstallationPath, actual.EzTransInstallationPath);
+        Assert.Equal(expected.EzTransProcessCount, actual.EzTransProcessCount);
         Assert.Equal("openai-key", actual.ProviderApiKeys[TranslationProviderType.OpenAi]);
         Assert.DoesNotContain("openai-key", configText, StringComparison.Ordinal);
         Assert.DoesNotContain("papago-secret", configText, StringComparison.Ordinal);

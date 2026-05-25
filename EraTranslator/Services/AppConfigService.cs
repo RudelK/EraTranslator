@@ -49,6 +49,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
                 PapagoClientId = loaded.PapagoClientId,
                 PapagoClientSecret = mergedSecrets.PapagoClientSecret,
+                EzTransInstallationPath = loaded.EzTransInstallationPath,
+                EzTransProcessCount = loaded.EzTransProcessCount,
                 ProviderApiKeys = mergedSecrets.ProviderApiKeys,
             };
 
@@ -98,6 +100,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
             PapagoClientId = config.PapagoClientId,
+            EzTransInstallationPath = config.EzTransInstallationPath,
+            EzTransProcessCount = config.EzTransProcessCount,
         };
 
         var json = JsonSerializer.Serialize(sanitized, JsonOptions);
@@ -150,6 +154,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
             ExcludeNonSourceText = config.ExcludeNonSourceText,
             PapagoClientId = config.PapagoClientId,
             PapagoClientSecret = secrets.PapagoClientSecret,
+            EzTransInstallationPath = config.EzTransInstallationPath,
+            EzTransProcessCount = config.EzTransProcessCount,
             ProviderApiKeys = new Dictionary<TranslationProviderType, string>(secrets.ProviderApiKeys),
         };
     }
@@ -202,5 +208,9 @@ public sealed class AppConfigService(string? baseDirectory = null)
         public bool ExcludeNonSourceText { get; init; }
 
         public string PapagoClientId { get; init; } = string.Empty;
+
+        public string EzTransInstallationPath { get; init; } = string.Empty;
+
+        public int EzTransProcessCount { get; init; } = 1;
     }
 }

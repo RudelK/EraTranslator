@@ -38,5 +38,9 @@ public sealed class AppConfig
 
     public string PapagoClientSecret { get; init; } = string.Empty;
 
+    public string EzTransInstallationPath { get; init; } = string.Empty;
+
+    public int EzTransProcessCount { get; init; } = 1;
+
     public Dictionary<TranslationProviderType, string> ProviderApiKeys { get; init; } = [];
 }

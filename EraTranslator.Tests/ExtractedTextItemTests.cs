@@ -80,7 +80,7 @@ public sealed class ExtractedTextItemTests
 
         item.ApplyManualStatusOverride("검증 실패");
 
-        Assert.Equal("검증 실패", item.Status);
+        Assert.Equal("검수 필요", item.Status);
         Assert.Equal("검증 실패", item.ValidationStatus);
         Assert.False(item.CanSave);
     }
@@ -114,5 +114,36 @@ public sealed class ExtractedTextItemTests
         Assert.Contains(nameof(ExtractedTextItem.StateText), changedProperties);
         Assert.Contains(nameof(ExtractedTextItem.HasPersistableState), changedProperties);
         Assert.DoesNotContain(string.Empty, changedProperties);
+    }
+
+    [Fact]
+    public void NeedsTranslation_IsTrueForPendingFailedOrStoppedStatesOnly()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        Assert.True(item.NeedsTranslation);
+
+        item.ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
+        Assert.True(item.NeedsTranslation);
+
+        item.ApplyTranslationState("중지됨", "검증 전", "stopped", false);
+        Assert.True(item.NeedsTranslation);
+
+        item.ApplyTranslationState("검수 필요", "토큰 손실", "review", false, "번역");
+        Assert.False(item.NeedsTranslation);
+
+        item.ApplyTranslationState("검수 필요", "통과", "review", true, "번역");
+        Assert.False(item.NeedsTranslation);
     }
 }

@@ -6,6 +6,7 @@ namespace EraTranslator.ViewModels;
 public sealed class TranslationSettingsViewModel : BindableBase
 {
     private readonly ModelCatalogService _modelCatalogService = new();
+    private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
     private ProviderOption? _selectedProviderOption;
     private string _baseUrl = string.Empty;
@@ -22,17 +23,26 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
     private string _papagoClientSecret = string.Empty;
+    private string _ezTransInstallationPath = string.Empty;
+    private int _ezTransProcessCount = 1;
+    private string _ezTransStatusText = "EzTransXP 설치 상태를 확인하세요.";
+    private string _ezTransEngineText = string.Empty;
     private string _statusText = "공급자와 연결 정보를 확인하세요.";
     private bool _isLoadingModels;
 
-    public TranslationSettingsViewModel(IEnumerable<ProviderOption> providerOptions)
+    public TranslationSettingsViewModel(
+        IEnumerable<ProviderOption> providerOptions,
+        EzTransXpInstallationService? ezTransXpInstallationService = null)
     {
+        _ezTransXpInstallationService = ezTransXpInstallationService ?? new EzTransXpInstallationService();
         ProviderOptions = new ObservableCollection<ProviderOption>(providerOptions.Select(option => new ProviderOption
         {
             ProviderType = option.ProviderType,
             DisplayName = option.DisplayName,
             IsAvailable = option.IsAvailable,
+            AvailabilityText = option.AvailabilityText,
         }));
+        RefreshEzTransInstallationStatus();
     }
 
     public ObservableCollection<ProviderOption> ProviderOptions { get; }
@@ -42,6 +52,8 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public IReadOnlyList<int> BatchSizeOptions { get; } = [1, 2, 5, 10, 15, 20, 30, 50];
 
     public IReadOnlyList<int> RetryCountOptions { get; } = [0, 1, 2, 3, 5, 10];
+
+    public IReadOnlyList<int> EzTransProcessCountOptions { get; } = [1, 2, 3, 4, 6, 8, 12, 16];
 
     public ProviderOption? SelectedProviderOption
     {
@@ -58,6 +70,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
                 RaisePropertyChanged(nameof(CanLoadModels));
                 RaisePropertyChanged(nameof(SupportsThinkingToggle));
                 RaisePropertyChanged(nameof(ProviderHelpText));
+                RaisePropertyChanged(nameof(UsesEzTransXp));
             }
         }
     }
@@ -172,6 +185,36 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set => SetProperty(ref _papagoClientSecret, value);
     }
 
+    public string EzTransInstallationPath
+    {
+        get => _ezTransInstallationPath;
+        set
+        {
+            if (SetProperty(ref _ezTransInstallationPath, value))
+            {
+                RefreshEzTransInstallationStatus();
+            }
+        }
+    }
+
+    public int EzTransProcessCount
+    {
+        get => _ezTransProcessCount;
+        set => SetProperty(ref _ezTransProcessCount, Math.Clamp(value, 1, 16));
+    }
+
+    public string EzTransStatusText
+    {
+        get => _ezTransStatusText;
+        set => SetProperty(ref _ezTransStatusText, value);
+    }
+
+    public string EzTransEngineText
+    {
+        get => _ezTransEngineText;
+        set => SetProperty(ref _ezTransEngineText, value);
+    }
+
     public string StatusText
     {
         get => _statusText;
@@ -206,6 +249,8 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public bool UsesPapagoCredentials => SelectedProviderOption?.ProviderType == TranslationProviderType.Papago;
 
+    public bool UsesEzTransXp => SelectedProviderOption?.ProviderType == TranslationProviderType.EzTransXp;
+
     public string ProviderHelpText => SelectedProviderOption?.ProviderType switch
     {
         TranslationProviderType.OpenAi => "OpenAI 호환 `/models` 엔드포인트에서 모델 목록을 불러옵니다.",
@@ -213,7 +258,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         TranslationProviderType.DeepLFree => "DeepL Free 엔드포인트를 사용합니다. API Key는 Free 계정용 키를 입력하세요.",
         TranslationProviderType.DeepLPro => "DeepL Pro 엔드포인트를 사용합니다. API Key는 유료 계정용 키를 입력하세요.",
         TranslationProviderType.Papago => "Papago는 모델 목록 조회를 지원하지 않습니다.",
-        TranslationProviderType.EzTransXp => "EzTransXP는 후속 phase에서 연동 예정입니다.",
+        TranslationProviderType.EzTransXp => "EzTransXP는 로컬 설치본을 사용합니다. 설치 경로와 워커 프로세스 수를 EzTransXP 탭에서 확인하세요.",
         _ => string.Empty,
     };
 
@@ -238,8 +283,11 @@ public sealed class TranslationSettingsViewModel : BindableBase
         RetryPromptTemplate = source.RetryPromptTemplate;
         PapagoClientId = source.PapagoClientId;
         PapagoClientSecret = source.PapagoClientSecret;
+        EzTransInstallationPath = source.EzTransInstallationPath;
+        EzTransProcessCount = source.EzTransProcessCount;
         StatusText = "현재 설정을 불러왔습니다.";
         RaisePropertyChanged(nameof(ApiKey));
+        RefreshEzTransInstallationStatus();
     }
 
     public async Task LoadModelsAsync(CancellationToken cancellationToken)
@@ -300,7 +348,35 @@ public sealed class TranslationSettingsViewModel : BindableBase
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
             PapagoClientSecret = PapagoClientSecret,
+            EzTransInstallationPath = EzTransInstallationPath,
+            EzTransProcessCount = EzTransProcessCount,
         };
+    }
+
+    public bool ValidateBeforeSave()
+    {
+        if (!UsesEzTransXp)
+        {
+            return true;
+        }
+
+        var info = _ezTransXpInstallationService.Detect(EzTransInstallationPath);
+        if (info.IsAvailable)
+        {
+            return true;
+        }
+
+        StatusText = info.StatusText;
+        return false;
+    }
+
+    public void RefreshEzTransInstallationStatus()
+    {
+        var info = _ezTransXpInstallationService.Detect(EzTransInstallationPath);
+        EzTransStatusText = info.StatusText;
+        EzTransEngineText = info.IsAvailable
+            ? $"{Path.GetFileName(info.EnginePath)} / Dat={info.DatPath} / {(info.UsesEnhancedEngine ? "Ehnd 사용" : "기본 엔진 사용")}"
+            : "엔진 DLL 또는 Dat 폴더를 확인하세요.";
     }
 
     public void ResetPromptTemplates()

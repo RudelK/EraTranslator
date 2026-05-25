@@ -495,7 +495,7 @@ public sealed partial class ErbReferenceExtractor
     private static bool IsReferenceDelimiter(char ch)
     {
         return char.IsWhiteSpace(ch)
-            || ch is ',' or ')' or '(' or ']' or '[' or '+' or '-' or '*' or '/' or '<' or '>' or '=' or '!' or '&' or '|' or '%' or '"' or '\'';
+            || ch is ':' or ',' or ')' or '(' or ']' or '[' or '+' or '-' or '*' or '/' or '<' or '>' or '=' or '!' or '&' or '|' or '%' or '"' or '\'';
     }
 
     private static bool ShouldTreatAsSymbolKey(string value)

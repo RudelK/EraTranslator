@@ -33,4 +33,8 @@ public sealed class ProviderSettings
     public string PapagoClientId { get; init; } = string.Empty;
 
     public string PapagoClientSecret { get; init; } = string.Empty;
+
+    public string EzTransInstallationPath { get; init; } = string.Empty;
+
+    public int EzTransProcessCount { get; init; } = 1;
 }

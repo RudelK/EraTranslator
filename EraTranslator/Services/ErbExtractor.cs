@@ -168,7 +168,9 @@ public sealed partial class ErbExtractor
 
             void AddSegment(string type, int relativeStart, string value)
             {
-                if (!TextHeuristics.ContainsTranslatableText(value) || TextHeuristics.LooksLikeCodeOnly(value))
+                if (!TextHeuristics.ContainsTranslatableText(value)
+                    || TextHeuristics.LooksLikeCodeOnly(value)
+                    || TextHeuristics.LooksLikeErbSymbolExpression(value))
                 {
                     return;
                 }

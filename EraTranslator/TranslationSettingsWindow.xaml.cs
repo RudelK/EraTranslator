@@ -29,6 +29,11 @@ public partial class TranslationSettingsWindow : Window
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (!_viewModel.ValidateBeforeSave())
+        {
+            return;
+        }
+
         DialogResult = true;
     }
 
@@ -40,6 +45,11 @@ public partial class TranslationSettingsWindow : Window
     private void ResetPrompts_Click(object sender, RoutedEventArgs e)
     {
         _viewModel.ResetPromptTemplates();
+    }
+
+    private void RefreshEzTransStatus_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.RefreshEzTransInstallationStatus();
     }
 
     private void ApiKeyPasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)

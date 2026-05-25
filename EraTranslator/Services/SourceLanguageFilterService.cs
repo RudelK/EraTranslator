@@ -44,7 +44,7 @@ public sealed class SourceLanguageFilterService
     private static bool ShouldAutoExclude(ExtractedTextItem item)
     {
         return string.IsNullOrWhiteSpace(item.TranslatedText)
-            && item.Status is "대기" or "번역 실패" or "검증 실패" or "중지됨";
+            && item.Status is "대기" or "번역 실패" or "중지됨";
     }
 
     private static bool TryRestoreAutoExcluded(ExtractedTextItem item)

@@ -46,4 +46,19 @@ public sealed class CsvExtractorTests
             && segment.SymbolNamespace == "CFLAG"
             && segment.OriginalSymbolKey == "外見年齢");
     }
+
+    [Fact]
+    public void Extract_SkipsNumericOnlyFieldsEvenWhenTheyAreKeys()
+    {
+        var extractor = new CsvExtractor();
+        var content = "10,奴隷候補設定変更チケット,2000000\nフラグ,12345,18";
+
+        var result = extractor.Extract("CSV/Mixed.csv", "CSV/Mixed.csv", content);
+
+        Assert.DoesNotContain(result.segments, segment => segment.OriginalText == "10");
+        Assert.DoesNotContain(result.segments, segment => segment.OriginalText == "2000000");
+        Assert.DoesNotContain(result.segments, segment => segment.OriginalText == "12345");
+        Assert.DoesNotContain(result.segments, segment => segment.OriginalText == "18");
+        Assert.Contains(result.segments, segment => segment.OriginalText == "奴隷候補設定変更チケット");
+    }
 }

@@ -35,6 +35,11 @@ public sealed class CsvExtractor
                     continue;
                 }
 
+                if (TextHeuristics.IsNumericLike(field.Value))
+                {
+                    continue;
+                }
+
                 if (!classification.IsReferenceBearingKey && !TextHeuristics.ContainsTranslatableText(field.Value))
                 {
                     continue;

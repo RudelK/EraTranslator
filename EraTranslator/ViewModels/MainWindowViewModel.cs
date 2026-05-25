@@ -14,8 +14,10 @@ public sealed class MainWindowViewModel : BindableBase
     private readonly DebouncedAppConfigCoordinator _appConfigCoordinator;
     private readonly UserDictionaryService _userDictionaryService;
     private readonly ProjectStatePersistenceService _projectStatePersistenceService;
+    private readonly TranslationProgressCarryoverService _translationProgressCarryoverService;
     private readonly TranslationTextExchangeService _translationTextExchangeService;
     private readonly SourceLanguageFilterService _sourceLanguageFilterService;
+    private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
     private ScanSession? _session;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -51,6 +53,8 @@ public sealed class MainWindowViewModel : BindableBase
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
     private string _papagoClientSecret = string.Empty;
+    private string _ezTransInstallationPath = string.Empty;
+    private int _ezTransProcessCount = 1;
     private bool _suppressItemStatePersistence;
     private string _activeProjectDataDirectory = string.Empty;
 
@@ -62,9 +66,11 @@ public sealed class MainWindowViewModel : BindableBase
         DebouncedAppConfigCoordinator? appConfigCoordinator = null,
         UserDictionaryService? userDictionaryService = null,
         ScanSessionStateService? scanSessionStateService = null,
+        TranslationProgressCarryoverService? translationProgressCarryoverService = null,
         TranslationTextExchangeService? translationTextExchangeService = null,
         SourceLanguageFilterService? sourceLanguageFilterService = null,
         TranslationProgressStateService? translationProgressStateService = null,
+        EzTransXpInstallationService? ezTransXpInstallationService = null,
         bool detectSampleDirectory = true,
         bool restoreLastSessionOnStartup = true)
     {
@@ -77,12 +83,14 @@ public sealed class MainWindowViewModel : BindableBase
         _projectStatePersistenceService = new ProjectStatePersistenceService(
             scanSessionStateService ?? new ScanSessionStateService(),
             translationProgressStateService ?? new TranslationProgressStateService());
+        _translationProgressCarryoverService = translationProgressCarryoverService ?? new TranslationProgressCarryoverService();
         _translationTextExchangeService = translationTextExchangeService ?? new TranslationTextExchangeService();
         _sourceLanguageFilterService = sourceLanguageFilterService ?? new SourceLanguageFilterService();
+        _ezTransXpInstallationService = ezTransXpInstallationService ?? new EzTransXpInstallationService();
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
         FileTypeFilters = ["전체", "ERB", "CSV"];
-        StatusFilters = ["전체", "대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패", "검증 실패"];
+        StatusFilters = ["전체", "대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
         SaveModeOptions = [SaveMode.ExportCopy, SaveMode.InPlaceWithBackup];
         ItemsView = CollectionViewSource.GetDefaultView(Items);
         ItemsView.Filter = FilterItem;
@@ -115,7 +123,7 @@ public sealed class MainWindowViewModel : BindableBase
 
     public IReadOnlyList<string> StatusFilters { get; }
 
-    public IReadOnlyList<string> EditableStatusOptions { get; } = ["대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패", "검증 실패"];
+    public IReadOnlyList<string> EditableStatusOptions { get; } = ["대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
 
     public IReadOnlyList<SaveMode> SaveModeOptions { get; }
 
@@ -326,6 +334,30 @@ public sealed class MainWindowViewModel : BindableBase
         set
         {
             if (SetProperty(ref _papagoClientSecret, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public string EzTransInstallationPath
+    {
+        get => _ezTransInstallationPath;
+        set
+        {
+            if (SetProperty(ref _ezTransInstallationPath, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public int EzTransProcessCount
+    {
+        get => _ezTransProcessCount;
+        set
+        {
+            if (SetProperty(ref _ezTransProcessCount, Math.Clamp(value, 1, 16)))
             {
                 PersistConfig();
             }
@@ -603,6 +635,9 @@ public sealed class MainWindowViewModel : BindableBase
             "ERB/CSV 파일을 스캔 중입니다...",
             async cancellationToken =>
             {
+                var projectDataDirectory = GetProjectDataDirectory();
+                var previousSession = _projectStatePersistenceService.LoadScanSession(projectDataDirectory);
+                var previousProgress = _projectStatePersistenceService.LoadTranslationProgress(projectDataDirectory);
                 ProgressValue = 0.1;
                 CurrentOperationDetail = "스캔 준비 중";
                 var scanProgress = new Progress<(double value, string detail)>(tuple =>
@@ -611,9 +646,9 @@ public sealed class MainWindowViewModel : BindableBase
                     CurrentOperationDetail = tuple.detail;
                 });
                 var session = await Task.Run(() => _fileScanner.Scan(GameDirectory, scanProgress, cancellationToken), cancellationToken);
-                ApplySession(session, restoreProgress: true);
-                _projectStatePersistenceService.SaveScanSession(session, GetProjectDataDirectory());
-                var restoredCount = Items.Count(item => item.HasPersistableState);
+                var restoreResult = ApplySession(session, restoreProgress: false, previousSession, previousProgress);
+                _projectStatePersistenceService.SaveScanSession(session, projectDataDirectory);
+                SaveTranslationProgress();
 
                 SummaryText =
                     $"문서 {session.Metrics.GetValueOrDefault("Documents")}개, " +
@@ -623,8 +658,8 @@ public sealed class MainWindowViewModel : BindableBase
                     $"경고 {session.Metrics.GetValueOrDefault("Warnings")}건, " +
                     $"조사 패턴 {session.Metrics.GetValueOrDefault("JosaPatterns")}건";
 
-                StatusText = restoredCount > 0
-                    ? $"스캔이 완료되었습니다. 이전 번역 상태 {restoredCount}개를 복원했습니다."
+                StatusText = restoreResult.RestoredCount > 0
+                    ? $"스캔이 완료되었습니다. 이전 번역 상태 {restoreResult.ExactRestoredCount}개 정확 복원, {restoreResult.HeuristicRestoredCount}개 업데이트 승계, {restoreResult.UnmatchedCount}개 신규/변경 항목입니다."
                     : "스캔이 완료되었습니다.";
                 CurrentOperationDetail = $"스캔 완료: {session.Metrics.GetValueOrDefault("Documents")}개 문서";
                 ProgressValue = 1.0;
@@ -683,8 +718,8 @@ public sealed class MainWindowViewModel : BindableBase
         var pendingCount = translationScope.Count(item => item.NeedsTranslation);
         if (pendingCount == 0)
         {
-            StatusText = "미번역 또는 실패 항목이 없습니다.";
-            CurrentOperationDetail = "모든 항목이 이미 번역 완료 상태입니다.";
+            StatusText = "미번역 또는 번역 실패 항목이 없습니다.";
+            CurrentOperationDetail = "자동 번역 대상 항목이 없습니다.";
             return;
         }
 
@@ -713,7 +748,7 @@ public sealed class MainWindowViewModel : BindableBase
                 var completedCount = translationScope.Count(item => item.IsTranslatedSuccessfully);
                 StatusText = remainingCount == 0
                     ? $"번역이 완료되었습니다. 완료 {completedCount}개"
-                    : $"번역이 일시 중단 없이 끝났지만 미완료 항목 {remainingCount}개가 남았습니다.";
+                    : $"번역이 끝났지만 자동 재번역 대상 항목 {remainingCount}개가 남았습니다.";
                 var firstRemaining = translationScope.FirstOrDefault(item => item.NeedsTranslation);
                 CurrentOperationDetail = firstRemaining is null
                     ? "번역 작업 완료"
@@ -721,7 +756,7 @@ public sealed class MainWindowViewModel : BindableBase
                 ProgressValue = 1.0;
                 ItemsView.Refresh();
             },
-            cancelStatusText: "번역이 중지되었습니다. 다시 시작하면 미번역 또는 실패 항목부터 이어집니다.",
+            cancelStatusText: "번역이 중지되었습니다. 다시 시작해도 미번역 또는 번역 실패 항목만 이어집니다.",
             cancelDetailText: "현재 번역 상태를 저장했습니다.");
     }
 
@@ -952,9 +987,16 @@ public sealed class MainWindowViewModel : BindableBase
         CurrentOperationDetail = replaceViewModel.UseRegex ? "정규식 전역 치환 적용" : "일반 텍스트 전역 치환 적용";
     }
 
+    public void HandleTranslatedTextEdited(ExtractedTextItem item)
+    {
+        item.ApplyManualTranslationEdit();
+        ItemsView.Refresh();
+        SaveTranslationProgress();
+    }
+
     public TranslationSettingsViewModel CreateTranslationSettingsViewModel()
     {
-        var viewModel = new TranslationSettingsViewModel(ProviderOptions);
+        var viewModel = new TranslationSettingsViewModel(ProviderOptions, _ezTransXpInstallationService);
         viewModel.LoadFrom(this);
         return viewModel;
     }
@@ -988,6 +1030,8 @@ public sealed class MainWindowViewModel : BindableBase
         RetryPromptTemplate = settingsViewModel.RetryPromptTemplate;
         PapagoClientId = settingsViewModel.PapagoClientId;
         PapagoClientSecret = settingsViewModel.PapagoClientSecret;
+        EzTransInstallationPath = settingsViewModel.EzTransInstallationPath;
+        EzTransProcessCount = settingsViewModel.EzTransProcessCount;
         RaisePropertyChanged(nameof(TranslationSettingsSummary));
         PersistConfig();
     }
@@ -1021,6 +1065,8 @@ public sealed class MainWindowViewModel : BindableBase
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
             PapagoClientSecret = PapagoClientSecret,
+            EzTransInstallationPath = EzTransInstallationPath,
+            EzTransProcessCount = EzTransProcessCount,
         };
     }
 
@@ -1161,6 +1207,8 @@ public sealed class MainWindowViewModel : BindableBase
 
             PapagoClientId = config.PapagoClientId;
             PapagoClientSecret = config.PapagoClientSecret;
+            EzTransInstallationPath = config.EzTransInstallationPath;
+            EzTransProcessCount = config.EzTransProcessCount;
 
             _providerApiKeys.Clear();
             foreach (var pair in config.ProviderApiKeys)
@@ -1201,6 +1249,8 @@ public sealed class MainWindowViewModel : BindableBase
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
             PapagoClientSecret = PapagoClientSecret,
+            EzTransInstallationPath = EzTransInstallationPath,
+            EzTransProcessCount = EzTransProcessCount,
             ProviderApiKeys = new Dictionary<TranslationProviderType, string>(_providerApiKeys),
         });
     }
@@ -1254,10 +1304,15 @@ public sealed class MainWindowViewModel : BindableBase
         _projectStatePersistenceService.SaveTranslationProgress(GetProjectDataDirectory(_session.GameRoot), Items);
     }
 
-    private void ApplySession(ScanSession session, bool restoreProgress)
+    private TranslationProgressCarryoverResult ApplySession(
+        ScanSession session,
+        bool restoreProgress,
+        ScanSession? previousSession = null,
+        TranslationProgressState? previousProgress = null)
     {
         _session = session;
         DetachItemStateHandlers(Items);
+        var restoreResult = new TranslationProgressCarryoverResult(0, 0, session.Items.Count);
         _suppressItemStatePersistence = true;
         try
         {
@@ -1268,7 +1323,15 @@ public sealed class MainWindowViewModel : BindableBase
 
             if (restoreProgress)
             {
-                _projectStatePersistenceService.ApplyTranslationProgress(GetProjectDataDirectory(session.GameRoot), Items);
+                var exactRestoredCount = _projectStatePersistenceService.ApplyTranslationProgress(GetProjectDataDirectory(session.GameRoot), Items);
+                restoreResult = new TranslationProgressCarryoverResult(
+                    exactRestoredCount,
+                    0,
+                    Math.Max(0, Items.Count - exactRestoredCount));
+            }
+            else if (previousSession is not null)
+            {
+                restoreResult = _translationProgressCarryoverService.Apply(previousSession, previousProgress, Items);
             }
 
             _sourceLanguageFilterService.Apply(Items, SourceLanguage, ExcludeNonSourceText);
@@ -1279,6 +1342,7 @@ public sealed class MainWindowViewModel : BindableBase
         }
 
         AttachItemStateHandlers(Items);
+        return restoreResult;
     }
 
     private void AttachItemStateHandlers(IEnumerable<ExtractedTextItem> items)
@@ -1299,24 +1363,9 @@ public sealed class MainWindowViewModel : BindableBase
 
     private void ItemOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_suppressItemStatePersistence || sender is not ExtractedTextItem item)
+        if (_suppressItemStatePersistence || sender is not ExtractedTextItem)
         {
             return;
-        }
-
-        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText)))
-        {
-            _suppressItemStatePersistence = true;
-            try
-            {
-                item.ApplyManualTranslationEdit();
-            }
-            finally
-            {
-                _suppressItemStatePersistence = false;
-            }
-
-            ItemsView.Refresh();
         }
 
         if (MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText))
@@ -1466,8 +1515,9 @@ public sealed class MainWindowViewModel : BindableBase
         return true;
     }
 
-    private static IEnumerable<ProviderOption> BuildProviderOptions()
+    private IEnumerable<ProviderOption> BuildProviderOptions()
     {
+        var ezTransInfo = _ezTransXpInstallationService.Detect();
         yield return new ProviderOption
         {
             ProviderType = TranslationProviderType.OpenAi,
@@ -1502,7 +1552,8 @@ public sealed class MainWindowViewModel : BindableBase
         {
             ProviderType = TranslationProviderType.EzTransXp,
             DisplayName = "EzTransXP",
-            IsAvailable = false,
+            IsAvailable = true,
+            AvailabilityText = ezTransInfo.IsAvailable ? "설치됨" : "설치 미감지",
         };
     }
 

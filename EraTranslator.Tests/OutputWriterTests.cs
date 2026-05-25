@@ -272,6 +272,77 @@ IF CFLAG:{flagName}
     }
 
     [Fact]
+    public void ExportCopy_RewritesVariableIndexedInlineReferencesInsideTranslatedSegment()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+
+        const string originalValue = "ステータス式";
+        var erbText = $"PRINTFORMW \"{originalValue}\"\r\n";
+        var segmentStart = erbText.IndexOf(originalValue, StringComparison.Ordinal);
+        var erbDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/TestInline.ERB",
+            FullPath = Path.Combine(gameRoot, "ERB", "TestInline.ERB"),
+            RelativePath = Path.Combine("ERB", "TestInline.ERB"),
+            FileType = "ERB",
+            OriginalText = erbText,
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/TestInline.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = segmentStart,
+            Length = originalValue.Length,
+            LineNumber = 1,
+            OriginalText = originalValue,
+        });
+
+        var session = new ScanSession
+        {
+            GameRoot = gameRoot,
+        };
+        session.Documents[erbDocument.DocumentId] = erbDocument;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/TestInline.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            FileType = "ERB",
+            RelativePath = erbDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = originalValue,
+            TranslatedText = "ABL:index:従順 * 10 + EXP:index:愛情経験 + CFLAG:index:依存度",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+        session.Items.Add(CreateReferenceBearingItem("CSV/Abl.csv:0", "CSV/Abl.csv", "ABL", "従順", "순종"));
+        session.Items.Add(CreateReferenceBearingItem("CSV/Exp.csv:0", "CSV/Exp.csv", "EXP", "愛情経験", "애정경험"));
+        session.Items.Add(CreateReferenceBearingItem("CSV/Cflag.csv:0", "CSV/Cflag.csv", "CFLAG", "依存度", "의존도"));
+
+        var writer = new OutputWriter();
+        var result = writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        Assert.Equal(3, result.WrittenFiles.Count);
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "TestInline.ERB"), Encoding.UTF8);
+        Assert.Contains("ABL:index:순종 * 10 + EXP:index:애정경험 + CFLAG:index:의존도", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExportCopy_WritesBundledJosaPackageAndConvertsPostfixPatterns()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -321,6 +392,36 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         Assert.Contains("%플레이어는%", writtenErb, StringComparison.Ordinal);
         Assert.Contains("%조사처리(NAME:TARGET,\"을\")%", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("%플레이어는()% ", writtenErb, StringComparison.Ordinal);
+    }
+
+    private static ExtractedTextItem CreateReferenceBearingItem(
+        string segmentId,
+        string documentId,
+        string symbolNamespace,
+        string originalKey,
+        string translatedText)
+    {
+        return new ExtractedTextItem
+        {
+            SegmentId = segmentId,
+            DocumentId = documentId,
+            FileType = "CSV",
+            RelativePath = documentId.Replace('/', Path.DirectorySeparatorChar),
+            EncodingName = "UTF-8",
+            SegmentType = "csv-IdFirstTable-field-1",
+            LineNumber = 1,
+            OriginalText = originalKey,
+            SourceKey = "1",
+            FieldIndex = 1,
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            SymbolNamespace = symbolNamespace,
+            OriginalSymbolKey = originalKey,
+            IsReferenceBearingKey = true,
+            TranslatedText = translatedText,
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
     }
 
     [Fact]

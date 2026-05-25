@@ -93,7 +93,10 @@ public sealed class ExtractedTextItem : BindableBase
 
     public bool IsExcluded => string.Equals(_status, "제외됨", StringComparison.Ordinal);
 
-    public bool NeedsTranslation => !IsTranslatedSuccessfully && !IsExcluded;
+    public bool NeedsTranslation =>
+        string.Equals(_status, "대기", StringComparison.Ordinal)
+        || string.Equals(_status, "번역 실패", StringComparison.Ordinal)
+        || string.Equals(_status, "중지됨", StringComparison.Ordinal);
 
     public bool HasPersistableState =>
         IsTranslatedSuccessfully
@@ -228,12 +231,12 @@ public sealed class ExtractedTextItem : BindableBase
                 }
                 break;
             case "검증 실패":
-                _status = "검증 실패";
+                _status = "검수 필요";
                 _validationStatus = "검증 실패";
                 _canSave = false;
                 if (string.IsNullOrWhiteSpace(_translationError))
                 {
-                    _translationError = "수동으로 검증 실패 상태로 표시했습니다.";
+                    _translationError = "수동으로 저장 불가 검토 상태로 표시했습니다.";
                 }
                 break;
             default:
@@ -262,7 +265,9 @@ public sealed class ExtractedTextItem : BindableBase
     {
         var status = state.Status is "번역 중" or "재시도 중"
             ? "중지됨"
-            : string.IsNullOrWhiteSpace(state.Status) ? "대기" : state.Status;
+            : state.Status == "검증 실패"
+                ? "검수 필요"
+                : string.IsNullOrWhiteSpace(state.Status) ? "대기" : state.Status;
         var validationStatus = status == "중지됨"
             ? "검증 전"
             : string.IsNullOrWhiteSpace(state.ValidationStatus) ? "검증 전" : state.ValidationStatus;

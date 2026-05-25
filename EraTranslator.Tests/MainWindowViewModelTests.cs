@@ -51,6 +51,90 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal("저장된 추출 상태가 없는 프로젝트입니다. 새로 추출을 실행하세요.", viewModel.StatusText);
     }
 
+    [Fact]
+    public void AutomaticTranslationStateChange_RemainsCompleted()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSession(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var item = Assert.Single(viewModel.Items);
+
+        item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "안녕하세요");
+
+        Assert.Equal("번역 완료", item.Status);
+        Assert.Equal("통과", item.ValidationStatus);
+        Assert.True(item.CanSave);
+    }
+
+    [Fact]
+    public void HandleTranslatedTextEdited_MarksItemAsManualEdit()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+
+        viewModel.HandleTranslatedTextEdited(item);
+
+        Assert.Equal("수동 수정", item.Status);
+        Assert.Equal("통과", item.ValidationStatus);
+        Assert.True(item.CanSave);
+    }
+
+    [Fact]
+    public void EzTransSettings_ArePersistedThroughConfig()
+    {
+        var configPath = Path.Combine(_rootPath, "Config");
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var first = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        first.EzTransInstallationPath = @"C:\Utils\ezTransXPggudor";
+        first.EzTransProcessCount = 6;
+        first.FlushPendingConfigSave();
+
+        var second = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.Equal(@"C:\Utils\ezTransXPggudor", second.EzTransInstallationPath);
+        Assert.Equal(6, second.EzTransProcessCount);
+    }
+
     private static ScanSession BuildSession(string gameDirectory)
     {
         var session = new ScanSession

@@ -1,6 +1,8 @@
+using System.Text.RegularExpressions;
+
 namespace EraTranslator.Services;
 
-public static class SourceLanguageHeuristics
+public static partial class SourceLanguageHeuristics
 {
     public static bool IsLikelySourceText(string text, string sourceLanguage)
     {
@@ -9,7 +11,8 @@ public static class SourceLanguageHeuristics
             return false;
         }
 
-        var meaningfulChars = text.Where(static ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch) && !char.IsDigit(ch)).ToList();
+        var sanitized = StripPlaceholderLikeTokens(text);
+        var meaningfulChars = sanitized.Where(static ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch) && !char.IsDigit(ch)).ToList();
         if (meaningfulChars.Count == 0)
         {
             return false;
@@ -29,8 +32,7 @@ public static class SourceLanguageHeuristics
     {
         var japaneseCount = chars.Count(IsJapaneseChar);
         var hangulCount = chars.Count(IsHangulChar);
-        var latinCount = chars.Count(IsLatinChar);
-        return japaneseCount > 0 && japaneseCount >= hangulCount && japaneseCount >= latinCount;
+        return japaneseCount > 0 && hangulCount <= japaneseCount;
     }
 
     private static bool IsLikelyKorean(IReadOnlyList<char> chars)
@@ -69,4 +71,12 @@ public static class SourceLanguageHeuristics
         return ch is >= 'A' and <= 'Z'
             or >= 'a' and <= 'z';
     }
+
+    private static string StripPlaceholderLikeTokens(string text)
+    {
+        return PlaceholderLikePattern().Replace(text, string.Empty);
+    }
+
+    [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", RegexOptions.Compiled)]
+    private static partial Regex PlaceholderLikePattern();
 }

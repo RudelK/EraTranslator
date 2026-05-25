@@ -22,6 +22,11 @@ public sealed class ProjectStatePersistenceService(
         return _translationProgressStateService.Apply(projectDataDirectory, items);
     }
 
+    public TranslationProgressState LoadTranslationProgress(string projectDataDirectory)
+    {
+        return _translationProgressStateService.Load(projectDataDirectory);
+    }
+
     public void SaveTranslationProgress(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
     {
         _translationProgressStateService.Save(projectDataDirectory, items);

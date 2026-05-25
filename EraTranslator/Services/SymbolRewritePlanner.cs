@@ -153,7 +153,7 @@ public sealed class SymbolRewritePlanner
 
     private static void ReviewEntry(SymbolRenameEntry entry, string message)
     {
-        if (!string.Equals(entry.Item.Status, "검증 실패", StringComparison.Ordinal))
+        if (entry.Item.CanSave)
         {
             entry.Item.ApplyTranslationState("검수 필요", "통과", message, true, entry.NewKey);
         }
@@ -161,7 +161,7 @@ public sealed class SymbolRewritePlanner
 
     private static void BlockEntry(SymbolRenameEntry entry, string message)
     {
-        entry.Item.ApplyTranslationState("검증 실패", "참조 해석 실패", message, false, entry.NewKey);
+        entry.Item.ApplyTranslationState("검수 필요", "참조 해석 실패", message, false, entry.NewKey);
     }
 }
 

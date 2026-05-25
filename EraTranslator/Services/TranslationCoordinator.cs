@@ -43,212 +43,231 @@ public sealed class TranslationCoordinator
         }
 
         var provider = _providerFactory.Create(settings);
-        var batchSize = Math.Clamp(settings.BatchSize, 1, 100);
-        var retryCount = Math.Clamp(settings.RetryCount, 0, 10);
-        var queue = new Queue<ExtractedTextItem>(representatives);
-        var totalCount = representatives.Count;
-        var processedCount = 0;
-
-        while (queue.Count > 0)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var batchSize = Math.Clamp(
+                settings.ProviderType == TranslationProviderType.EzTransXp
+                    ? Math.Max(settings.BatchSize, settings.EzTransProcessCount)
+                    : settings.BatchSize,
+                1,
+                100);
+            var retryCount = Math.Clamp(settings.RetryCount, 0, 10);
+            var queue = new Queue<ExtractedTextItem>(representatives);
+            var totalCount = representatives.Count;
+            var processedCount = 0;
 
-            var batch = new List<ExtractedTextItem>(batchSize);
-            while (queue.Count > 0 && batch.Count < batchSize)
+            while (queue.Count > 0)
             {
-                var candidate = queue.Dequeue();
-                if (candidate.NeedsTranslation)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var batch = new List<ExtractedTextItem>(batchSize);
+                while (queue.Count > 0 && batch.Count < batchSize)
                 {
-                    batch.Add(candidate);
+                    var candidate = queue.Dequeue();
+                    if (candidate.NeedsTranslation)
+                    {
+                        batch.Add(candidate);
+                    }
                 }
-            }
 
-            if (batch.Count == 0)
-            {
-                break;
-            }
-
-            var currentFiles = string.Join(", ", batch.Select(item => item.RelativePath).Distinct().Take(2));
-            if (batch.Select(item => item.RelativePath).Distinct().Count() > 2)
-            {
-                currentFiles += " 외";
-            }
-
-            foreach (var item in batch)
-            {
-                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkTranslating());
-            }
-            persistState?.Invoke();
-
-            var remaining = batch.ToDictionary(item => item.SegmentId, StringComparer.Ordinal);
-
-            for (var attempt = 0; attempt <= retryCount && remaining.Count > 0; attempt++)
-            {
-                var currentBatch = remaining.Values.ToList();
-                var protectedBatch = currentBatch
-                    .Select(item =>
-                    {
-                        var protectedText = _protector.Protect(item.OriginalText);
-                        var dictionaryApplied = _dictionaryApplier.Apply(
-                            protectedText.Text,
-                            protectedText.Placeholders,
-                            dictionaryEntries);
-                        return new ProtectedSegment(
-                            item.SegmentId,
-                            dictionaryApplied.Text,
-                            item.OriginalText,
-                            dictionaryApplied.Placeholders);
-                    })
-                    .ToList();
-
-                try
+                if (batch.Count == 0)
                 {
-                    var providerResult = await provider.TranslateAsync(protectedBatch, settings, cancellationToken);
-                    var nextRemaining = new Dictionary<string, ExtractedTextItem>(StringComparer.Ordinal);
+                    break;
+                }
 
-                    foreach (var item in currentBatch)
+                var currentFiles = string.Join(", ", batch.Select(item => item.RelativePath).Distinct().Take(2));
+                if (batch.Select(item => item.RelativePath).Distinct().Count() > 2)
+                {
+                    currentFiles += " 외";
+                }
+
+                foreach (var item in batch)
+                {
+                    ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkTranslating());
+                }
+                persistState?.Invoke();
+
+                var remaining = batch.ToDictionary(item => item.SegmentId, StringComparer.Ordinal);
+
+                for (var attempt = 0; attempt <= retryCount && remaining.Count > 0; attempt++)
+                {
+                    var currentBatch = remaining.Values.ToList();
+                    var protectedBatch = currentBatch
+                        .Select(item =>
+                        {
+                            var protectedText = _protector.Protect(item.OriginalText);
+                            var dictionaryApplied = _dictionaryApplier.Apply(
+                                protectedText.Text,
+                                protectedText.Placeholders,
+                                dictionaryEntries);
+                            return new ProtectedSegment(
+                                item.SegmentId,
+                                dictionaryApplied.Text,
+                                item.OriginalText,
+                                dictionaryApplied.Placeholders);
+                        })
+                        .ToList();
+
+                    try
                     {
-                        if (providerResult.Errors.TryGetValue(item.SegmentId, out var providerError))
+                        var providerResult = await provider.TranslateAsync(protectedBatch, settings, cancellationToken);
+                        var nextRemaining = new Dictionary<string, ExtractedTextItem>(StringComparer.Ordinal);
+
+                        foreach (var item in currentBatch)
                         {
-                            if (attempt < retryCount)
+                            if (providerResult.Errors.TryGetValue(item.SegmentId, out var providerError))
                             {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
-                                nextRemaining[item.SegmentId] = item;
-                            }
-                            else
-                            {
-                                ApplyFailureToGroup(
-                                    groupedByOriginal,
-                                    item.OriginalText,
-                                    "번역 실패",
-                                    MapErrorKind(providerError.Kind, providerError.HttpStatusCode),
-                                    providerError.Message);
-                            }
-
-                            continue;
-                        }
-
-                        var protectedSegment = protectedBatch.First(segment => segment.Id == item.SegmentId);
-                        if (!providerResult.Translations.TryGetValue(item.SegmentId, out var translated))
-                        {
-                            if (attempt < retryCount)
-                            {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
-                                nextRemaining[item.SegmentId] = item;
-                            }
-                            else
-                            {
-                                ApplyFailureToGroup(
-                                    groupedByOriginal,
-                                    item.OriginalText,
-                                    "번역 실패",
-                                    "응답 누락",
-                                    "번역 결과가 반환되지 않았습니다.");
-                            }
-
-                            continue;
-                        }
-
-                        if (!_protector.HasAllTokens(translated, protectedSegment.Placeholders, out var tokenError))
-                        {
-                            var validationLabel = HasPercentInsertionPlaceholder(protectedSegment.Placeholders)
-                                ? "변수 삽입 손상"
-                                : "토큰 손실";
-
-                            if (attempt < retryCount)
-                            {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
-                                nextRemaining[item.SegmentId] = item;
-                            }
-                            else
-                            {
-                                if (IsPlaceholderCountMismatch(tokenError))
+                                if (attempt < retryCount)
                                 {
-                                    ApplyReviewToGroup(
-                                        groupedByOriginal,
-                                        item.OriginalText,
-                                        translated,
-                                        "토큰 검토 필요",
-                                        tokenError);
+                                    ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                    nextRemaining[item.SegmentId] = item;
                                 }
                                 else
                                 {
                                     ApplyFailureToGroup(
                                         groupedByOriginal,
                                         item.OriginalText,
-                                        "검증 실패",
-                                        validationLabel,
-                                        tokenError);
+                                        "번역 실패",
+                                        MapErrorKind(providerError.Kind, providerError.HttpStatusCode),
+                                        providerError.Message);
                                 }
+
+                                continue;
                             }
 
+                            var protectedSegment = protectedBatch.First(segment => segment.Id == item.SegmentId);
+                            if (!providerResult.Translations.TryGetValue(item.SegmentId, out var translated))
+                            {
+                                if (attempt < retryCount)
+                                {
+                                    ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                    nextRemaining[item.SegmentId] = item;
+                                }
+                                else
+                                {
+                                    ApplyFailureToGroup(
+                                        groupedByOriginal,
+                                        item.OriginalText,
+                                        "번역 실패",
+                                        "응답 누락",
+                                        "번역 결과가 반환되지 않았습니다.");
+                                }
+
+                                continue;
+                            }
+
+                            if (!_protector.HasAllTokens(translated, protectedSegment.Placeholders, out var tokenError))
+                            {
+                                var validationLabel = HasPercentInsertionPlaceholder(protectedSegment.Placeholders)
+                                    ? "변수 삽입 손상"
+                                    : "토큰 손실";
+
+                                if (attempt < retryCount)
+                                {
+                                    ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                    nextRemaining[item.SegmentId] = item;
+                                }
+                                else
+                                {
+                                    if (IsPlaceholderCountMismatch(tokenError))
+                                    {
+                                        ApplyReviewToGroup(
+                                            groupedByOriginal,
+                                            item.OriginalText,
+                                            translated,
+                                            "토큰 검토 필요",
+                                            tokenError);
+                                    }
+                                    else
+                                    {
+                                        ApplyReviewToGroup(
+                                            groupedByOriginal,
+                                            item.OriginalText,
+                                            translated,
+                                            validationLabel,
+                                            tokenError);
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            var restoredTranslation = _protector.Restore(translated, protectedSegment.Placeholders);
+                            ApplySuccessToGroup(groupedByOriginal, item.OriginalText, restoredTranslation);
+                        }
+
+                        remaining = nextRemaining;
+                        persistState?.Invoke();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        foreach (var item in currentBatch)
+                        {
+                            ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem =>
+                            {
+                                if (groupItem.NeedsTranslation)
+                                {
+                                    groupItem.MarkStopped();
+                                }
+                            });
+                        }
+
+                        persistState?.Invoke();
+                        throw;
+                    }
+                    catch (TranslationProviderException ex)
+                    {
+                        if (attempt < retryCount)
+                        {
                             continue;
                         }
 
-                        var restoredTranslation = _protector.Restore(translated, protectedSegment.Placeholders);
-                        ApplySuccessToGroup(groupedByOriginal, item.OriginalText, restoredTranslation);
-                    }
-
-                    remaining = nextRemaining;
-                    persistState?.Invoke();
-                }
-                catch (OperationCanceledException)
-                {
-                    foreach (var item in currentBatch)
-                    {
-                        ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem =>
+                        foreach (var item in currentBatch)
                         {
-                            if (groupItem.NeedsTranslation)
-                            {
-                                groupItem.MarkStopped();
-                            }
-                        });
+                            ApplyFailureToGroup(
+                                groupedByOriginal,
+                                item.OriginalText,
+                                "번역 실패",
+                                MapErrorKind(ex.Kind, ex.StatusCode is null ? null : (int)ex.StatusCode.Value),
+                                ex.Message);
+                        }
+                        persistState?.Invoke();
                     }
+                    catch (Exception ex)
+                    {
+                        if (attempt < retryCount)
+                        {
+                            continue;
+                        }
 
-                    persistState?.Invoke();
-                    throw;
-                }
-                catch (TranslationProviderException ex)
-                {
-                    if (attempt < retryCount)
-                    {
-                        continue;
+                        foreach (var item in currentBatch)
+                        {
+                            ApplyFailureToGroup(
+                                groupedByOriginal,
+                                item.OriginalText,
+                                "번역 실패",
+                                "배치 실패",
+                                ex.Message);
+                        }
+                        persistState?.Invoke();
                     }
+                }
 
-                    foreach (var item in currentBatch)
-                    {
-                        ApplyFailureToGroup(
-                            groupedByOriginal,
-                            item.OriginalText,
-                            "번역 실패",
-                            MapErrorKind(ex.Kind, ex.StatusCode is null ? null : (int)ex.StatusCode.Value),
-                            ex.Message);
-                    }
-                    persistState?.Invoke();
-                }
-                catch (Exception ex)
-                {
-                    if (attempt < retryCount)
-                    {
-                        continue;
-                    }
-
-                    foreach (var item in currentBatch)
-                    {
-                        ApplyFailureToGroup(
-                            groupedByOriginal,
-                            item.OriginalText,
-                            "번역 실패",
-                            "배치 실패",
-                            ex.Message);
-                    }
-                    persistState?.Invoke();
-                }
+                processedCount += batch.Count;
+                progress.Report((processedCount / (double)totalCount, $"번역 진행 중... {processedCount}/{totalCount}", currentFiles));
+                await Task.Yield();
             }
-
-            processedCount += batch.Count;
-            progress.Report((processedCount / (double)totalCount, $"번역 진행 중... {processedCount}/{totalCount}", currentFiles));
-            await Task.Yield();
+        }
+        finally
+        {
+            if (provider is IAsyncDisposable asyncDisposable)
+            {
+                await asyncDisposable.DisposeAsync();
+            }
+            else if (provider is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
         }
     }
 

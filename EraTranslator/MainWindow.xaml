@@ -236,6 +236,7 @@
                   SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                   AutoGenerateColumns="False"
                   CanUserAddRows="False"
+                  CellEditEnding="TranslationGrid_CellEditEnding"
                   EnableRowVirtualization="True"
                   EnableColumnVirtualization="True"
                   VirtualizingPanel.IsVirtualizing="True"

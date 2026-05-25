@@ -37,4 +37,32 @@ IF CFLAG:{flagName}
             && occurrence.LiteralValue == "外見年齢"
             && occurrence.IsExactValue);
     }
+
+    [Fact]
+    public void Extract_FindsLiteralKeysInVariableIndexedReferences()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+PRINTFORMW "ABL:index:従順 * 10 + EXP:index:愛情経験 + CFLAG:index:依存度"
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "ABL"
+            && reference.OriginalKey == "従順");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "EXP"
+            && reference.OriginalKey == "愛情経験");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "依存度");
+        Assert.DoesNotContain(result.references, reference =>
+            string.Equals(reference.OriginalKey, "index:従順", StringComparison.Ordinal)
+            || string.Equals(reference.OriginalKey, "index:愛情経験", StringComparison.Ordinal)
+            || string.Equals(reference.OriginalKey, "index:依存度", StringComparison.Ordinal));
+    }
 }
