@@ -11,21 +11,25 @@ public sealed class AppConfigService(string? baseDirectory = null)
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
+    private readonly IAppSecretStore _secretStore = new ProtectedAppSecretStore(baseDirectory);
 
     public string ConfigPath { get; } = Path.Combine(baseDirectory ?? AppContext.BaseDirectory, "EraTranslator.config.json");
+
+    public string SecretPath => _secretStore.FilePath;
 
     public AppConfig Load()
     {
         if (!File.Exists(ConfigPath))
         {
-            return new AppConfig();
+            return MergeSecrets(new AppConfig(), _secretStore.Load());
         }
 
         try
         {
             var json = File.ReadAllText(ConfigPath);
             var loaded = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
-            return new AppConfig
+            var mergedSecrets = MergeLegacySecrets(loaded);
+            var mergedConfig = new AppConfig
             {
                 GameDirectory = loaded.GameDirectory,
                 OutputDirectory = loaded.OutputDirectory,
@@ -44,13 +48,20 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 RetryPromptTemplate = NormalizePromptPlaceholders(loaded.RetryPromptTemplate),
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
                 PapagoClientId = loaded.PapagoClientId,
-                PapagoClientSecret = loaded.PapagoClientSecret,
-                ProviderApiKeys = loaded.ProviderApiKeys,
+                PapagoClientSecret = mergedSecrets.PapagoClientSecret,
+                ProviderApiKeys = mergedSecrets.ProviderApiKeys,
             };
+
+            if (HasLegacyPlaintextSecrets(loaded))
+            {
+                Save(mergedConfig);
+            }
+
+            return mergedConfig;
         }
         catch
         {
-            return new AppConfig();
+            return MergeSecrets(new AppConfig(), _secretStore.Load());
         }
     }
 
@@ -62,8 +73,91 @@ public sealed class AppConfigService(string? baseDirectory = null)
             Directory.CreateDirectory(directory);
         }
 
-        var json = JsonSerializer.Serialize(config, JsonOptions);
+        _secretStore.Save(new AppSecrets
+        {
+            PapagoClientSecret = config.PapagoClientSecret,
+            ProviderApiKeys = new Dictionary<TranslationProviderType, string>(config.ProviderApiKeys),
+        });
+
+        var sanitized = new AppConfigDocument
+        {
+            GameDirectory = config.GameDirectory,
+            OutputDirectory = config.OutputDirectory,
+            SaveMode = config.SaveMode,
+            ProviderType = config.ProviderType,
+            BaseUrl = config.BaseUrl,
+            Model = config.Model,
+            SourceLanguage = config.SourceLanguage,
+            TargetLanguage = config.TargetLanguage,
+            BatchSize = config.BatchSize,
+            RetryCount = config.RetryCount,
+            Temperature = config.Temperature,
+            DisableThinking = config.DisableThinking,
+            EnableRequestResponseLogging = config.EnableRequestResponseLogging,
+            SystemPromptTemplate = config.SystemPromptTemplate,
+            RetryPromptTemplate = config.RetryPromptTemplate,
+            ExcludeNonSourceText = config.ExcludeNonSourceText,
+            PapagoClientId = config.PapagoClientId,
+        };
+
+        var json = JsonSerializer.Serialize(sanitized, JsonOptions);
         File.WriteAllText(ConfigPath, json);
+    }
+
+    private AppSecrets MergeLegacySecrets(AppConfig loaded)
+    {
+        var storedSecrets = _secretStore.Load();
+        var providerApiKeys = storedSecrets.ProviderApiKeys.Count > 0
+            ? storedSecrets.ProviderApiKeys
+            : loaded.ProviderApiKeys;
+        var papagoClientSecret = !string.IsNullOrWhiteSpace(storedSecrets.PapagoClientSecret)
+            ? storedSecrets.PapagoClientSecret
+            : loaded.PapagoClientSecret;
+
+        var mergedSecrets = new AppSecrets
+        {
+            PapagoClientSecret = papagoClientSecret,
+            ProviderApiKeys = new Dictionary<TranslationProviderType, string>(providerApiKeys),
+        };
+
+        if (HasLegacyPlaintextSecrets(loaded) && !storedSecrets.HasAnySecrets)
+        {
+            _secretStore.Save(mergedSecrets);
+        }
+
+        return mergedSecrets;
+    }
+
+    private static AppConfig MergeSecrets(AppConfig config, AppSecrets secrets)
+    {
+        return new AppConfig
+        {
+            GameDirectory = config.GameDirectory,
+            OutputDirectory = config.OutputDirectory,
+            SaveMode = config.SaveMode,
+            ProviderType = config.ProviderType,
+            BaseUrl = config.BaseUrl,
+            Model = config.Model,
+            SourceLanguage = config.SourceLanguage,
+            TargetLanguage = config.TargetLanguage,
+            BatchSize = config.BatchSize,
+            RetryCount = config.RetryCount,
+            Temperature = config.Temperature,
+            DisableThinking = config.DisableThinking,
+            EnableRequestResponseLogging = config.EnableRequestResponseLogging,
+            SystemPromptTemplate = config.SystemPromptTemplate,
+            RetryPromptTemplate = config.RetryPromptTemplate,
+            ExcludeNonSourceText = config.ExcludeNonSourceText,
+            PapagoClientId = config.PapagoClientId,
+            PapagoClientSecret = secrets.PapagoClientSecret,
+            ProviderApiKeys = new Dictionary<TranslationProviderType, string>(secrets.ProviderApiKeys),
+        };
+    }
+
+    private static bool HasLegacyPlaintextSecrets(AppConfig config)
+    {
+        return !string.IsNullOrWhiteSpace(config.PapagoClientSecret)
+            || config.ProviderApiKeys.Any(pair => !string.IsNullOrWhiteSpace(pair.Value));
     }
 
     private static string NormalizePromptPlaceholders(string template)
@@ -71,5 +165,42 @@ public sealed class AppConfigService(string? baseDirectory = null)
         return string.IsNullOrWhiteSpace(template)
             ? template
             : template.Replace("[[[ERA_PH_0]]]", "__PH0__", StringComparison.Ordinal);
+    }
+
+    private sealed class AppConfigDocument
+    {
+        public string GameDirectory { get; init; } = string.Empty;
+
+        public string OutputDirectory { get; init; } = string.Empty;
+
+        public SaveMode SaveMode { get; init; } = SaveMode.ExportCopy;
+
+        public TranslationProviderType ProviderType { get; init; } = TranslationProviderType.OpenAi;
+
+        public string BaseUrl { get; init; } = "https://api.openai.com/v1";
+
+        public string Model { get; init; } = "gpt-4o-mini";
+
+        public string SourceLanguage { get; init; } = "ja";
+
+        public string TargetLanguage { get; init; } = "ko";
+
+        public int BatchSize { get; init; } = 1;
+
+        public int RetryCount { get; init; } = 1;
+
+        public double Temperature { get; init; } = 0.3;
+
+        public bool DisableThinking { get; init; } = true;
+
+        public bool EnableRequestResponseLogging { get; init; }
+
+        public string SystemPromptTemplate { get; init; } = string.Empty;
+
+        public string RetryPromptTemplate { get; init; } = string.Empty;
+
+        public bool ExcludeNonSourceText { get; init; }
+
+        public string PapagoClientId { get; init; } = string.Empty;
     }
 }

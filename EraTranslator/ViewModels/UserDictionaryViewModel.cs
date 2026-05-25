@@ -9,6 +9,8 @@ namespace EraTranslator.ViewModels;
 public sealed class UserDictionaryViewModel : BindableBase
 {
     private readonly UserDictionaryService _dictionaryService;
+    private readonly List<UserDictionaryEntry> _originalGlobalEntries;
+    private readonly List<UserDictionaryEntry> _originalProjectEntries;
     private UserDictionaryEntry? _selectedGlobalEntry;
     private UserDictionaryEntry? _selectedProjectEntry;
     private bool _isInitializing;
@@ -22,6 +24,8 @@ public sealed class UserDictionaryViewModel : BindableBase
         _dictionaryService = dictionaryService ?? new UserDictionaryService();
         _isInitializing = true;
         GameDirectory = gameDirectory;
+        _originalGlobalEntries = globalEntries.Select(entry => entry.Clone()).ToList();
+        _originalProjectEntries = projectEntries.Select(entry => entry.Clone()).ToList();
         GlobalEntries = new ObservableCollection<UserDictionaryEntry>(globalEntries.Select(entry => entry.Clone()));
         ProjectEntries = new ObservableCollection<UserDictionaryEntry>(projectEntries.Select(entry => entry.Clone()));
         AttachCollection(GlobalEntries, isProjectScope: false);
@@ -108,6 +112,12 @@ public sealed class UserDictionaryViewModel : BindableBase
     public IReadOnlyList<UserDictionaryEntry> GetProjectEntries()
     {
         return ProjectEntries.Select(entry => entry.Clone()).ToList();
+    }
+
+    public void RestorePersistedEntries()
+    {
+        _dictionaryService.SaveGlobal(_originalGlobalEntries);
+        _dictionaryService.SaveProject(GameDirectory, _originalProjectEntries);
     }
 
     private static UserDictionaryEntry CreateEmptyEntry()

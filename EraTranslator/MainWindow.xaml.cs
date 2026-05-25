@@ -15,6 +15,12 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        _viewModel.FlushPendingConfigSave();
+        base.OnClosed(e);
+    }
+
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
         await _viewModel.ScanAsync();
@@ -147,7 +153,13 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        dialog.ShowDialog();
-        _viewModel.ApplyUserDictionary(dictionaryViewModel);
+        var result = dialog.ShowDialog();
+        if (result == true)
+        {
+            _viewModel.ApplyUserDictionary(dictionaryViewModel);
+            return;
+        }
+
+        dictionaryViewModel.RestorePersistedEntries();
     }
 }

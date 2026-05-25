@@ -48,8 +48,10 @@ public sealed class AppConfigServiceTests : IDisposable
 
         service.Save(expected);
         var actual = service.Load();
+        var configText = File.ReadAllText(service.ConfigPath);
 
         Assert.Equal(Path.Combine(_rootPath, "EraTranslator.config.json"), service.ConfigPath);
+        Assert.Equal(Path.Combine(_rootPath, "EraTranslator.secrets.dat"), service.SecretPath);
         Assert.Equal(expected.GameDirectory, actual.GameDirectory);
         Assert.Equal(expected.OutputDirectory, actual.OutputDirectory);
         Assert.Equal(expected.SaveMode, actual.SaveMode);
@@ -69,6 +71,9 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.PapagoClientId, actual.PapagoClientId);
         Assert.Equal(expected.PapagoClientSecret, actual.PapagoClientSecret);
         Assert.Equal("openai-key", actual.ProviderApiKeys[TranslationProviderType.OpenAi]);
+        Assert.DoesNotContain("openai-key", configText, StringComparison.Ordinal);
+        Assert.DoesNotContain("papago-secret", configText, StringComparison.Ordinal);
+        Assert.True(File.Exists(service.SecretPath));
     }
 
     [Fact]
@@ -89,5 +94,31 @@ public sealed class AppConfigServiceTests : IDisposable
 
         Assert.Equal("Preserve __PH0__ exactly.", actual.SystemPromptTemplate);
         Assert.Equal("Retry __PH0__ exactly.", actual.RetryPromptTemplate);
+    }
+
+    [Fact]
+    public void Load_MigratesLegacyPlaintextSecretsIntoProtectedStore()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+        File.WriteAllText(
+            service.ConfigPath,
+            """
+            {
+              "PapagoClientSecret": "legacy-secret",
+              "ProviderApiKeys": {
+                "OpenAi": "legacy-openai-key"
+              }
+            }
+            """);
+
+        var actual = service.Load();
+        var configText = File.ReadAllText(service.ConfigPath);
+
+        Assert.Equal("legacy-secret", actual.PapagoClientSecret);
+        Assert.Equal("legacy-openai-key", actual.ProviderApiKeys[TranslationProviderType.OpenAi]);
+        Assert.DoesNotContain("legacy-secret", configText, StringComparison.Ordinal);
+        Assert.DoesNotContain("legacy-openai-key", configText, StringComparison.Ordinal);
+        Assert.True(File.Exists(service.SecretPath));
     }
 }

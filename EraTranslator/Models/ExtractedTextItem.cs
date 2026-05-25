@@ -129,7 +129,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void MarkRetrying()
@@ -138,7 +138,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void MarkStopped()
@@ -147,7 +147,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = "사용자가 번역을 중지했습니다.";
         _validationStatus = "검증 전";
         _canSave = false;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void ApplyManualTranslationEdit()
@@ -164,7 +164,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = reviewReason ?? string.Empty;
         _validationStatus = "통과";
         _canSave = true;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void ResetTranslationState()
@@ -174,7 +174,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void ApplyManualStatusOverride(string? status)
@@ -240,7 +240,7 @@ public sealed class ExtractedTextItem : BindableBase
                 return;
         }
 
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void ApplyTranslationState(
@@ -255,7 +255,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationError = translationError;
         _canSave = canSave;
         _translatedText = translatedText ?? string.Empty;
-        RaiseAllPropertiesChanged();
+        RaiseStateChangedProperties();
     }
 
     public void ApplyPersistedState(TranslationProgressItemState state)
@@ -292,4 +292,20 @@ public sealed class ExtractedTextItem : BindableBase
         IsReferenceBearingKey && !string.IsNullOrWhiteSpace(TranslatedText)
             ? TranslationQualityRules.NormalizeTranslatedText(FileType, TranslatedText)
             : string.Empty;
+
+    private void RaiseStateChangedProperties()
+    {
+        RaisePropertyChanged(nameof(TranslatedText));
+        RaisePropertyChanged(nameof(Status));
+        RaisePropertyChanged(nameof(TranslationError));
+        RaisePropertyChanged(nameof(ValidationStatus));
+        RaisePropertyChanged(nameof(CanSave));
+        RaisePropertyChanged(nameof(EditableStatus));
+        RaisePropertyChanged(nameof(IsTranslatedSuccessfully));
+        RaisePropertyChanged(nameof(IsExcluded));
+        RaisePropertyChanged(nameof(NeedsTranslation));
+        RaisePropertyChanged(nameof(HasPersistableState));
+        RaisePropertyChanged(nameof(StateText));
+        RaisePropertyChanged(nameof(TranslatedSymbolKey));
+    }
 }

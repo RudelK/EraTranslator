@@ -56,11 +56,11 @@
                             IsEnabled="{Binding CanBrowseDirectories}"
                             Click="BrowseGameDirectory_Click"
                             Content="찾아보기" />
-                    <TextBox Grid.Row="0"
-                             Grid.Column="2"
-                             Margin="0,0,0,8"
-                             IsEnabled="{Binding CanBrowseDirectories}"
-                             Text="{Binding GameDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                     <TextBox Grid.Row="0"
+                              Grid.Column="2"
+                              Margin="0,0,0,8"
+                              IsEnabled="{Binding CanBrowseDirectories}"
+                              Text="{Binding GameDirectory, UpdateSourceTrigger=LostFocus}" />
 
                     <TextBlock Grid.Row="1"
                                Grid.Column="0"
@@ -97,10 +97,10 @@
                                     IsEnabled="{Binding CanBrowseDirectories}"
                                     Click="BrowseOutputDirectory_Click"
                                     Content="찾아보기" />
-                            <TextBox Grid.Column="2"
-                                     Margin="0,0,0,8"
-                                     IsEnabled="{Binding CanBrowseDirectories}"
-                                     Text="{Binding OutputDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                             <TextBox Grid.Column="2"
+                                      Margin="0,0,0,8"
+                                      IsEnabled="{Binding CanBrowseDirectories}"
+                                      Text="{Binding OutputDirectory, UpdateSourceTrigger=LostFocus}" />
                         </Grid>
                     </StackPanel>
 

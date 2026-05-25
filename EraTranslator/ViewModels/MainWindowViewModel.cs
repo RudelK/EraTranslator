@@ -8,14 +8,14 @@ namespace EraTranslator.ViewModels;
 
 public sealed class MainWindowViewModel : BindableBase
 {
-    private readonly FileScanner _fileScanner = new();
-    private readonly TranslationCoordinator _translationCoordinator = new();
-    private readonly OutputWriter _outputWriter = new();
-    private readonly AppConfigService _appConfigService = new();
-    private readonly UserDictionaryService _userDictionaryService = new();
-    private readonly ScanSessionStateService _scanSessionStateService = new();
-    private readonly TranslationTextExchangeService _translationTextExchangeService = new();
-    private readonly SourceLanguageFilterService _sourceLanguageFilterService = new();
+    private readonly FileScanner _fileScanner;
+    private readonly TranslationCoordinator _translationCoordinator;
+    private readonly OutputWriter _outputWriter;
+    private readonly DebouncedAppConfigCoordinator _appConfigCoordinator;
+    private readonly UserDictionaryService _userDictionaryService;
+    private readonly ProjectStatePersistenceService _projectStatePersistenceService;
+    private readonly TranslationTextExchangeService _translationTextExchangeService;
+    private readonly SourceLanguageFilterService _sourceLanguageFilterService;
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
     private ScanSession? _session;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -51,11 +51,34 @@ public sealed class MainWindowViewModel : BindableBase
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
     private string _papagoClientSecret = string.Empty;
-    private readonly TranslationProgressStateService _translationProgressStateService = new();
     private bool _suppressItemStatePersistence;
+    private string _activeProjectDataDirectory = string.Empty;
 
-    public MainWindowViewModel()
+    public MainWindowViewModel(
+        FileScanner? fileScanner = null,
+        TranslationCoordinator? translationCoordinator = null,
+        OutputWriter? outputWriter = null,
+        AppConfigService? appConfigService = null,
+        DebouncedAppConfigCoordinator? appConfigCoordinator = null,
+        UserDictionaryService? userDictionaryService = null,
+        ScanSessionStateService? scanSessionStateService = null,
+        TranslationTextExchangeService? translationTextExchangeService = null,
+        SourceLanguageFilterService? sourceLanguageFilterService = null,
+        TranslationProgressStateService? translationProgressStateService = null,
+        bool detectSampleDirectory = true,
+        bool restoreLastSessionOnStartup = true)
     {
+        _fileScanner = fileScanner ?? new FileScanner();
+        _translationCoordinator = translationCoordinator ?? new TranslationCoordinator();
+        _outputWriter = outputWriter ?? new OutputWriter();
+        var resolvedAppConfigService = appConfigService ?? new AppConfigService();
+        _appConfigCoordinator = appConfigCoordinator ?? new DebouncedAppConfigCoordinator(resolvedAppConfigService);
+        _userDictionaryService = userDictionaryService ?? new UserDictionaryService();
+        _projectStatePersistenceService = new ProjectStatePersistenceService(
+            scanSessionStateService ?? new ScanSessionStateService(),
+            translationProgressStateService ?? new TranslationProgressStateService());
+        _translationTextExchangeService = translationTextExchangeService ?? new TranslationTextExchangeService();
+        _sourceLanguageFilterService = sourceLanguageFilterService ?? new SourceLanguageFilterService();
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
         FileTypeFilters = ["전체", "ERB", "CSV"];
@@ -65,20 +88,21 @@ public sealed class MainWindowViewModel : BindableBase
         ItemsView.Filter = FilterItem;
         _globalUserDictionary = _userDictionaryService.LoadGlobal();
 
-        var sampleDirectory = TryFindSampleDirectory();
+        var sampleDirectory = detectSampleDirectory ? TryFindSampleDirectory() : null;
         if (sampleDirectory is not null)
         {
             _gameDirectory = sampleDirectory;
             _outputDirectory = Path.Combine(Path.GetDirectoryName(sampleDirectory) ?? sampleDirectory, "translated-output");
-            ReloadProjectDictionary();
-        }
-        else
-        {
-            ReloadProjectDictionary();
         }
 
+        RefreshProjectContext(restoreSession: false, clearSessionWhenMissing: false);
         LoadConfig();
-        RestoreLastSessionIfAvailable();
+        RefreshProjectContext(restoreLastSessionOnStartup, clearSessionWhenMissing: false);
+    }
+
+    public void FlushPendingConfigSave()
+    {
+        _appConfigCoordinator.FlushPendingSave();
     }
 
     public BulkObservableCollection<ExtractedTextItem> Items { get; } = [];
@@ -104,10 +128,7 @@ public sealed class MainWindowViewModel : BindableBase
         {
             if (SetProperty(ref _gameDirectory, value))
             {
-                ReloadProjectDictionary();
-                RestoreLastSessionIfAvailable();
-                RaisePropertyChanged(nameof(UserDictionarySummary));
-                PersistConfig();
+                OnProjectPathInputsChanged();
             }
         }
     }
@@ -119,10 +140,7 @@ public sealed class MainWindowViewModel : BindableBase
         {
             if (SetProperty(ref _outputDirectory, value))
             {
-                ReloadProjectDictionary();
-                RestoreLastSessionIfAvailable();
-                RaisePropertyChanged(nameof(UserDictionarySummary));
-                PersistConfig();
+                OnProjectPathInputsChanged();
             }
         }
     }
@@ -474,13 +492,10 @@ public sealed class MainWindowViewModel : BindableBase
         {
             if (SetProperty(ref _selectedSaveMode, value))
             {
-                ReloadProjectDictionary();
-                RestoreLastSessionIfAvailable();
                 RaisePropertyChanged(nameof(IsExportSaveMode));
                 RaisePropertyChanged(nameof(IsInPlaceSaveMode));
                 RaisePropertyChanged(nameof(SaveModeSummary));
-                RaisePropertyChanged(nameof(UserDictionarySummary));
-                PersistConfig();
+                OnProjectPathInputsChanged();
             }
         }
     }
@@ -597,7 +612,7 @@ public sealed class MainWindowViewModel : BindableBase
                 });
                 var session = await Task.Run(() => _fileScanner.Scan(GameDirectory, scanProgress, cancellationToken), cancellationToken);
                 ApplySession(session, restoreProgress: true);
-                _scanSessionStateService.Save(session, GetProjectDataDirectory());
+                _projectStatePersistenceService.SaveScanSession(session, GetProjectDataDirectory());
                 var restoredCount = Items.Count(item => item.HasPersistableState);
 
                 SummaryText =
@@ -788,8 +803,7 @@ public sealed class MainWindowViewModel : BindableBase
         _session = null;
         Items.ReplaceAll([]);
         SelectedItem = null;
-        _translationProgressStateService.Delete(targetDirectory);
-        _scanSessionStateService.Delete(targetDirectory);
+        _projectStatePersistenceService.DeleteAll(targetDirectory);
         SummaryText = "아직 스캔 전입니다.";
         StatusText = "추출 상태를 리셋했습니다.";
         CurrentOperationDetail = "저장된 추출 결과와 번역 진행 상태를 삭제했습니다.";
@@ -1010,23 +1024,23 @@ public sealed class MainWindowViewModel : BindableBase
         };
     }
 
-    private void ReloadProjectDictionary()
+    private void ReloadProjectDictionary(string? projectDataDirectory = null)
     {
-        _projectUserDictionary = _userDictionaryService.LoadProject(GetProjectDataDirectory());
+        _projectUserDictionary = _userDictionaryService.LoadProject(projectDataDirectory ?? GetProjectDataDirectory());
     }
 
-    private void RestoreLastSessionIfAvailable()
+    private bool RestoreLastSessionIfAvailable(string? projectDataDirectory = null)
     {
-        var projectDataDirectory = GetProjectDataDirectory();
+        projectDataDirectory ??= GetProjectDataDirectory();
         if (string.IsNullOrWhiteSpace(projectDataDirectory) || !Directory.Exists(projectDataDirectory))
         {
-            return;
+            return false;
         }
 
-        var session = _scanSessionStateService.Load(projectDataDirectory);
+        var session = _projectStatePersistenceService.LoadScanSession(projectDataDirectory);
         if (session is null)
         {
-            return;
+            return false;
         }
 
         ApplySession(session, restoreProgress: true);
@@ -1040,6 +1054,61 @@ public sealed class MainWindowViewModel : BindableBase
         StatusText = "마지막 추출 상태를 불러왔습니다.";
         CurrentOperationDetail = $"복원 완료: {session.Documents.Count}개 문서";
         ProgressValue = 1.0;
+        return true;
+    }
+
+    private void OnProjectPathInputsChanged()
+    {
+        var projectDataDirectory = GetProjectDataDirectory();
+        var projectDataDirectoryChanged = !string.Equals(_activeProjectDataDirectory, projectDataDirectory, StringComparison.OrdinalIgnoreCase);
+        if (!_isLoadingConfig && projectDataDirectoryChanged)
+        {
+            RefreshProjectContext(restoreSession: true, clearSessionWhenMissing: true);
+        }
+
+        RaisePropertyChanged(nameof(UserDictionarySummary));
+        PersistConfig();
+    }
+
+    private void RefreshProjectContext(bool restoreSession, bool clearSessionWhenMissing)
+    {
+        var projectDataDirectory = GetProjectDataDirectory();
+        _activeProjectDataDirectory = projectDataDirectory;
+        ReloadProjectDictionary(projectDataDirectory);
+        RaisePropertyChanged(nameof(UserDictionarySummary));
+
+        if (!restoreSession)
+        {
+            return;
+        }
+
+        if (RestoreLastSessionIfAvailable(projectDataDirectory))
+        {
+            return;
+        }
+
+        if (clearSessionWhenMissing)
+        {
+            ClearCurrentSessionView();
+        }
+    }
+
+    private void ClearCurrentSessionView()
+    {
+        if (_session is null && Items.Count == 0)
+        {
+            return;
+        }
+
+        DetachItemStateHandlers(Items);
+        _session = null;
+        Items.ReplaceAll([]);
+        SelectedItem = null;
+        SummaryText = "아직 스캔 전입니다.";
+        StatusText = "저장된 추출 상태가 없는 프로젝트입니다. 새로 추출을 실행하세요.";
+        CurrentOperationDetail = "현재 경로에 복원할 추출 상태가 없습니다.";
+        ProgressValue = 0;
+        ItemsView.Refresh();
     }
 
     private void LoadConfig()
@@ -1047,7 +1116,7 @@ public sealed class MainWindowViewModel : BindableBase
         _isLoadingConfig = true;
         try
         {
-            var config = _appConfigService.Load();
+            var config = _appConfigCoordinator.Load();
             if (!string.IsNullOrWhiteSpace(config.GameDirectory))
             {
                 GameDirectory = config.GameDirectory;
@@ -1112,7 +1181,7 @@ public sealed class MainWindowViewModel : BindableBase
             return;
         }
 
-        _appConfigService.Save(new AppConfig
+        _appConfigCoordinator.ScheduleSave(new AppConfig
         {
             GameDirectory = GameDirectory,
             OutputDirectory = OutputDirectory,
@@ -1178,11 +1247,11 @@ public sealed class MainWindowViewModel : BindableBase
 
         if (!Items.Any(item => item.HasPersistableState))
         {
-            _translationProgressStateService.Delete(GetProjectDataDirectory(_session.GameRoot));
+            _projectStatePersistenceService.DeleteTranslationProgress(GetProjectDataDirectory(_session.GameRoot));
             return;
         }
 
-        _translationProgressStateService.Save(GetProjectDataDirectory(_session.GameRoot), Items);
+        _projectStatePersistenceService.SaveTranslationProgress(GetProjectDataDirectory(_session.GameRoot), Items);
     }
 
     private void ApplySession(ScanSession session, bool restoreProgress)
@@ -1199,7 +1268,7 @@ public sealed class MainWindowViewModel : BindableBase
 
             if (restoreProgress)
             {
-                _translationProgressStateService.Apply(GetProjectDataDirectory(session.GameRoot), Items);
+                _projectStatePersistenceService.ApplyTranslationProgress(GetProjectDataDirectory(session.GameRoot), Items);
             }
 
             _sourceLanguageFilterService.Apply(Items, SourceLanguage, ExcludeNonSourceText);
@@ -1235,7 +1304,7 @@ public sealed class MainWindowViewModel : BindableBase
             return;
         }
 
-        if (e.PropertyName == nameof(ExtractedTextItem.TranslatedText))
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText)))
         {
             _suppressItemStatePersistence = true;
             try
@@ -1250,11 +1319,11 @@ public sealed class MainWindowViewModel : BindableBase
             ItemsView.Refresh();
         }
 
-        if (e.PropertyName is nameof(ExtractedTextItem.TranslatedText)
-            or nameof(ExtractedTextItem.Status)
-            or nameof(ExtractedTextItem.ValidationStatus)
-            or nameof(ExtractedTextItem.TranslationError)
-            or nameof(ExtractedTextItem.CanSave))
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.Status))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.ValidationStatus))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslationError))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.CanSave)))
         {
             SaveTranslationProgress();
         }
@@ -1457,15 +1526,21 @@ public sealed class MainWindowViewModel : BindableBase
 
     private void SelectedItemOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(ExtractedTextItem.Status)
-            or nameof(ExtractedTextItem.ValidationStatus)
-            or nameof(ExtractedTextItem.TranslationError)
-            or nameof(ExtractedTextItem.WarningText)
-            or nameof(ExtractedTextItem.StateText)
-            or nameof(ExtractedTextItem.TranslatedText))
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.Status))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.ValidationStatus))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslationError))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.WarningText))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.StateText))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText)))
         {
             RaisePropertyChanged(nameof(SelectedItemLogText));
         }
+    }
+
+    private static bool MatchesPropertyChange(PropertyChangedEventArgs e, string propertyName)
+    {
+        return string.IsNullOrEmpty(e.PropertyName)
+            || string.Equals(e.PropertyName, propertyName, StringComparison.Ordinal);
     }
 
     private void ApplySourceLanguageFilter()

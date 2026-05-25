@@ -50,8 +50,8 @@ public sealed class PapagoTranslationProvider(
                 JsonSerializer.Serialize(requestPayload, LogJsonOptions),
                 new Dictionary<string, string>
                 {
-                    ["X-Naver-Client-Id"] = MaskSecret(settings.PapagoClientId),
-                    ["X-Naver-Client-Secret"] = MaskSecret(settings.PapagoClientSecret),
+                    ["X-Naver-Client-Id"] = SensitiveDataMasker.MaskSecret(settings.PapagoClientId),
+                    ["X-Naver-Client-Secret"] = SensitiveDataMasker.MaskSecret(settings.PapagoClientSecret),
                 });
 
             using var form = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -143,20 +143,5 @@ public sealed class PapagoTranslationProvider(
             ? "응답 본문 없음"
             : body.Length > 180 ? $"{body[..180]}..." : body;
         return $"HTTP {(int)statusCode} 오류: {summary}";
-    }
-
-    private static string MaskSecret(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        if (value.Length <= 8)
-        {
-            return "****";
-        }
-
-        return $"{value[..4]}****{value[^4..]}";
     }
 }

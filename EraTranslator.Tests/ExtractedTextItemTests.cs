@@ -84,4 +84,35 @@ public sealed class ExtractedTextItemTests
         Assert.Equal("검증 실패", item.ValidationStatus);
         Assert.False(item.CanSave);
     }
+
+    [Fact]
+    public void ApplyManualStatusOverride_RaisesNamedStatePropertyChanges()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        item.TranslatedText = "번역";
+        var changedProperties = new List<string?>();
+        item.PropertyChanged += (_, eventArgs) => changedProperties.Add(eventArgs.PropertyName);
+
+        item.ApplyManualStatusOverride("번역 완료");
+
+        Assert.Contains(nameof(ExtractedTextItem.Status), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.ValidationStatus), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.CanSave), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.EditableStatus), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.StateText), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.HasPersistableState), changedProperties);
+        Assert.DoesNotContain(string.Empty, changedProperties);
+    }
 }

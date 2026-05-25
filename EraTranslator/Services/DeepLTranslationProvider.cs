@@ -53,7 +53,7 @@ public sealed class DeepLTranslationProvider(
             BuildRequestLog(requests, settings),
             new Dictionary<string, string>
             {
-                ["auth_key"] = MaskSecret(settings.ApiKey),
+                ["auth_key"] = SensitiveDataMasker.MaskSecret(settings.ApiKey),
             });
 
         using var response = await PostAsync(client, endpoint, form, cancellationToken, endpointForLog, requestResponseLogger);
@@ -159,20 +159,5 @@ public sealed class DeepLTranslationProvider(
             preserve_formatting = "1",
             text = requests.Select(request => ProviderPlaceholderMarker.MarkForDeepL(request.Text, request.Placeholders)).ToArray(),
         }, LogJsonOptions);
-    }
-
-    private static string MaskSecret(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        if (value.Length <= 8)
-        {
-            return "****";
-        }
-
-        return $"{value[..4]}****{value[^4..]}";
     }
 }
