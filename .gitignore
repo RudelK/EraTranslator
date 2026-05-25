@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+TestResults/
+*.user
+*.suo
+*.cache
+*.log
+*_wpftmp.csproj
+EraTranslator.config.json
+.era-translator/
+.era-translator-backup/

@@ -1,0 +1,153 @@
+using System.Windows;
+using EraTranslator.ViewModels;
+using Forms = System.Windows.Forms;
+using Win32 = Microsoft.Win32;
+
+namespace EraTranslator;
+
+public partial class MainWindow : Window
+{
+    private readonly MainWindowViewModel _viewModel = new();
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        DataContext = _viewModel;
+    }
+
+    private async void Scan_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ScanAsync();
+    }
+
+    private async void ConvertEncoding_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ConvertEncodingsAsync();
+    }
+
+    private async void Translate_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.TranslatePendingAsync();
+    }
+
+    private async void Save_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.SaveAsync();
+    }
+
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.StopCurrentOperation();
+    }
+
+    private void ResetTranslations_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ResetTranslations();
+    }
+
+    private void ResetExtraction_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ResetExtraction();
+    }
+
+    private void ExportTranslationsText_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Win32.SaveFileDialog
+        {
+            Title = "번역 텍스트 내보내기",
+            Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*",
+            FileName = "EraTranslator-export.txt",
+            InitialDirectory = Directory.Exists(_viewModel.GameDirectory)
+                ? _viewModel.GameDirectory
+                : Environment.CurrentDirectory,
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            _viewModel.ExportTranslationsToText(dialog.FileName);
+        }
+    }
+
+    private void ImportTranslationsText_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Win32.OpenFileDialog
+        {
+            Title = "번역 텍스트 가져오기",
+            Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*",
+            InitialDirectory = Directory.Exists(_viewModel.GameDirectory)
+                ? _viewModel.GameDirectory
+                : Environment.CurrentDirectory,
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            _viewModel.ImportTranslationsFromText(dialog.FileName);
+        }
+    }
+
+    private void OpenGlobalReplace_Click(object sender, RoutedEventArgs e)
+    {
+        var replaceViewModel = _viewModel.CreateGlobalReplaceViewModel();
+        var dialog = new GlobalReplaceWindow(replaceViewModel)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            _viewModel.ApplyGlobalReplace(replaceViewModel);
+        }
+    }
+
+    private void BrowseGameDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "Emuera 게임 루트를 선택하세요."
+        };
+
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            _viewModel.GameDirectory = dialog.SelectedPath;
+        }
+    }
+
+    private void BrowseOutputDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "번역 결과를 저장할 폴더를 선택하세요."
+        };
+
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            _viewModel.OutputDirectory = dialog.SelectedPath;
+        }
+    }
+
+    private void OpenTranslationSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var settingsViewModel = _viewModel.CreateTranslationSettingsViewModel();
+        var dialog = new TranslationSettingsWindow(settingsViewModel)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            _viewModel.ApplyTranslationSettings(settingsViewModel);
+        }
+    }
+
+    private void OpenUserDictionary_Click(object sender, RoutedEventArgs e)
+    {
+        var dictionaryViewModel = _viewModel.CreateUserDictionaryViewModel();
+        var dialog = new UserDictionaryWindow(dictionaryViewModel)
+        {
+            Owner = this,
+        };
+
+        dialog.ShowDialog();
+        _viewModel.ApplyUserDictionary(dictionaryViewModel);
+    }
+}
