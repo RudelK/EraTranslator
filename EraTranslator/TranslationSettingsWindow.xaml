@@ -437,6 +437,8 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <CheckBox Grid.Row="0"
@@ -445,8 +447,19 @@
                                       IsChecked="{Binding EnableRequestResponseLogging}" />
 
                             <TextBlock Grid.Row="1"
+                                       Margin="0,0,0,8"
                                        Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                        Text="{Binding RequestResponseLogPath}"
+                                       TextWrapping="Wrap" />
+
+                            <CheckBox Grid.Row="2"
+                                      Margin="0,0,0,8"
+                                      Content="결과 로그 파일 기록"
+                                      IsChecked="{Binding EnableResultStateLogging}" />
+
+                            <TextBlock Grid.Row="3"
+                                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                       Text="{Binding ResultStateLogPath}"
                                        TextWrapping="Wrap" />
                         </Grid>
                     </GroupBox>
@@ -454,7 +467,7 @@
                     <TextBlock Grid.Row="1"
                                Margin="0,12,0,0"
                                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                               Text="기본값은 꺼짐입니다. 켜면 실행파일과 같은 폴더에 요청/응답 순차 로그를 남깁니다."
+                               Text="기본값은 꺼짐입니다. 실행 로그는 API 요청/응답을, 결과 로그는 결과 저장과 translation-progress 저장 원인을 추적합니다."
                                TextWrapping="Wrap" />
                 </Grid>
             </TabItem>

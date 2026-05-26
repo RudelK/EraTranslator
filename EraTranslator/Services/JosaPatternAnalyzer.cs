@@ -12,65 +12,110 @@ public sealed partial class JosaPatternAnalyzer
         {
             ["는"] = ("는", "는"),
             ["은"] = ("는", "는"),
+            ["은/는"] = ("는", "는"),
+            ["는/은"] = ("는", "는"),
             ["(은)는"] = ("는", "는"),
             ["은(는)"] = ("는", "는"),
+            ["는(은)"] = ("는", "는"),
             ["가"] = ("가", "이"),
             ["이"] = ("가", "이"),
+            ["이/가"] = ("가", "이"),
+            ["가/이"] = ("가", "이"),
             ["(이)가"] = ("가", "이"),
             ["이(가)"] = ("가", "이"),
+            ["가(이)"] = ("가", "이"),
             ["를"] = ("를", "을"),
             ["을"] = ("를", "을"),
+            ["을/를"] = ("를", "을"),
+            ["를/을"] = ("를", "을"),
             ["(을)를"] = ("를", "을"),
             ["을(를)"] = ("를", "을"),
+            ["를(을)"] = ("를", "을"),
             ["와"] = ("와", "과"),
             ["과"] = ("와", "과"),
+            ["와/과"] = ("와", "과"),
+            ["과/와"] = ("와", "과"),
             ["(와)과"] = ("와", "과"),
             ["와(과)"] = ("와", "과"),
+            ["과(와)"] = ("와", "과"),
             ["로"] = ("로", "로"),
             ["으로"] = ("로", "으로"),
+            ["으로/로"] = ("로", "으로"),
+            ["로/으로"] = ("로", "으로"),
             ["(로)으로"] = ("로", "으로"),
             ["로(으로)"] = ("로", "으로"),
+            ["으로(로)"] = ("로", "으로"),
             ["랑"] = ("랑", "랑"),
             ["이랑"] = ("랑", "랑"),
+            ["이랑/랑"] = ("랑", "랑"),
+            ["랑/이랑"] = ("랑", "랑"),
             ["(랑)이랑"] = ("랑", "랑"),
             ["랑(이랑)"] = ("랑", "랑"),
+            ["이랑(랑)"] = ("랑", "랑"),
             ["며"] = ("며", "며"),
             ["이며"] = ("며", "며"),
+            ["이며/며"] = ("며", "며"),
+            ["며/이며"] = ("며", "며"),
             ["(며)이며"] = ("며", "며"),
             ["며(이며)"] = ("며", "며"),
+            ["이며(며)"] = ("며", "며"),
             ["고"] = ("고", "고"),
             ["이고"] = ("고", "고"),
+            ["이고/고"] = ("고", "고"),
+            ["고/이고"] = ("고", "고"),
             ["(고)이고"] = ("고", "고"),
             ["고(이고)"] = ("고", "고"),
+            ["이고(고)"] = ("고", "고"),
             ["라"] = ("라", "라"),
             ["이라"] = ("라", "라"),
+            ["이라/라"] = ("라", "라"),
+            ["라/이라"] = ("라", "라"),
             ["(라)이라"] = ("라", "라"),
             ["라(이라)"] = ("라", "라"),
+            ["이라(라)"] = ("라", "라"),
             ["다"] = ("다", "다"),
             ["이다"] = ("다", "다"),
+            ["이다/다"] = ("다", "다"),
+            ["다/이다"] = ("다", "다"),
             ["(다)이다"] = ("다", "다"),
             ["다(이다)"] = ("다", "다"),
+            ["이다(다)"] = ("다", "다"),
             ["였"] = ("였", "였"),
             ["이였"] = ("였", "였"),
             ["이었"] = ("였", "였"),
+            ["이었/였"] = ("였", "였"),
+            ["였/이었"] = ("였", "였"),
             ["(였)이었"] = ("였", "였"),
             ["였(이었)"] = ("였", "였"),
+            ["이었(였)"] = ("였", "였"),
             ["여"] = ("여", "여"),
             ["이여"] = ("여", "여"),
+            ["이여/여"] = ("여", "여"),
+            ["여/이여"] = ("여", "여"),
             ["(여)이여"] = ("여", "여"),
             ["여(이여)"] = ("여", "여"),
+            ["이여(여)"] = ("여", "여"),
             ["야"] = ("야", "야"),
             ["이야"] = ("야", "야"),
+            ["이야/야"] = ("야", "야"),
+            ["야/이야"] = ("야", "야"),
             ["(야)이야"] = ("야", "야"),
             ["야(이야)"] = ("야", "야"),
+            ["이야(야)"] = ("야", "야"),
             ["나"] = ("나", "이나"),
             ["이나"] = ("나", "이나"),
+            ["이나/나"] = ("나", "이나"),
+            ["나/이나"] = ("나", "이나"),
             ["(나)이나"] = ("나", "이나"),
             ["나(이나)"] = ("나", "이나"),
+            ["이나(나)"] = ("나", "이나"),
             ["면"] = ("면", "이면"),
             ["이면"] = ("면", "이면"),
+            ["이면/면"] = ("면", "이면"),
+            ["면/이면"] = ("면", "이면"),
             ["(면)이면"] = ("면", "이면"),
             ["면(이면)"] = ("면", "이면"),
+            ["이면(면)"] = ("면", "이면"),
             ["의"] = ("의", "의"),
             ["에게"] = ("에게", "에게"),
         };
@@ -103,6 +148,37 @@ public sealed partial class JosaPatternAnalyzer
 
         var analysis = BuildAnalysis(occurrences, packageInfo);
         return new JosaRewriteTextResult(buffer, analysis, occurrences.Any(occurrence => occurrence.RequiresErh));
+    }
+
+    public string RewriteLeadingSplitParticle(string previousText, string currentText)
+    {
+        if (string.IsNullOrWhiteSpace(previousText) || string.IsNullOrWhiteSpace(currentText))
+        {
+            return currentText;
+        }
+
+        var previousMatch = TrailingJosaExpressionPattern().Match(previousText);
+        if (!previousMatch.Success)
+        {
+            return currentText;
+        }
+
+        var leadingWhitespaceLength = currentText.Length - currentText.TrimStart().Length;
+        var leadingWhitespace = currentText[..leadingWhitespaceLength];
+        var trimmedCurrent = currentText[leadingWhitespaceLength..];
+        if (!TryMatchLeadingParticle(trimmedCurrent, out var particleText, out var contentStart))
+        {
+            return currentText;
+        }
+
+        if (!TryNormalizeParticle(particleText, out var particle))
+        {
+            return currentText;
+        }
+
+        var expression = NormalizeWhitespace(previousMatch.Groups["expr"].Value);
+        var rewritten = $"%조사만처리({expression},\"{particle.functionParticle}\")%{trimmedCurrent[contentStart..]}";
+        return leadingWhitespace + rewritten;
     }
 
     public IReadOnlyList<PlannedTextReplacement> CreateDocumentReplacements(
@@ -389,6 +465,37 @@ public sealed partial class JosaPatternAnalyzer
         return ParticleMappings.TryGetValue(text.Trim(), out particle);
     }
 
+    private static bool TryMatchLeadingParticle(string text, out string particleText, out int contentStart)
+    {
+        particleText = string.Empty;
+        contentStart = 0;
+
+        foreach (var key in ParticleMappings.Keys.OrderByDescending(key => key.Length))
+        {
+            if (!text.StartsWith(key, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var nextIndex = key.Length;
+            if (nextIndex < text.Length && !char.IsWhiteSpace(text[nextIndex]) && !IsJosaBoundary(text[nextIndex]))
+            {
+                continue;
+            }
+
+            particleText = key;
+            contentStart = nextIndex;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsJosaBoundary(char character)
+    {
+        return character is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '>' or '"' or '\'' or '…' or '。' or '、';
+    }
+
     private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)
     {
         var leftEnd = leftStart + leftLength;
@@ -405,8 +512,11 @@ public sealed partial class JosaPatternAnalyzer
     [GeneratedRegex("""%(?<base>플레이어|마스터|MASTER|타겟|TARGET|조교자|조수|ARG)(?<particle>으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)%""", RegexOptions.Compiled)]
     private static partial Regex MacroPattern();
 
-    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%(?<particle>\(은\)는|은\(는\)|\(이\)가|이\(가\)|\(을\)를|을\(를\)|\(와\)과|와\(과\)|\(로\)으로|로\(으로\)|\(랑\)이랑|랑\(이랑\)|\(며\)이며|며\(이며\)|\(고\)이고|고\(이고\)|\(라\)이라|라\(이라\)|\(다\)이다|다\(이다\)|\(였\)이었|였\(이었\)|\(여\)이여|여\(이여\)|\(야\)이야|야\(이야\)|\(나\)이나|나\(이나\)|\(면\)이면|면\(이면\)|의|에게)""", RegexOptions.Compiled)]
+    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%(?<particle>은/는|는/은|\(은\)는|은\(는\)|는\(은\)|이/가|가/이|\(이\)가|이\(가\)|가\(이\)|을/를|를/을|\(을\)를|을\(를\)|를\(을\)|와/과|과/와|\(와\)과|와\(과\)|과\(와\)|으로/로|로/으로|\(로\)으로|로\(으로\)|으로\(로\)|이랑/랑|랑/이랑|\(랑\)이랑|랑\(이랑\)|이랑\(랑\)|이며/며|며/이며|\(며\)이며|며\(이며\)|이며\(며\)|이고/고|고/이고|\(고\)이고|고\(이고\)|이고\(고\)|이라/라|라/이라|\(라\)이라|라\(이라\)|이라\(라\)|이다/다|다/이다|\(다\)이다|다\(이다\)|이다\(다\)|이었/였|였/이었|\(였\)이었|였\(이었\)|이었\(였\)|이여/여|여/이여|\(여\)이여|여\(이여\)|이여\(여\)|이야/야|야/이야|\(야\)이야|야\(이야\)|이야\(야\)|이나/나|나/이나|\(나\)이나|나\(이나\)|이나\(나\)|이면/면|면/이면|\(면\)이면|면\(이면\)|이면\(면\)|으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)""", RegexOptions.Compiled)]
     private static partial Regex PostfixPairPattern();
+
+    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%\s*$""", RegexOptions.Compiled)]
+    private static partial Regex TrailingJosaExpressionPattern();
 
     private enum JosaInputKind
     {

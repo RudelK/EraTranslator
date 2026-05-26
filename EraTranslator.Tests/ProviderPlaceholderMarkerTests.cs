@@ -20,6 +20,16 @@ public sealed class ProviderPlaceholderMarkerTests
     }
 
     [Fact]
+    public void DeepLMarker_EscapesXmlSensitiveCharacters()
+    {
+        var marked = ProviderPlaceholderMarker.MarkForDeepL(
+            "상위 함락 && TALENT < 3 && __PH0__",
+            ["%CALLNAME%"]);
+
+        Assert.Equal("상위 함락 &amp;&amp; TALENT &lt; 3 &amp;&amp; <era-ph idx=\"0\"/>", marked);
+    }
+
+    [Fact]
     public void PapagoMarker_RoundTripsPlaceholderTokens()
     {
         var placeholders = new[] { "%CALLNAME%" };

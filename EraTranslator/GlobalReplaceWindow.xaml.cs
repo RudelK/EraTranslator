@@ -9,6 +9,7 @@ public partial class GlobalReplaceWindow : Window
     {
         InitializeComponent();
         DataContext = viewModel;
+        PreviewKeyDown += GlobalReplaceWindow_OnPreviewKeyDown;
     }
 
     private void Apply_Click(object sender, RoutedEventArgs e)
@@ -19,5 +20,16 @@ public partial class GlobalReplaceWindow : Window
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         DialogResult = false;
+    }
+
+    private void GlobalReplaceWindow_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape)
+        {
+            return;
+        }
+
+        DialogResult = false;
+        e.Handled = true;
     }
 }

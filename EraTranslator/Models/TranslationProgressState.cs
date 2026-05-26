@@ -11,7 +11,7 @@ public sealed class TranslationProgressItemState
 {
     public string SegmentId { get; init; } = string.Empty;
 
-    public string Status { get; init; } = "대기";
+    public string Status { get; init; } = "번역 대기";
 
     public string ValidationStatus { get; init; } = "검증 전";
 

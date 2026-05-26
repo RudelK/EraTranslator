@@ -18,6 +18,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private double _temperature = 0.3;
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
+    private bool _enableResultStateLogging;
     private bool _excludeNonSourceText;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
@@ -153,6 +154,12 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set => SetProperty(ref _enableRequestResponseLogging, value);
     }
 
+    public bool EnableResultStateLogging
+    {
+        get => _enableResultStateLogging;
+        set => SetProperty(ref _enableResultStateLogging, value);
+    }
+
     public bool ExcludeNonSourceText
     {
         get => _excludeNonSourceText;
@@ -172,6 +179,8 @@ public sealed class TranslationSettingsViewModel : BindableBase
     }
 
     public string RequestResponseLogPath => new FileRequestResponseLogger().LogFilePath;
+
+    public string ResultStateLogPath => new FileResultStateLogger().LogFilePath;
 
     public string PapagoClientId
     {
@@ -278,6 +287,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         Temperature = source.Temperature;
         DisableThinking = source.DisableThinking;
         EnableRequestResponseLogging = source.EnableRequestResponseLogging;
+        EnableResultStateLogging = source.EnableResultStateLogging;
         ExcludeNonSourceText = source.ExcludeNonSourceText;
         SystemPromptTemplate = source.SystemPromptTemplate;
         RetryPromptTemplate = source.RetryPromptTemplate;

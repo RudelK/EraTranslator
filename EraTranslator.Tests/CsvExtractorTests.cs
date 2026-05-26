@@ -72,7 +72,11 @@ public sealed class CsvExtractorTests
 
         Assert.Contains(result.segments, segment => segment.OriginalText == "メイン ヒロイン" && segment.PreserveWhitespace);
         Assert.Contains(result.segments, segment => segment.OriginalText == "マイ レディ" && segment.PreserveWhitespace);
-        Assert.Contains(result.segments, segment => segment.OriginalText == "初回 挨拶" && segment.PreserveWhitespace);
         Assert.Contains(result.segments, segment => segment.OriginalText == "おは よう" && segment.PreserveWhitespace);
+        Assert.Contains(result.segments, segment =>
+            segment.OriginalText == "初回 挨拶"
+            && segment.IsReferenceBearingKey
+            && segment.SymbolNamespace == "CSTR"
+            && !segment.PreserveWhitespace);
     }
 }

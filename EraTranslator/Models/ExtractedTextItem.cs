@@ -5,8 +5,9 @@ namespace EraTranslator.Models;
 
 public sealed class ExtractedTextItem : BindableBase
 {
+    private const string PendingStatus = "번역 대기";
     private string _translatedText = string.Empty;
-    private string _status = "대기";
+    private string _status = PendingStatus;
     private string _translationError = string.Empty;
     private string _validationStatus = "검증 전";
     private bool _canSave = true;
@@ -96,13 +97,13 @@ public sealed class ExtractedTextItem : BindableBase
     public bool IsExcluded => string.Equals(_status, "제외됨", StringComparison.Ordinal);
 
     public bool NeedsTranslation =>
-        string.Equals(_status, "대기", StringComparison.Ordinal)
+        IsPendingStatus(_status)
         || string.Equals(_status, "번역 실패", StringComparison.Ordinal)
         || string.Equals(_status, "중지됨", StringComparison.Ordinal);
 
     public bool HasPersistableState =>
         IsTranslatedSuccessfully
-        || !string.Equals(_status, "대기", StringComparison.Ordinal)
+        || !IsPendingStatus(_status)
         || !string.IsNullOrWhiteSpace(_translatedText)
         || !string.IsNullOrWhiteSpace(_translationError)
         || !string.Equals(_validationStatus, "검증 전", StringComparison.Ordinal);
@@ -175,7 +176,7 @@ public sealed class ExtractedTextItem : BindableBase
     public void ResetTranslationState()
     {
         _translatedText = string.Empty;
-        _status = "대기";
+        _status = PendingStatus;
         _translationError = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
@@ -186,8 +187,9 @@ public sealed class ExtractedTextItem : BindableBase
     {
         switch (status)
         {
+            case PendingStatus:
             case "대기":
-                _status = "대기";
+                _status = PendingStatus;
                 _translationError = string.Empty;
                 _validationStatus = "검증 전";
                 _canSave = true;
@@ -202,7 +204,7 @@ public sealed class ExtractedTextItem : BindableBase
                 _status = "제외됨";
                 _translationError = string.IsNullOrWhiteSpace(_translationError) ? "수동으로 제외 상태로 표시했습니다." : _translationError;
                 _validationStatus = "언어 제외";
-                _canSave = false;
+                _canSave = true;
                 _translatedText = string.Empty;
                 break;
             case "수동 수정":
@@ -269,14 +271,19 @@ public sealed class ExtractedTextItem : BindableBase
             ? "중지됨"
             : state.Status == "검증 실패"
                 ? "검수 필요"
-                : string.IsNullOrWhiteSpace(state.Status) ? "대기" : state.Status;
+                : NormalizePersistedStatus(state.Status);
         var validationStatus = status == "중지됨"
             ? "검증 전"
             : string.IsNullOrWhiteSpace(state.ValidationStatus) ? "검증 전" : state.ValidationStatus;
         var translationError = status == "중지됨" && string.IsNullOrWhiteSpace(state.TranslationError)
             ? "이전 실행에서 번역이 중단되었습니다."
             : state.TranslationError;
-        var canSave = status == "중지됨" ? false : state.CanSave;
+        var canSave = status switch
+        {
+            "중지됨" => false,
+            "제외됨" => true,
+            _ => state.CanSave,
+        };
 
         ApplyTranslationState(
             status,
@@ -299,6 +306,19 @@ public sealed class ExtractedTextItem : BindableBase
         IsReferenceBearingKey && !string.IsNullOrWhiteSpace(TranslatedText)
             ? TranslationQualityRules.NormalizeTranslatedText(FileType, TranslatedText, PreserveWhitespace)
             : string.Empty;
+
+    private static bool IsPendingStatus(string? status)
+    {
+        return string.Equals(status, PendingStatus, StringComparison.Ordinal)
+            || string.Equals(status, "대기", StringComparison.Ordinal);
+    }
+
+    private static string NormalizePersistedStatus(string? status)
+    {
+        return string.IsNullOrWhiteSpace(status) || string.Equals(status, "대기", StringComparison.Ordinal)
+            ? PendingStatus
+            : status;
+    }
 
     private void RaiseStateChangedProperties()
     {

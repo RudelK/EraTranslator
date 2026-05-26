@@ -295,7 +295,7 @@ public sealed class CsvSchemaClassifier
                 {
                     Role = role,
                     ShouldExtract = true,
-                    PreserveWhitespace = CharacterWhitespacePreservingContainers.Contains(container),
+                    PreserveWhitespace = false,
                     SymbolNamespace = symbolNamespace,
                     OriginalSymbolKey = value,
                     IsReferenceBearingKey = !string.IsNullOrWhiteSpace(symbolNamespace),

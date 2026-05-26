@@ -116,6 +116,6 @@ public static partial class TextHeuristics
     [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", RegexOptions.Compiled)]
     private static partial Regex PlaceholderOnlyPattern();
 
-    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|BASE|ABL|PALAM|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled)]
+    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|BASE|ABL|PALAM|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled)]
     private static partial Regex ErbSymbolReferencePattern();
 }

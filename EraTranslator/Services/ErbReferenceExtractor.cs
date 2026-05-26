@@ -14,6 +14,7 @@ public sealed partial class ErbReferenceExtractor
         "CSTR",
         "STR",
         "ITEM",
+        "ITEMPRICE",
         "BASE",
         "ABL",
         "PALAM",

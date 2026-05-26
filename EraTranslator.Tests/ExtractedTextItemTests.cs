@@ -56,6 +56,31 @@ public sealed class ExtractedTextItemTests
     }
 
     [Fact]
+    public void TranslatedSymbolKey_RemovesSpacesForCsvReferenceBearingKeyWhenWhitespaceIsNotPreserved()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "CSV",
+            RelativePath = "Chara1.csv",
+            EncodingName = "utf-8",
+            SegmentType = "csv-CharacterSheet-field-1",
+            LineNumber = 1,
+            OriginalText = "彼氏姓",
+            CsvFieldRole = CsvFieldRole.MetaKey,
+            PreserveWhitespace = false,
+            SymbolNamespace = "CSTR",
+            OriginalSymbolKey = "彼氏姓",
+            IsReferenceBearingKey = true,
+        };
+
+        item.TranslatedText = "남자친구 성씨";
+
+        Assert.Equal("남자친구성씨", item.TranslatedSymbolKey);
+    }
+
+    [Fact]
     public void ApplyManualStatusOverride_UpdatesValidationAndSaveState()
     {
         var item = new ExtractedTextItem
@@ -83,6 +108,33 @@ public sealed class ExtractedTextItemTests
         Assert.Equal("검수 필요", item.Status);
         Assert.Equal("검증 실패", item.ValidationStatus);
         Assert.False(item.CanSave);
+    }
+
+    [Fact]
+    public void ApplyManualStatusOverride_ExcludedStateRemainsSaveableAndClearsTranslation()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "번역",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+        };
+
+        item.ApplyManualStatusOverride("제외됨");
+
+        Assert.Equal("제외됨", item.Status);
+        Assert.Equal("언어 제외", item.ValidationStatus);
+        Assert.True(item.CanSave);
+        Assert.Equal(string.Empty, item.TranslatedText);
     }
 
     [Fact]

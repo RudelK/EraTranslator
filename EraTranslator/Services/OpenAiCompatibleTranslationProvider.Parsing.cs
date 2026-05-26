@@ -199,6 +199,11 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         normalized = PipeBeforePlaceholderPattern().Replace(normalized, string.Empty);
         normalized = PipeAfterPlaceholderPattern().Replace(normalized, string.Empty);
         normalized = TrailingPipePattern().Replace(normalized, string.Empty);
+        if (request.Placeholders.Count > 0)
+        {
+            normalized = TrailingPlaceholderPipeArtifactPattern().Replace(normalized, string.Empty);
+        }
+
         return normalized.Trim();
     }
 
@@ -468,4 +473,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
     [GeneratedRegex(@"\|$", RegexOptions.Compiled)]
     private static partial Regex TrailingPipePattern();
+
+    [GeneratedRegex(@"(?:_+\|_*)+$", RegexOptions.Compiled)]
+    private static partial Regex TrailingPlaceholderPipeArtifactPattern();
 }

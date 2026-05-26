@@ -21,6 +21,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private readonly TranslationTextExchangeService _translationTextExchangeService;
     private readonly SourceLanguageFilterService _sourceLanguageFilterService;
     private readonly EzTransXpInstallationService _ezTransXpInstallationService;
+    private readonly FileResultStateLogger _resultStateLogger = new();
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
     private ScanSession? _session;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -34,10 +35,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private string _currentOperationDetail = "대기 중";
     private double _progressValue;
     private ExtractedTextItem? _selectedItem;
+    private string _selectedItemTranslatedTextEditor = string.Empty;
     private bool _warningsOnly;
+    private bool _refreshGridDuringTranslatedTextEdit;
     private bool _isBusy;
     private string _filterText = string.Empty;
     private bool _useRegexFilter;
+    private string _selectedSearchFieldFilter = "전체";
     private string _selectedFileTypeFilter = "전체";
     private string _selectedStatusFilter = "전체";
     private SaveMode _selectedSaveMode = SaveMode.ExportCopy;
@@ -51,6 +55,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private double _temperature = 0.3;
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
+    private bool _enableResultStateLogging;
     private bool _excludeNonSourceText;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
@@ -63,6 +68,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private string _activeProjectDataDirectory = string.Empty;
     private readonly Stopwatch _translationProgressStopwatch = new();
     private bool _resumeTranslationTimingOnNextRun;
+    private bool _isSavingResults;
 
     public MainWindowViewModel(
         FileScanner? fileScanner = null,
@@ -95,11 +101,29 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         _ezTransXpInstallationService = ezTransXpInstallationService ?? new EzTransXpInstallationService();
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
+        SearchFieldFilters = ["전체", "파일", "원문", "번역문", "참조 상태"];
         FileTypeFilters = ["전체", "ERB", "CSV"];
-        StatusFilters = ["전체", "대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
+        StatusFilters = ["전체", "번역 대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
         SaveModeOptions = [SaveMode.ExportCopy, SaveMode.InPlaceWithBackup];
         ItemsView = CollectionViewSource.GetDefaultView(Items);
         ItemsView.Filter = FilterItem;
+        if (ItemsView is ICollectionViewLiveShaping liveShaping)
+        {
+            if (liveShaping.CanChangeLiveFiltering)
+            {
+                liveShaping.IsLiveFiltering = false;
+            }
+
+            if (liveShaping.CanChangeLiveSorting)
+            {
+                liveShaping.IsLiveSorting = false;
+            }
+
+            if (liveShaping.CanChangeLiveGrouping)
+            {
+                liveShaping.IsLiveGrouping = false;
+            }
+        }
         _globalUserDictionary = _userDictionaryService.LoadGlobal();
 
         var sampleDirectory = detectSampleDirectory ? TryFindSampleDirectory() : null;
@@ -134,9 +158,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public IReadOnlyList<string> FileTypeFilters { get; }
 
+    public IReadOnlyList<string> SearchFieldFilters { get; }
+
     public IReadOnlyList<string> StatusFilters { get; }
 
-    public IReadOnlyList<string> EditableStatusOptions { get; } = ["대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
+    public IReadOnlyList<string> EditableStatusOptions { get; } = ["번역 대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
 
     public IReadOnlyList<SaveMode> SaveModeOptions { get; }
 
@@ -420,6 +446,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 return;
             }
 
+            CommitSelectedItemTranslatedTextEdit();
+
             if (_selectedItem is not null)
             {
                 _selectedItem.PropertyChanged -= SelectedItemOnPropertyChanged;
@@ -431,9 +459,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 _selectedItem.PropertyChanged += SelectedItemOnPropertyChanged;
             }
 
+            SyncSelectedItemPreview();
             RaisePropertyChanged();
             RaisePropertyChanged(nameof(SelectedItemLogText));
         }
+    }
+
+    public string SelectedItemOriginalPreviewText => SelectedItem?.OriginalText ?? string.Empty;
+
+    public string SelectedItemTranslatedTextEditor
+    {
+        get => _selectedItemTranslatedTextEditor;
+        set => SetProperty(ref _selectedItemTranslatedTextEditor, value);
     }
 
     public string SelectedItemLogText
@@ -577,6 +614,30 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public bool CanBrowseDirectories => !IsBusy;
 
+    public bool RefreshGridDuringTranslatedTextEdit
+    {
+        get => _refreshGridDuringTranslatedTextEdit;
+        set
+        {
+            if (SetProperty(ref _refreshGridDuringTranslatedTextEdit, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableResultStateLogging
+    {
+        get => _enableResultStateLogging;
+        set
+        {
+            if (SetProperty(ref _enableResultStateLogging, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
     public bool IsExportSaveMode => SelectedSaveMode == SaveMode.ExportCopy;
 
     public bool IsInPlaceSaveMode => SelectedSaveMode == SaveMode.InPlaceWithBackup;
@@ -606,6 +667,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         set
         {
             if (SetProperty(ref _useRegexFilter, value))
+            {
+                ItemsView.Refresh();
+            }
+        }
+    }
+
+    public string SelectedSearchFieldFilter
+    {
+        get => _selectedSearchFieldFilter;
+        set
+        {
+            if (SetProperty(ref _selectedSearchFieldFilter, value))
             {
                 ItemsView.Refresh();
             }
@@ -661,7 +734,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 var session = await Task.Run(() => _fileScanner.Scan(GameDirectory, scanProgress, cancellationToken), cancellationToken);
                 var restoreResult = ApplySession(session, restoreProgress: false, previousSession, previousProgress);
                 _projectStatePersistenceService.SaveScanSession(session, projectDataDirectory);
-                SaveTranslationProgress();
+                SaveTranslationProgress("ScanAsync completed");
 
                 SummaryText =
                     $"문서 {session.Metrics.GetValueOrDefault("Documents")}개, " +
@@ -759,7 +832,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                         BuildSettings(),
                         _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
                         progress,
-                        () => SaveTranslationProgressIfDue(),
+                        () => SaveTranslationProgressIfDue("TranslatePendingAsync progress callback"),
                         cancellationToken);
                 }
                 finally
@@ -767,7 +840,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                     _suppressItemStatePersistence = false;
                 }
 
-                SaveTranslationProgress(force: true);
+                SaveTranslationProgress(force: true, reason: "TranslatePendingAsync completed");
                 var remainingCount = translationScope.Count(item => item.NeedsTranslation);
                 var completedCount = translationScope.Count(item => item.IsTranslatedSuccessfully);
                 StopTranslationTiming(resumeOnNextRun: false);
@@ -807,22 +880,50 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             async cancellationToken =>
             {
                 CurrentOperationDetail = "저장 준비 중";
+                _isSavingResults = true;
+                LogResultState(
+                    "RESULT_SAVE_START",
+                    "결과 저장을 시작합니다.",
+                    new Dictionary<string, string>
+                    {
+                        ["SaveMode"] = SelectedSaveMode.ToString(),
+                        ["GameDirectory"] = GameDirectory,
+                        ["OutputDirectory"] = OutputDirectory,
+                        ["ProjectDataDirectory"] = GetProjectDataDirectory(_session.GameRoot),
+                        ["ItemCount"] = Items.Count.ToString(),
+                    });
                 var saveProgress = new Progress<(double value, string detail)>(tuple =>
                 {
                     ProgressValue = tuple.value;
                     CurrentOperationDetail = tuple.detail;
                 });
-                var writeResult = await Task.Run(
-                    () => _outputWriter.Save(_session, OutputDirectory, SelectedSaveMode, saveProgress, cancellationToken),
-                    cancellationToken);
+                try
+                {
+                    var writeResult = await Task.Run(
+                        () => _outputWriter.Save(_session, OutputDirectory, SelectedSaveMode, saveProgress, cancellationToken),
+                        cancellationToken);
 
-                StatusText = SelectedSaveMode == SaveMode.ExportCopy
-                    ? $"{writeResult.WrittenFiles.Count}개 파일을 출력 폴더에 저장했습니다."
-                    : $"{writeResult.WrittenFiles.Count}개 파일을 원본에 반영했고, {writeResult.BackupFiles.Count}개 백업을 생성했습니다.";
-                CurrentOperationDetail = writeResult.WrittenFiles.Count == 0
-                    ? "저장할 번역 항목 없음"
-                    : $"저장 완료: {writeResult.WrittenFiles.Count}개 파일";
-                ProgressValue = 1.0;
+                    StatusText = SelectedSaveMode == SaveMode.ExportCopy
+                        ? $"{writeResult.WrittenFiles.Count}개 파일을 출력 폴더에 저장했습니다."
+                        : $"{writeResult.WrittenFiles.Count}개 파일을 원본에 반영했고, {writeResult.BackupFiles.Count}개 백업을 생성했습니다.";
+                    CurrentOperationDetail = writeResult.WrittenFiles.Count == 0
+                        ? "저장할 번역 항목 없음"
+                        : $"저장 완료: {writeResult.WrittenFiles.Count}개 파일";
+                    ProgressValue = 1.0;
+                    LogResultState(
+                        "RESULT_SAVE_END",
+                        "결과 저장이 완료되었습니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["WrittenFiles"] = writeResult.WrittenFiles.Count.ToString(),
+                            ["BackupFiles"] = writeResult.BackupFiles.Count.ToString(),
+                            ["SkippedFiles"] = writeResult.SkippedFiles.Count.ToString(),
+                        });
+                }
+                finally
+                {
+                    _isSavingResults = false;
+                }
             });
     }
 
@@ -853,7 +954,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         ApplySourceLanguageFilter();
-        SaveTranslationProgress();
+        SaveTranslationProgress("ResetTranslations");
         StatusText = "번역 상태를 리셋했습니다.";
         CurrentOperationDetail = "번역문, 실패 상태, 검증 상태를 초기화했습니다.";
         ItemsView.Refresh();
@@ -929,7 +1030,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             _suppressItemStatePersistence = false;
         }
 
-        SaveTranslationProgress();
+        SaveTranslationProgress("ImportTranslationsFromText");
         ItemsView.Refresh();
         StatusText = updatedCount == 0
             ? "적용할 번역문을 찾지 못했습니다."
@@ -942,8 +1043,6 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         var translatedCount = Items.Count(item => !string.IsNullOrWhiteSpace(item.TranslatedText));
         return new GlobalReplaceViewModel
         {
-            SearchText = FilterText,
-            UseRegex = UseRegexFilter,
             ScopeDescription = $"현재 프로젝트의 번역문 {translatedCount}개를 대상으로 전역 검색/치환을 적용합니다.",
         };
     }
@@ -1005,10 +1104,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             _suppressItemStatePersistence = false;
         }
 
-        SaveTranslationProgress();
+        SaveTranslationProgress("ApplyGlobalReplace");
         ItemsView.Refresh();
-        FilterText = replaceViewModel.SearchText;
-        UseRegexFilter = replaceViewModel.UseRegex;
         StatusText = updatedCount == 0
             ? "치환할 번역문을 찾지 못했습니다."
             : $"{updatedCount}개 번역문에 전역 치환을 적용했습니다.";
@@ -1039,8 +1136,39 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             _suppressItemStatePersistence = false;
         }
 
-        RequestItemsViewRefresh();
-        SaveTranslationProgress();
+        if (RefreshGridDuringTranslatedTextEdit)
+        {
+            RequestItemsViewRefresh();
+        }
+
+        SaveTranslationProgress("HandleTranslatedTextEdited");
+    }
+
+    public void CommitSelectedItemTranslatedTextEdit()
+    {
+        if (SelectedItem is null)
+        {
+            if (!string.IsNullOrEmpty(SelectedItemTranslatedTextEditor))
+            {
+                SelectedItemTranslatedTextEditor = string.Empty;
+            }
+
+            return;
+        }
+
+        if (string.Equals(SelectedItem.TranslatedText, SelectedItemTranslatedTextEditor, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SelectedItem.TranslatedText = SelectedItemTranslatedTextEditor;
+        HandleTranslatedTextEdited(SelectedItem);
+        SelectedItemTranslatedTextEditor = SelectedItem.TranslatedText;
+    }
+
+    public void RefreshItemsView()
+    {
+        ItemsView.Refresh();
     }
 
     public TranslationSettingsViewModel CreateTranslationSettingsViewModel()
@@ -1074,6 +1202,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         Temperature = settingsViewModel.Temperature;
         DisableThinking = settingsViewModel.DisableThinking;
         EnableRequestResponseLogging = settingsViewModel.EnableRequestResponseLogging;
+        EnableResultStateLogging = settingsViewModel.EnableResultStateLogging;
         ExcludeNonSourceText = settingsViewModel.ExcludeNonSourceText;
         SystemPromptTemplate = settingsViewModel.SystemPromptTemplate;
         RetryPromptTemplate = settingsViewModel.RetryPromptTemplate;
@@ -1243,7 +1372,9 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             Temperature = config.Temperature;
             DisableThinking = config.DisableThinking;
             EnableRequestResponseLogging = config.EnableRequestResponseLogging;
+            EnableResultStateLogging = config.EnableResultStateLogging;
             ExcludeNonSourceText = config.ExcludeNonSourceText;
+            RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit;
             if (!string.IsNullOrWhiteSpace(config.SystemPromptTemplate))
             {
                 SystemPromptTemplate = config.SystemPromptTemplate;
@@ -1293,7 +1424,9 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             Temperature = Temperature,
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
+            EnableResultStateLogging = EnableResultStateLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
+            RefreshGridDuringTranslatedTextEdit = RefreshGridDuringTranslatedTextEdit,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
@@ -1337,43 +1470,67 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         RaisePropertyChanged(nameof(TranslationSettingsSummary));
     }
 
-    private void SaveTranslationProgress()
+    private void SaveTranslationProgress(string? reason = null, [System.Runtime.CompilerServices.CallerMemberName] string callerName = "")
     {
         if (_session is null)
         {
+            LogResultState("PROGRESS_SAVE_SKIPPED", "번역 진행 상태 저장을 건너뜁니다.", new Dictionary<string, string>
+            {
+                ["Reason"] = ResolveProgressSaveReason(reason, callerName),
+                ["Cause"] = "SessionMissing",
+            });
             return;
         }
 
         if (!Items.Any(item => item.HasPersistableState))
         {
+            LogResultState("PROGRESS_DELETE", "저장할 진행 상태가 없어 progress 파일을 삭제합니다.", new Dictionary<string, string>
+            {
+                ["Reason"] = ResolveProgressSaveReason(reason, callerName),
+                ["ProjectDataDirectory"] = GetProjectDataDirectory(_session.GameRoot),
+            });
             _projectStatePersistenceService.DeleteTranslationProgress(GetProjectDataDirectory(_session.GameRoot));
             return;
         }
 
+        var projectDataDirectory = GetProjectDataDirectory(_session.GameRoot);
+        var persistableCount = Items.Count(item => item.HasPersistableState);
+        LogResultState("PROGRESS_SAVE", "translation-progress.json을 저장합니다.", new Dictionary<string, string>
+        {
+            ["Reason"] = ResolveProgressSaveReason(reason, callerName),
+            ["ProjectDataDirectory"] = projectDataDirectory,
+            ["PersistableItemCount"] = persistableCount.ToString(),
+            ["IsSavingResults"] = _isSavingResults.ToString(),
+        });
         _projectStatePersistenceService.SaveTranslationProgress(GetProjectDataDirectory(_session.GameRoot), Items);
         _lastProgressSaveAtUtc = DateTimeOffset.UtcNow;
     }
 
-    private void SaveTranslationProgress(bool force)
+    private void SaveTranslationProgress(bool force, string? reason = null, [System.Runtime.CompilerServices.CallerMemberName] string callerName = "")
     {
         if (!force)
         {
-            SaveTranslationProgressIfDue();
+            SaveTranslationProgressIfDue(reason, callerName);
             return;
         }
 
-        SaveTranslationProgress();
+        SaveTranslationProgress(reason, callerName);
     }
 
-    private void SaveTranslationProgressIfDue()
+    private void SaveTranslationProgressIfDue(string? reason = null, [System.Runtime.CompilerServices.CallerMemberName] string callerName = "")
     {
         var now = DateTimeOffset.UtcNow;
         if (now - _lastProgressSaveAtUtc < TimeSpan.FromMilliseconds(750))
         {
+            LogResultState("PROGRESS_SAVE_DEBOUNCED", "진행 상태 저장을 debounce로 건너뜁니다.", new Dictionary<string, string>
+            {
+                ["Reason"] = ResolveProgressSaveReason(reason, callerName),
+                ["IsSavingResults"] = _isSavingResults.ToString(),
+            });
             return;
         }
 
-        SaveTranslationProgress();
+        SaveTranslationProgress(reason, callerName);
     }
 
     private TranslationProgressCarryoverResult ApplySession(
@@ -1435,7 +1592,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void ItemOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_suppressItemStatePersistence || sender is not ExtractedTextItem)
+        if (_suppressItemStatePersistence || sender is not ExtractedTextItem item)
         {
             return;
         }
@@ -1446,7 +1603,21 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslationError))
             || MatchesPropertyChange(e, nameof(ExtractedTextItem.CanSave)))
         {
-            SaveTranslationProgress();
+            var propertyName = string.IsNullOrWhiteSpace(e.PropertyName) ? "(all)" : e.PropertyName;
+            LogResultState(
+                "ITEM_PROPERTY_CHANGED",
+                "번역 진행 상태 저장 대상 속성이 변경되었습니다.",
+                new Dictionary<string, string>
+                {
+                    ["SegmentId"] = item.SegmentId,
+                    ["Property"] = propertyName,
+                    ["Status"] = item.Status,
+                    ["ValidationStatus"] = item.ValidationStatus,
+                    ["CanSave"] = item.CanSave.ToString(),
+                    ["TranslatedLength"] = item.TranslatedText.Length.ToString(),
+                    ["IsSavingResults"] = _isSavingResults.ToString(),
+                });
+            SaveTranslationProgress($"ItemOnPropertyChanged:{item.SegmentId}:{propertyName}");
         }
     }
 
@@ -1477,7 +1648,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         catch (OperationCanceledException)
         {
             onCanceled?.Invoke();
-            SaveTranslationProgress(force: true);
+            SaveTranslationProgress(force: true, reason: "RunBusyAsync canceled");
             StatusText = cancelStatusText;
             CurrentOperationDetail = cancelDetailFactory?.Invoke() ?? cancelDetailText;
         }
@@ -1524,17 +1695,24 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             return true;
         }
 
-        return IsFilterMatch(textItem.RelativePath)
-            || IsFilterMatch(textItem.OriginalText)
-            || IsFilterMatch(textItem.TranslatedText)
-            || IsFilterMatch(textItem.SourceKey)
-            || IsFilterMatch(textItem.SymbolNamespace)
-            || IsFilterMatch(textItem.OriginalSymbolKey)
-            || IsFilterMatch(textItem.TranslatedSymbolKey)
-            || IsFilterMatch(textItem.ReferenceResolutionStatus)
-            || IsFilterMatch(document?.JosaAnalysis.SyntaxType)
-            || IsFilterMatch(document?.JosaAnalysis.ErhLinkStatus)
-            || IsFilterMatch(document?.JosaAnalysis.PackageCompatibilityStatus);
+        return SelectedSearchFieldFilter switch
+        {
+            "파일" => IsFilterMatch(textItem.RelativePath),
+            "원문" => IsFilterMatch(textItem.OriginalText),
+            "번역문" => IsFilterMatch(textItem.TranslatedText),
+            "참조 상태" => IsFilterMatch(textItem.ReferenceResolutionStatus),
+            _ => IsFilterMatch(textItem.RelativePath)
+                || IsFilterMatch(textItem.OriginalText)
+                || IsFilterMatch(textItem.TranslatedText)
+                || IsFilterMatch(textItem.SourceKey)
+                || IsFilterMatch(textItem.SymbolNamespace)
+                || IsFilterMatch(textItem.OriginalSymbolKey)
+                || IsFilterMatch(textItem.TranslatedSymbolKey)
+                || IsFilterMatch(textItem.ReferenceResolutionStatus)
+                || IsFilterMatch(document?.JosaAnalysis.SyntaxType)
+                || IsFilterMatch(document?.JosaAnalysis.ErhLinkStatus)
+                || IsFilterMatch(document?.JosaAnalysis.PackageCompatibilityStatus),
+        };
     }
 
     private List<ExtractedTextItem> GetCurrentTranslationScope()
@@ -1654,6 +1832,16 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void SelectedItemOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.OriginalText)))
+        {
+            RaisePropertyChanged(nameof(SelectedItemOriginalPreviewText));
+        }
+
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText)))
+        {
+            SyncSelectedItemTranslatedTextEditor();
+        }
+
         if (MatchesPropertyChange(e, nameof(ExtractedTextItem.Status))
             || MatchesPropertyChange(e, nameof(ExtractedTextItem.ValidationStatus))
             || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslationError))
@@ -1669,6 +1857,17 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         return string.IsNullOrEmpty(e.PropertyName)
             || string.Equals(e.PropertyName, propertyName, StringComparison.Ordinal);
+    }
+
+    private void SyncSelectedItemPreview()
+    {
+        RaisePropertyChanged(nameof(SelectedItemOriginalPreviewText));
+        SyncSelectedItemTranslatedTextEditor();
+    }
+
+    private void SyncSelectedItemTranslatedTextEditor()
+    {
+        SelectedItemTranslatedTextEditor = SelectedItem?.TranslatedText ?? string.Empty;
     }
 
     private void RequestItemsViewRefresh()
@@ -1779,7 +1978,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         ItemsView.Refresh();
-        SaveTranslationProgress();
+        SaveTranslationProgress("ApplySourceLanguageFilter");
     }
 
     private string GetProjectDataDirectory(string? fallbackGameDirectory = null)
@@ -1792,6 +1991,21 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         return !string.IsNullOrWhiteSpace(GameDirectory)
             ? GameDirectory
             : fallbackGameDirectory ?? string.Empty;
+    }
+
+    private void LogResultState(string category, string message, IReadOnlyDictionary<string, string>? fields = null)
+    {
+        if (!EnableResultStateLogging)
+        {
+            return;
+        }
+
+        _resultStateLogger.Log(category, message, fields);
+    }
+
+    private static string ResolveProgressSaveReason(string? reason, string callerName)
+    {
+        return string.IsNullOrWhiteSpace(reason) ? callerName : reason;
     }
 
 }

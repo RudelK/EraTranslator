@@ -144,6 +144,279 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void SelectedItemPreview_ShowsOriginalAndTranslatedText()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+
+        viewModel.SelectedItem = item;
+
+        Assert.Equal("こんにちは", viewModel.SelectedItemOriginalPreviewText);
+        Assert.Equal("안녕하세요", viewModel.SelectedItemTranslatedTextEditor);
+
+        viewModel.SelectedItem = null;
+
+        Assert.Equal(string.Empty, viewModel.SelectedItemOriginalPreviewText);
+        Assert.Equal(string.Empty, viewModel.SelectedItemTranslatedTextEditor);
+    }
+
+    [Fact]
+    public void SelectedItemPreview_EditCommitsAndPropagatesToSameOriginalText()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithDuplicateOriginals(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+
+        var first = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:0");
+        var second = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:1");
+        viewModel.SelectedItem = first;
+        viewModel.SelectedItemTranslatedTextEditor = "안녕히 가세요";
+
+        viewModel.CommitSelectedItemTranslatedTextEdit();
+
+        Assert.Equal("안녕히 가세요", first.TranslatedText);
+        Assert.Equal("안녕히 가세요", second.TranslatedText);
+        Assert.Equal("안녕히 가세요", viewModel.SelectedItemTranslatedTextEditor);
+        Assert.Equal("수동 수정", first.Status);
+        Assert.Equal("수동 수정", second.Status);
+    }
+
+    [Fact]
+    public void HandleTranslatedTextEdited_DoesNotRefreshFilteredGridByDefault()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+        viewModel.FilterText = "안녕하세요";
+
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        item.TranslatedText = "잘 가";
+        viewModel.HandleTranslatedTextEdited(item);
+
+        Assert.False(viewModel.RefreshGridDuringTranslatedTextEdit);
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.UseRegexFilter = true;
+
+        Assert.Empty(viewModel.ItemsView.Cast<ExtractedTextItem>());
+    }
+
+    [Fact]
+    public void HandleTranslatedTextEdited_RefreshesFilteredGridWhenOptionEnabled()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+        viewModel.FilterText = "안녕하세요";
+        viewModel.RefreshGridDuringTranslatedTextEdit = true;
+
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        item.TranslatedText = "잘 가";
+        viewModel.HandleTranslatedTextEdited(item);
+
+        Assert.Empty(viewModel.ItemsView.Cast<ExtractedTextItem>());
+    }
+
+    [Fact]
+    public void HandleTranslatedTextEdited_DoesNotRefreshStatusFilteredGridUntilManualRefresh()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+        viewModel.SelectedStatusFilter = "번역 완료";
+
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        item.TranslatedText = "잘 가";
+        viewModel.HandleTranslatedTextEdited(item);
+
+        Assert.False(viewModel.RefreshGridDuringTranslatedTextEdit);
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.RefreshItemsView();
+
+        Assert.Empty(viewModel.ItemsView.Cast<ExtractedTextItem>());
+    }
+
+    [Fact]
+    public void GlobalReplace_DoesNotReadOrOverwriteFilterState()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+        viewModel.FilterText = "필터값";
+        viewModel.UseRegexFilter = true;
+
+        var replaceViewModel = viewModel.CreateGlobalReplaceViewModel();
+
+        Assert.Equal(string.Empty, replaceViewModel.SearchText);
+        Assert.False(replaceViewModel.UseRegex);
+
+        replaceViewModel.SearchText = "안녕";
+        replaceViewModel.ReplaceText = "반가워";
+        replaceViewModel.UseRegex = false;
+
+        viewModel.ApplyGlobalReplace(replaceViewModel);
+
+        Assert.Equal("필터값", viewModel.FilterText);
+        Assert.True(viewModel.UseRegexFilter);
+        Assert.Equal("반가워하세요", item.TranslatedText);
+    }
+
+    [Fact]
+    public void Filter_CanTargetSpecificSearchField()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Heroine.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            ReferenceResolutionStatus = "참조 확인됨",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+
+        viewModel.FilterText = "안녕하세요";
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.SelectedSearchFieldFilter = "원문";
+        Assert.Empty(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.SelectedSearchFieldFilter = "번역문";
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.FilterText = "Heroine";
+        viewModel.SelectedSearchFieldFilter = "파일";
+        Assert.Single(viewModel.ItemsView.Cast<ExtractedTextItem>());
+
+        viewModel.SelectedSearchFieldFilter = "참조 상태";
+        Assert.Empty(viewModel.ItemsView.Cast<ExtractedTextItem>());
+    }
+
+    [Fact]
     public void EzTransSettings_ArePersistedThroughConfig()
     {
         var configPath = Path.Combine(_rootPath, "Config");
@@ -166,6 +439,52 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         Assert.Equal(@"C:\Utils\ezTransXPggudor", second.EzTransInstallationPath);
         Assert.Equal(6, second.EzTransProcessCount);
+    }
+
+    [Fact]
+    public void RefreshGridDuringTranslatedTextEdit_IsPersistedThroughConfig()
+    {
+        var configPath = Path.Combine(_rootPath, "Config");
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var first = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        first.RefreshGridDuringTranslatedTextEdit = true;
+        first.FlushPendingConfigSave();
+
+        var second = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.True(second.RefreshGridDuringTranslatedTextEdit);
+    }
+
+    [Fact]
+    public void EnableResultStateLogging_IsPersistedThroughConfig()
+    {
+        var configPath = Path.Combine(_rootPath, "Config");
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var first = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        first.EnableResultStateLogging = true;
+        first.FlushPendingConfigSave();
+
+        var second = new MainWindowViewModel(
+            appConfigService: new AppConfigService(configPath),
+            userDictionaryService: new UserDictionaryService(appDataPath),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.True(second.EnableResultStateLogging);
     }
 
     [Fact]

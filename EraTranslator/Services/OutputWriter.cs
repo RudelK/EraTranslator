@@ -42,7 +42,7 @@ public sealed class OutputWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             var document = documents[index];
-            var translatedMap = BuildTranslationItemMap(session, document.DocumentId);
+            var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
             var josaDocumentReplacements = document.FileType == "ERB"
@@ -83,7 +83,7 @@ public sealed class OutputWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             var document = documents[index];
-            var translatedMap = BuildTranslationItemMap(session, document.DocumentId);
+            var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
             var josaDocumentReplacements = document.FileType == "ERB"
@@ -112,13 +112,14 @@ public sealed class OutputWriter
         return result;
     }
 
-    private static Dictionary<string, ExtractedTextItem> BuildTranslationItemMap(ScanSession session, string documentId)
+    private static Dictionary<string, ExtractedTextItem> BuildTranslationItemMap(
+        ScanSession session,
+        string documentId,
+        SymbolRewritePlan rewritePlan)
     {
         return session.Items
             .Where(item => item.DocumentId == documentId
-                && !string.IsNullOrWhiteSpace(item.TranslatedText)
-                && item.CanSave
-                && item.ValidationStatus == "통과")
+                && rewritePlan.CanWriteItem(item))
             .ToDictionary(item => item.SegmentId, item => item);
     }
 
@@ -130,7 +131,7 @@ public sealed class OutputWriter
         JosaSupportPackageInfo packageInfo)
     {
         return document.FileType == "CSV"
-            ? ApplyCsvTranslations(document, translatedItems)
+            ? ApplyCsvTranslations(document, translatedItems, rewritePlan)
             : ApplyErbTranslations(document, translatedItems, rewritePlan, josaDocumentReplacements, packageInfo);
     }
 
@@ -141,13 +142,30 @@ public sealed class OutputWriter
         IReadOnlyList<PlannedTextReplacement> josaDocumentReplacements,
         JosaSupportPackageInfo packageInfo)
     {
-        var replacements = document.Segments
-            .Where(segment => translatedItems.ContainsKey(segment.SegmentId))
-            .Select(segment => new PlannedTextReplacement(
+        var replacements = new List<PlannedTextReplacement>();
+        string? previousTranslatedValue = null;
+
+        foreach (var segment in document.Segments
+                     .Where(segment => translatedItems.ContainsKey(segment.SegmentId))
+                     .OrderBy(segment => segment.AbsoluteStart))
+        {
+            var translatedValue = RewriteTranslatedSegmentText(
+                translatedItems[segment.SegmentId],
+                rewritePlan,
+                rewritePlan.RenameMap,
+                packageInfo);
+
+            if (!string.IsNullOrWhiteSpace(previousTranslatedValue))
+            {
+                translatedValue = _josaPatternAnalyzer.RewriteLeadingSplitParticle(previousTranslatedValue, translatedValue);
+            }
+
+            replacements.Add(new PlannedTextReplacement(
                 segment.AbsoluteStart,
                 segment.Length,
-                RewriteTranslatedSegmentText(translatedItems[segment.SegmentId], rewritePlan.RenameMap, packageInfo)))
-            .ToList();
+                translatedValue));
+            previousTranslatedValue = translatedValue;
+        }
 
         if (rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var plannedReplacements))
         {
@@ -191,7 +209,10 @@ public sealed class OutputWriter
         return EnsureErhIncludeIfNeeded(buffer, document.NewLineSequence);
     }
 
-    private static string ApplyCsvTranslations(SourceFileDocument document, IReadOnlyDictionary<string, ExtractedTextItem> translatedItems)
+    private static string ApplyCsvTranslations(
+        SourceFileDocument document,
+        IReadOnlyDictionary<string, ExtractedTextItem> translatedItems,
+        SymbolRewritePlan rewritePlan)
     {
         var lines = SplitLines(document.OriginalText, document.NewLineSequence);
         var segmentsByLine = document.Segments
@@ -210,7 +231,7 @@ public sealed class OutputWriter
             var fields = CsvLineParser.ParseFields(lines[lineIndex]);
             var replacements = lineSegments.ToDictionary(
                 segment => segment.FieldIndex!.Value,
-                segment => translatedItems[segment.SegmentId].TranslatedText);
+                segment => rewritePlan.GetOutputTranslatedText(translatedItems[segment.SegmentId]));
             lines[lineIndex] = CsvLineParser.RebuildLine(fields, replacements);
         }
 
@@ -229,10 +250,11 @@ public sealed class OutputWriter
 
     private string RewriteTranslatedSegmentText(
         ExtractedTextItem item,
+        SymbolRewritePlan rewritePlan,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap,
         JosaSupportPackageInfo packageInfo)
     {
-        var symbolRewritten = _inlineSymbolReferenceRewriter.Rewrite(item.TranslatedText, renameMap);
+        var symbolRewritten = _inlineSymbolReferenceRewriter.Rewrite(rewritePlan.GetOutputTranslatedText(item), renameMap);
         var josaRewritten = _josaPatternAnalyzer.RewriteText(symbolRewritten, renameMap, packageInfo);
         return josaRewritten.Text;
     }

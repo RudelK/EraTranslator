@@ -65,4 +65,29 @@ PRINTFORMW "ABL:index:従順 * 10 + EXP:index:愛情経験 + CFLAG:index:依存�
             || string.Equals(reference.OriginalKey, "index:愛情経験", StringComparison.Ordinal)
             || string.Equals(reference.OriginalKey, "index:依存度", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Extract_FindsAdditionalSupportedNamespacesAndVariableIndexedKeys()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF MONEY > ITEMPRICE:子宮内避妊結界
+RETURNF TALENT:MASTER:警戒 * 5 + CFLAG:targetChara:主人監禁日数
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "ITEMPRICE"
+            && reference.OriginalKey == "子宮内避妊結界");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TALENT"
+            && reference.OriginalKey == "警戒");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "主人監禁日数");
+    }
 }

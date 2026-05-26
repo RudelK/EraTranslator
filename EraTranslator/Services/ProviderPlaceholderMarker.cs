@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Security;
 
 namespace EraTranslator.Services;
 
@@ -6,7 +7,8 @@ public static partial class ProviderPlaceholderMarker
 {
     public static string MarkForDeepL(string text, IReadOnlyList<string> placeholders)
     {
-        return ReplaceTokens(text, placeholders.Count, index => $"<era-ph idx=\"{index}\"/>");
+        var escaped = SecurityElement.Escape(text) ?? string.Empty;
+        return ReplaceTokens(escaped, placeholders.Count, index => $"<era-ph idx=\"{index}\"/>");
     }
 
     public static string UnmarkFromDeepL(string text, IReadOnlyList<string> placeholders)

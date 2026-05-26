@@ -32,19 +32,7 @@ public sealed class DeepLTranslationProvider(
                 : "https://api-free.deepl.com/v2/translate"
             : settings.BaseUrl;
 
-        using var form = new MultipartFormDataContent();
-        form.Add(new StringContent(settings.ApiKey), "auth_key");
-        form.Add(new StringContent(settings.SourceLanguage.ToUpperInvariant()), "source_lang");
-        form.Add(new StringContent(settings.TargetLanguage.ToUpperInvariant()), "target_lang");
-        form.Add(new StringContent("xml"), "tag_handling");
-        form.Add(new StringContent("era-ph"), "ignore_tags");
-        form.Add(new StringContent("0"), "split_sentences");
-        form.Add(new StringContent("1"), "preserve_formatting");
-
-        foreach (var request in requests)
-        {
-            form.Add(new StringContent(ProviderPlaceholderMarker.MarkForDeepL(request.Text, request.Placeholders)), "text");
-        }
+        using var requestContent = BuildRequestContent(requests, settings);
 
         var endpointForLog = endpoint;
         requestResponseLogger?.LogRequest(
@@ -53,10 +41,10 @@ public sealed class DeepLTranslationProvider(
             BuildRequestLog(requests, settings),
             new Dictionary<string, string>
             {
-                ["auth_key"] = SensitiveDataMasker.MaskSecret(settings.ApiKey),
+                ["Authorization"] = SensitiveDataMasker.MaskSecret($"DeepL-Auth-Key {settings.ApiKey}", visiblePrefixLength: 15),
             });
 
-        using var response = await PostAsync(client, endpoint, form, cancellationToken, endpointForLog, requestResponseLogger);
+        using var response = await PostAsync(client, endpoint, requestContent, settings.ApiKey, cancellationToken, endpointForLog, requestResponseLogger);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         requestResponseLogger?.LogResponse("DeepL", endpointForLog, (int)response.StatusCode, body);
         using var json = ParseJson(body);
@@ -94,14 +82,21 @@ public sealed class DeepLTranslationProvider(
     private static async Task<HttpResponseMessage> PostAsync(
         HttpClient client,
         string endpoint,
-        HttpContent form,
+        HttpContent content,
+        string apiKey,
         CancellationToken cancellationToken,
         string endpointForLog,
         IRequestResponseLogger? logger)
     {
         try
         {
-            var response = await client.PostAsync(endpoint, form, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = content,
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", $"DeepL-Auth-Key {apiKey}");
+
+            var response = await client.SendAsync(request, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
                 return response;
@@ -145,6 +140,28 @@ public sealed class DeepLTranslationProvider(
             ? "응답 본문 없음"
             : body.Length > 180 ? $"{body[..180]}..." : body;
         return $"HTTP {(int)statusCode} 오류: {summary}";
+    }
+
+    private static HttpContent BuildRequestContent(IReadOnlyList<ProtectedSegment> requests, ProviderSettings settings)
+    {
+        var values = new List<KeyValuePair<string, string>>
+        {
+            new("source_lang", settings.SourceLanguage.ToUpperInvariant()),
+            new("target_lang", settings.TargetLanguage.ToUpperInvariant()),
+            new("tag_handling", "xml"),
+            new("ignore_tags", "era-ph"),
+            new("split_sentences", "0"),
+            new("preserve_formatting", "1"),
+        };
+
+        foreach (var request in requests)
+        {
+            values.Add(new KeyValuePair<string, string>(
+                "text",
+                ProviderPlaceholderMarker.MarkForDeepL(request.Text, request.Placeholders)));
+        }
+
+        return new FormUrlEncodedContent(values);
     }
 
     private static string BuildRequestLog(IReadOnlyList<ProtectedSegment> requests, ProviderSettings settings)

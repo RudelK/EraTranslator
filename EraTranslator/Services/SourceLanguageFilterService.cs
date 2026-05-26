@@ -33,7 +33,7 @@ public sealed class SourceLanguageFilterService
                 "제외됨",
                 "언어 제외",
                 "원문이 현재 소스 언어와 일치하지 않아 자동 제외되었습니다.",
-                false,
+                true,
                 string.Empty);
             changedCount++;
         }
@@ -44,7 +44,7 @@ public sealed class SourceLanguageFilterService
     private static bool ShouldAutoExclude(ExtractedTextItem item)
     {
         return string.IsNullOrWhiteSpace(item.TranslatedText)
-            && item.Status is "대기" or "번역 실패" or "중지됨";
+            && item.Status is "번역 대기" or "대기" or "번역 실패" or "중지됨";
     }
 
     private static bool TryRestoreAutoExcluded(ExtractedTextItem item)

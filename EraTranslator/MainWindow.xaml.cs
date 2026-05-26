@@ -112,6 +112,11 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshFilter_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.RefreshItemsView();
+    }
+
     private void BrowseGameDirectory_Click(object sender, RoutedEventArgs e)
     {
         using var dialog = new Forms.FolderBrowserDialog
@@ -189,5 +194,12 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(
             DispatcherPriority.ApplicationIdle,
             new Action(() => _viewModel.HandleTranslatedTextEdited(item)));
+    }
+
+    private void SelectedTranslationEditor_LostFocus(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(_viewModel.CommitSelectedItemTranslatedTextEdit));
     }
 }

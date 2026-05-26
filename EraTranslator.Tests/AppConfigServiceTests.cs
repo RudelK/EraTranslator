@@ -35,7 +35,9 @@ public sealed class AppConfigServiceTests : IDisposable
             Temperature = 0.7,
             DisableThinking = false,
             EnableRequestResponseLogging = true,
+            EnableResultStateLogging = true,
             ExcludeNonSourceText = true,
+            RefreshGridDuringTranslatedTextEdit = true,
             SystemPromptTemplate = "system",
             RetryPromptTemplate = "retry",
             PapagoClientId = "papago-id",
@@ -67,7 +69,9 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.Temperature, actual.Temperature);
         Assert.Equal(expected.DisableThinking, actual.DisableThinking);
         Assert.Equal(expected.EnableRequestResponseLogging, actual.EnableRequestResponseLogging);
+        Assert.Equal(expected.EnableResultStateLogging, actual.EnableResultStateLogging);
         Assert.Equal(expected.ExcludeNonSourceText, actual.ExcludeNonSourceText);
+        Assert.Equal(expected.RefreshGridDuringTranslatedTextEdit, actual.RefreshGridDuringTranslatedTextEdit);
         Assert.Equal(expected.SystemPromptTemplate, actual.SystemPromptTemplate);
         Assert.Equal(expected.RetryPromptTemplate, actual.RetryPromptTemplate);
         Assert.Equal(expected.PapagoClientId, actual.PapagoClientId);

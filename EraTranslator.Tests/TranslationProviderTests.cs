@@ -34,6 +34,85 @@ public sealed class TranslationProviderTests
     }
 
     [Fact]
+    public async Task DeepLFreeProvider_SendsAuthorizationHeaderToFreeEndpoint()
+    {
+        string? capturedUri = null;
+        string? capturedAuthorization = null;
+        string? capturedMediaType = null;
+        string? capturedBody = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedUri = request.RequestUri?.ToString();
+            capturedAuthorization = request.Headers.GetValues("Authorization").Single();
+            capturedMediaType = request.Content?.Headers.ContentType?.MediaType;
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return JsonResponse("""
+{
+  "translations": [
+    { "text": "안녕하세요" }
+  ]
+}
+""");
+        });
+        var provider = new DeepLTranslationProvider(factory);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "こんにちは", "こんにちは", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.DeepLFree,
+                ApiKey = "free-test-key",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            CancellationToken.None);
+
+        Assert.Equal("안녕하세요", result.Translations["id-1"]);
+        Assert.Equal("https://api-free.deepl.com/v2/translate", capturedUri);
+        Assert.Equal("DeepL-Auth-Key free-test-key", capturedAuthorization);
+        Assert.Equal("application/x-www-form-urlencoded", capturedMediaType);
+        Assert.DoesNotContain("auth_key=", capturedBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeepLProProvider_SendsAuthorizationHeaderToProEndpoint()
+    {
+        string? capturedUri = null;
+        string? capturedAuthorization = null;
+        string? capturedMediaType = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedUri = request.RequestUri?.ToString();
+            capturedAuthorization = request.Headers.GetValues("Authorization").Single();
+            capturedMediaType = request.Content?.Headers.ContentType?.MediaType;
+            return JsonResponse("""
+{
+  "translations": [
+    { "text": "안녕하세요" }
+  ]
+}
+""");
+        });
+        var provider = new DeepLTranslationProvider(factory);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "こんにちは", "こんにちは", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.DeepLPro,
+                ApiKey = "pro-test-key",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            CancellationToken.None);
+
+        Assert.Equal("안녕하세요", result.Translations["id-1"]);
+        Assert.Equal("https://api.deepl.com/v2/translate", capturedUri);
+        Assert.Equal("DeepL-Auth-Key pro-test-key", capturedAuthorization);
+        Assert.Equal("application/x-www-form-urlencoded", capturedMediaType);
+    }
+
+    [Fact]
     public async Task PapagoProvider_RecordsHttpErrorsPerItem()
     {
         var callCount = 0;
@@ -284,6 +363,27 @@ public sealed class TranslationProviderTests
             CancellationToken.None);
 
         Assert.Equal("__PH0__나는 당신과 다르게 바빠.__PH1__제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__PH2__", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_RepairsTrailingPlaceholderPipeArtifacts()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"|__PH0__는 페니스를 찔리면서, 설마 정말로 다른 아이 옆에서 하게 될 줄은 몰랐다고_|_"} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "__PH0__はペニスを突き刺されながら、まさか本当に他の子の隣でするとは思わなかったと", "__PH0__はペニスを突き刺されながら、まさか本当に他の子の隣でするとは思わなかったと", ["%CALLNAME%"])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("__PH0__는 페니스를 찔리면서, 설마 정말로 다른 아이 옆에서 하게 될 줄은 몰랐다고", result.Translations["id-1"]);
     }
 
     [Fact]

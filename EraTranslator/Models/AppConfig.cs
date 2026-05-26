@@ -28,11 +28,15 @@ public sealed class AppConfig
 
     public bool EnableRequestResponseLogging { get; init; }
 
+    public bool EnableResultStateLogging { get; init; }
+
     public string SystemPromptTemplate { get; init; } = string.Empty;
 
     public string RetryPromptTemplate { get; init; } = string.Empty;
 
     public bool ExcludeNonSourceText { get; init; }
+
+    public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 
     public string PapagoClientId { get; init; } = string.Empty;
 

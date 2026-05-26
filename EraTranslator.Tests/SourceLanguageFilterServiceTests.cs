@@ -49,7 +49,7 @@ public sealed class SourceLanguageFilterServiceTests
         changedCount = service.Apply([item], "ja", enabled: false);
 
         Assert.Equal(1, changedCount);
-        Assert.Equal("대기", item.Status);
+        Assert.Equal("번역 대기", item.Status);
         Assert.Equal("검증 전", item.ValidationStatus);
         Assert.True(item.NeedsTranslation);
     }
@@ -74,7 +74,7 @@ public sealed class SourceLanguageFilterServiceTests
         var changedCount = service.Apply([item], "ja", enabled: true);
 
         Assert.Equal(0, changedCount);
-        Assert.Equal("대기", item.Status);
+        Assert.Equal("번역 대기", item.Status);
         Assert.Equal("검증 전", item.ValidationStatus);
         Assert.True(item.NeedsTranslation);
     }

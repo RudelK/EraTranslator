@@ -21,6 +21,7 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
@@ -199,6 +200,11 @@
 
         <GroupBox Grid.Row="1" Margin="0,12,0,12" Header="필터">
             <WrapPanel Margin="8">
+                <ComboBox Width="110"
+                          Margin="0,0,8,0"
+                          IsEnabled="{Binding CanStartActions}"
+                          ItemsSource="{Binding SearchFieldFilters}"
+                          SelectedItem="{Binding SelectedSearchFieldFilter}" />
                 <TextBox Width="320"
                          Margin="0,0,8,0"
                          IsEnabled="{Binding CanStartActions}"
@@ -224,10 +230,21 @@
                         IsEnabled="{Binding CanStartActions}"
                         Click="OpenGlobalReplace_Click"
                         Content="전역 치환..." />
-                <CheckBox VerticalAlignment="Center"
+                <CheckBox Margin="0,0,8,0"
+                          VerticalAlignment="Center"
                           IsEnabled="{Binding CanStartActions}"
                           Content="경고만 보기"
                           IsChecked="{Binding WarningsOnly}" />
+                <CheckBox VerticalAlignment="Center"
+                          IsEnabled="{Binding CanStartActions}"
+                          ToolTip="체크하면 번역문 수정 직후 현재 필터를 다시 적용합니다."
+                          Content="실시간 갱신"
+                          IsChecked="{Binding RefreshGridDuringTranslatedTextEdit}" />
+                <Button Width="72"
+                        Margin="8,0,0,0"
+                        IsEnabled="{Binding CanStartActions}"
+                        Click="RefreshFilter_Click"
+                        Content="갱신" />
             </WrapPanel>
         </GroupBox>
 
@@ -273,16 +290,52 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <GroupBox Grid.Row="3" Margin="0,12,0,0" Header="선택 항목 로그">
+        <GroupBox Grid.Row="3" Margin="0,12,0,0" Header="선택 항목 보기">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="원문" />
+                <TextBox Grid.Row="1"
+                         Margin="0,6,0,12"
+                         MinHeight="44"
+                         IsReadOnly="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         Text="{Binding SelectedItemOriginalPreviewText, Mode=OneWay}" />
+
+                <TextBlock Grid.Row="2" Text="번역문" />
+                <TextBox Grid.Row="3"
+                         Margin="0,6,0,0"
+                         MinHeight="44"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         LostFocus="SelectedTranslationEditor_LostFocus"
+                         Text="{Binding SelectedItemTranslatedTextEditor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Grid.Row="4" Margin="0,12,0,0" Header="선택 항목 로그">
             <TextBox Margin="8"
-                     MinHeight="88"
                      IsReadOnly="True"
+                     AcceptsReturn="True"
+                     MinLines="3"
+                     MaxLines="3"
                      VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Disabled"
                      TextWrapping="Wrap"
                      Text="{Binding SelectedItemLogText, Mode=OneWay}" />
         </GroupBox>
 
-        <StatusBar Grid.Row="4" Margin="0,12,0,0">
+        <StatusBar Grid.Row="5" Margin="0,12,0,0">
             <StatusBarItem>
                 <ProgressBar Width="220"
                              Height="16"

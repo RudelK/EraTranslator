@@ -44,9 +44,11 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 Temperature = loaded.Temperature,
                 DisableThinking = loaded.DisableThinking,
                 EnableRequestResponseLogging = loaded.EnableRequestResponseLogging,
+                EnableResultStateLogging = loaded.EnableResultStateLogging,
                 SystemPromptTemplate = NormalizePromptPlaceholders(loaded.SystemPromptTemplate),
                 RetryPromptTemplate = NormalizePromptPlaceholders(loaded.RetryPromptTemplate),
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
+                RefreshGridDuringTranslatedTextEdit = loaded.RefreshGridDuringTranslatedTextEdit,
                 PapagoClientId = loaded.PapagoClientId,
                 PapagoClientSecret = mergedSecrets.PapagoClientSecret,
                 EzTransInstallationPath = loaded.EzTransInstallationPath,
@@ -96,9 +98,11 @@ public sealed class AppConfigService(string? baseDirectory = null)
             Temperature = config.Temperature,
             DisableThinking = config.DisableThinking,
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
+            EnableResultStateLogging = config.EnableResultStateLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
+            RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             PapagoClientId = config.PapagoClientId,
             EzTransInstallationPath = config.EzTransInstallationPath,
             EzTransProcessCount = config.EzTransProcessCount,
@@ -149,9 +153,11 @@ public sealed class AppConfigService(string? baseDirectory = null)
             Temperature = config.Temperature,
             DisableThinking = config.DisableThinking,
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
+            EnableResultStateLogging = config.EnableResultStateLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
+            RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             PapagoClientId = config.PapagoClientId,
             PapagoClientSecret = secrets.PapagoClientSecret,
             EzTransInstallationPath = config.EzTransInstallationPath,
@@ -201,11 +207,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
 
         public bool EnableRequestResponseLogging { get; init; }
 
+        public bool EnableResultStateLogging { get; init; }
+
         public string SystemPromptTemplate { get; init; } = string.Empty;
 
         public string RetryPromptTemplate { get; init; } = string.Empty;
 
         public bool ExcludeNonSourceText { get; init; }
+
+        public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 
         public string PapagoClientId { get; init; } = string.Empty;
 

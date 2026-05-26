@@ -22,7 +22,7 @@ public sealed class TranslationProgressCarryoverServiceTests
 
         Assert.Equal(0, result.ExactRestoredCount);
         Assert.Equal(0, result.HeuristicRestoredCount);
-        Assert.Equal("대기", currentItems[0].Status);
+        Assert.Equal("번역 대기", currentItems[0].Status);
         Assert.Equal(string.Empty, currentItems[0].TranslatedText);
     }
 
@@ -51,7 +51,7 @@ public sealed class TranslationProgressCarryoverServiceTests
         Assert.Equal("hello", currentItems[1].TranslatedText);
         Assert.Equal("검수 필요", currentItems[2].Status);
         Assert.Equal("world", currentItems[2].TranslatedText);
-        Assert.Equal("대기", currentItems[0].Status);
+        Assert.Equal("번역 대기", currentItems[0].Status);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class TranslationProgressCarryoverServiceTests
         Assert.Equal(0, result.ExactRestoredCount);
         Assert.Equal(0, result.HeuristicRestoredCount);
         Assert.Equal(1, result.UnmatchedCount);
-        Assert.Equal("대기", currentItems[0].Status);
+        Assert.Equal("번역 대기", currentItems[0].Status);
         Assert.Equal(string.Empty, currentItems[0].TranslatedText);
     }
 
