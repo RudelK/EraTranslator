@@ -127,6 +127,8 @@ public sealed class TextSegmentState
 
     public CsvFieldRole CsvFieldRole { get; init; }
 
+    public bool PreserveWhitespace { get; init; }
+
     public string SymbolNamespace { get; init; } = string.Empty;
 
     public string OriginalSymbolKey { get; init; } = string.Empty;
@@ -199,6 +201,8 @@ public sealed class ExtractedTextItemState
     public int? FieldIndex { get; init; }
 
     public CsvFieldRole CsvFieldRole { get; init; }
+
+    public bool PreserveWhitespace { get; init; }
 
     public string WarningText { get; init; } = string.Empty;
 

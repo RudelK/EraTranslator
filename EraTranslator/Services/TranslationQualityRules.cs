@@ -4,12 +4,16 @@ namespace EraTranslator.Services;
 
 public static partial class TranslationQualityRules
 {
-    public static string NormalizeTranslatedText(string fileType, string text)
+    public static string NormalizeTranslatedText(string fileType, string text, bool preserveWhitespace = false)
     {
-        var normalized = NormalizeProtectedCharacterSpacing(text);
-        return string.Equals(fileType, "CSV", StringComparison.OrdinalIgnoreCase)
-            ? RemoveSpacesForCsv(normalized)
-            : normalized;
+        if (string.Equals(fileType, "CSV", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedCsv = NormalizeCsvPunctuation(text);
+            normalizedCsv = NormalizeProtectedCharacterSpacing(normalizedCsv);
+            return RemoveSpacesForCsv(normalizedCsv, preserveWhitespace);
+        }
+
+        return NormalizeProtectedCharacterSpacing(text);
     }
 
     public static string NormalizeProtectedCharacterSpacing(string text)
@@ -63,14 +67,29 @@ public static partial class TranslationQualityRules
         return text.Count(static character => !char.IsWhiteSpace(character));
     }
 
-    private static string RemoveSpacesForCsv(string text)
+    private static string RemoveSpacesForCsv(string text, bool preserveWhitespace)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
             return text;
         }
 
+        if (preserveWhitespace)
+        {
+            return text;
+        }
+
         return CsvWhitespacePattern().Replace(text, string.Empty);
+    }
+
+    private static string NormalizeCsvPunctuation(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        return CsvAsciiCommaPattern().Replace(text, "、");
     }
 
     private static bool SourceContainsSlashLike(string source)
@@ -86,7 +105,7 @@ public static partial class TranslationQualityRules
             || source.Contains('）', StringComparison.Ordinal);
     }
 
-    [GeneratedRegex(@"\s*([／【】＜＞「」％])\s*", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\s*([、。，．：；！？…‥・／＼｜【】〈〉《》「」『』（）［］｛｝＜＞％])\s*", RegexOptions.Compiled)]
     private static partial Regex ProtectedFullWidthCharacterSpacingPattern();
 
     [GeneratedRegex(@"\S+\s*(?:/|／)\s*\S+", RegexOptions.Compiled)]
@@ -94,6 +113,9 @@ public static partial class TranslationQualityRules
 
     [GeneratedRegex(@"[\(\（][^)\）\r\n]{2,}[\)\）]", RegexOptions.Compiled)]
     private static partial Regex AddedExplanationParenthesesPattern();
+
+    [GeneratedRegex(@",", RegexOptions.Compiled)]
+    private static partial Regex CsvAsciiCommaPattern();
 
     [GeneratedRegex(@"[ \t\u3000]+", RegexOptions.Compiled)]
     private static partial Regex CsvWhitespacePattern();

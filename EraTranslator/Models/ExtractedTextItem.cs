@@ -33,6 +33,8 @@ public sealed class ExtractedTextItem : BindableBase
 
     public CsvFieldRole CsvFieldRole { get; init; }
 
+    public bool PreserveWhitespace { get; init; }
+
     public string WarningText { get; init; } = string.Empty;
 
     public string SymbolNamespace { get; init; } = string.Empty;
@@ -161,7 +163,7 @@ public sealed class ExtractedTextItem : BindableBase
             return;
         }
 
-        _translatedText = TranslationQualityRules.NormalizeTranslatedText(FileType, _translatedText);
+        _translatedText = TranslationQualityRules.NormalizeTranslatedText(FileType, _translatedText, PreserveWhitespace);
         var reviewReason = TranslationQualityRules.GetReviewReason(OriginalText, _translatedText);
         _status = reviewReason is null ? "수동 수정" : "검수 필요";
         _translationError = reviewReason ?? string.Empty;
@@ -295,7 +297,7 @@ public sealed class ExtractedTextItem : BindableBase
 
     public string TranslatedSymbolKey =>
         IsReferenceBearingKey && !string.IsNullOrWhiteSpace(TranslatedText)
-            ? TranslationQualityRules.NormalizeTranslatedText(FileType, TranslatedText)
+            ? TranslationQualityRules.NormalizeTranslatedText(FileType, TranslatedText, PreserveWhitespace)
             : string.Empty;
 
     private void RaiseStateChangedProperties()

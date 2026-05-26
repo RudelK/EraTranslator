@@ -39,6 +39,13 @@ public sealed class CsvSchemaClassifier
         "NAME",
     ];
 
+    private static readonly HashSet<string> CharacterWhitespacePreservingContainers =
+    [
+        "CSTR",
+        "CALLNAME",
+        "NAME",
+    ];
+
     private static readonly Dictionary<string, string> CharacterContainerNamespaces = new(StringComparer.Ordinal)
     {
         ["CSTR"] = "CSTR",
@@ -276,6 +283,7 @@ public sealed class CsvSchemaClassifier
             {
                 Role = role,
                 ShouldExtract = role == CsvFieldRole.TranslatableValue,
+                PreserveWhitespace = role == CsvFieldRole.TranslatableValue,
             };
         }
 
@@ -287,6 +295,7 @@ public sealed class CsvSchemaClassifier
                 {
                     Role = role,
                     ShouldExtract = true,
+                    PreserveWhitespace = CharacterWhitespacePreservingContainers.Contains(container),
                     SymbolNamespace = symbolNamespace,
                     OriginalSymbolKey = value,
                     IsReferenceBearingKey = !string.IsNullOrWhiteSpace(symbolNamespace),
@@ -297,6 +306,8 @@ public sealed class CsvSchemaClassifier
             {
                 Role = role,
                 ShouldExtract = role == CsvFieldRole.TranslatableValue,
+                PreserveWhitespace = role == CsvFieldRole.TranslatableValue
+                    && CharacterWhitespacePreservingContainers.Contains(container),
             };
         }
 

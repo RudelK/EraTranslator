@@ -22,6 +22,8 @@ public sealed class TextSegment
 
     public CsvFieldRole CsvFieldRole { get; init; }
 
+    public bool PreserveWhitespace { get; init; }
+
     public string SymbolNamespace { get; init; } = string.Empty;
 
     public string OriginalSymbolKey { get; init; } = string.Empty;

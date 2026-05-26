@@ -61,13 +61,16 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
 
         await EnsureWorkersAsync(installationInfo, settings.EzTransProcessCount, cancellationToken);
 
-        _logger?.LogRequest(
-            "EzTransXP",
-            installationInfo.EnginePath,
-            BuildRequestLog(installationInfo, settings, requests));
+        if (settings.EnableRequestResponseLogging)
+        {
+            _logger?.LogRequest(
+                "EzTransXP",
+                installationInfo.EnginePath,
+                BuildRequestLog(installationInfo, settings, requests));
+        }
 
         var chunks = CreateWorkerChunks(requests, _workers.Count);
-        var workerTasks = chunks.Select(chunk => TranslateChunkAsync(chunk, cancellationToken)).ToArray();
+        var workerTasks = chunks.Select(chunk => TranslateChunkAsync(chunk, installationInfo, cancellationToken)).ToArray();
         var chunkResults = await Task.WhenAll(workerTasks);
 
         foreach (var chunkResult in chunkResults)
@@ -108,11 +111,14 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
             }
         }
 
-        _logger?.LogResponse(
-            "EzTransXP",
-            installationInfo.EnginePath,
-            200,
-            BuildResponseLog(result));
+        if (settings.EnableRequestResponseLogging)
+        {
+            _logger?.LogResponse(
+                "EzTransXP",
+                installationInfo.EnginePath,
+                200,
+                BuildResponseLog(result));
+        }
 
         return result;
     }
@@ -127,7 +133,7 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
         _disposed = true;
         foreach (var worker in _workers)
         {
-            await worker.DisposeAsync();
+            await worker.DisposeAsync().ConfigureAwait(false);
         }
 
         _workers.Clear();
@@ -140,18 +146,26 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
         CancellationToken cancellationToken)
     {
         var effectiveWorkerCount = Math.Max(1, requestedWorkerCount);
-        await _initializationGate.WaitAsync(cancellationToken);
+        await _initializationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_workers.Count == effectiveWorkerCount
                 && string.Equals(_activeInstallationPath, installationInfo.InstallationPath, StringComparison.OrdinalIgnoreCase))
             {
+                for (var index = 0; index < _workers.Count; index++)
+                {
+                    if (!_workers[index].IsAlive)
+                    {
+                        await ReplaceWorkerCoreAsync(index, installationInfo).ConfigureAwait(false);
+                    }
+                }
+
                 return;
             }
 
             foreach (var worker in _workers)
             {
-                await worker.DisposeAsync();
+                await worker.DisposeAsync().ConfigureAwait(false);
             }
 
             _workers.Clear();
@@ -169,16 +183,28 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
         }
     }
 
-    private async Task<EzTransChunkResult> TranslateChunkAsync(EzTransChunk chunk, CancellationToken cancellationToken)
+    private async Task<EzTransChunkResult> TranslateChunkAsync(
+        EzTransChunk chunk,
+        EzTransXpInstallationInfo installationInfo,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var translations = await chunk.Worker.TranslateAsync(chunk.Requests.Select(request => request.Text).ToArray(), cancellationToken);
+            var translations = await chunk.Worker.TranslateAsync(chunk.Requests.Select(request => request.Text).ToArray(), cancellationToken).ConfigureAwait(false);
             return new EzTransChunkResult(chunk.Requests, translations, null);
         }
         catch (Exception ex)
         {
-            return new EzTransChunkResult(chunk.Requests, null, ex.Message);
+            try
+            {
+                var replacement = await ReplaceWorkerAsync(chunk.WorkerIndex, installationInfo).ConfigureAwait(false);
+                var translations = await replacement.TranslateAsync(chunk.Requests.Select(request => request.Text).ToArray(), cancellationToken).ConfigureAwait(false);
+                return new EzTransChunkResult(chunk.Requests, translations, null);
+            }
+            catch (Exception retryEx)
+            {
+                return new EzTransChunkResult(chunk.Requests, null, $"{ex.Message} / 재시도 실패: {retryEx.Message}");
+            }
         }
     }
 
@@ -195,9 +221,44 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
         }
 
         return chunkBuckets
-            .Select((bucket, index) => new EzTransChunk(_workers[index], bucket))
+            .Select((bucket, index) => new EzTransChunk(index, _workers[index], bucket))
             .Where(chunk => chunk.Requests.Count > 0)
             .ToArray();
+    }
+
+    private async Task<IEzTransXpWorkerClient> ReplaceWorkerAsync(int workerIndex, EzTransXpInstallationInfo installationInfo)
+    {
+        await _initializationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await ReplaceWorkerCoreAsync(workerIndex, installationInfo).ConfigureAwait(false);
+        }
+        finally
+        {
+            _initializationGate.Release();
+        }
+    }
+
+    private async Task<IEzTransXpWorkerClient> ReplaceWorkerCoreAsync(int workerIndex, EzTransXpInstallationInfo installationInfo)
+    {
+        if (workerIndex < 0 || workerIndex >= _workers.Count)
+        {
+            throw new InvalidOperationException("EzTransXP 워커 인덱스가 유효하지 않습니다.");
+        }
+
+        var previousWorker = _workers[workerIndex];
+        var replacement = _workerClientFactory.Create(installationInfo);
+        _workers[workerIndex] = replacement;
+
+        try
+        {
+            await previousWorker.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+
+        return replacement;
     }
 
     private string BuildRequestLog(
@@ -225,7 +286,7 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
         return string.Join(Environment.NewLine, lines);
     }
 
-    private sealed record EzTransChunk(IEzTransXpWorkerClient Worker, IReadOnlyList<ProtectedSegment> Requests);
+    private sealed record EzTransChunk(int WorkerIndex, IEzTransXpWorkerClient Worker, IReadOnlyList<ProtectedSegment> Requests);
 
     private sealed record EzTransChunkResult(
         IReadOnlyList<ProtectedSegment> Requests,

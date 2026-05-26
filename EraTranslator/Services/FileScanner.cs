@@ -95,6 +95,7 @@ public sealed class FileScanner
                     SourceKey = segment.SourceKey,
                     FieldIndex = segment.FieldIndex,
                     CsvFieldRole = segment.CsvFieldRole,
+                    PreserveWhitespace = segment.PreserveWhitespace,
                     SymbolNamespace = segment.SymbolNamespace,
                     OriginalSymbolKey = segment.OriginalSymbolKey,
                     IsReferenceBearingKey = segment.IsReferenceBearingKey,

@@ -7,9 +7,9 @@ public sealed class TranslationQualityRulesTests
     [Fact]
     public void NormalizeProtectedCharacterSpacing_RemovesSpacesAroundProtectedFullWidthCharacters()
     {
-        var normalized = TranslationQualityRules.NormalizeProtectedCharacterSpacing("초기 장비 색상 ／ 머리 「 테스트 」");
+        var normalized = TranslationQualityRules.NormalizeProtectedCharacterSpacing("초기 장비 색상 ／ 머리 「 테스트 」 、 기본");
 
-        Assert.Equal("초기 장비 색상／머리「테스트」", normalized);
+        Assert.Equal("초기 장비 색상／머리「테스트」、기본", normalized);
     }
 
     [Fact]
@@ -41,5 +41,29 @@ public sealed class TranslationQualityRulesTests
         var normalized = TranslationQualityRules.NormalizeTranslatedText("CSV", "초기 장비 색상 ／ 머리");
 
         Assert.Equal("초기장비색상／머리", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_PreservesSpacesForCharacterSheetNameLikeFields()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText("CSV", "메인 히로인", preserveWhitespace: true);
+
+        Assert.Equal("메인 히로인", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_ConvertsCsvAsciiCommaToFullWidthComma()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText("CSV", "기본 장비, 머리 장비");
+
+        Assert.Equal("기본장비、머리장비", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_RemovesSpacesAroundFullWidthCharactersEvenWhenWhitespaceIsPreserved()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText("CSV", "메인 히로인 、 호출 명", preserveWhitespace: true);
+
+        Assert.Equal("메인 히로인、호출 명", normalized);
     }
 }

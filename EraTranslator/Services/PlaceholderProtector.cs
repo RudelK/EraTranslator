@@ -33,7 +33,7 @@ public sealed partial class PlaceholderProtector
 
     public string Restore(string translated, IReadOnlyList<string> placeholders)
     {
-        var restored = translated;
+        var restored = NormalizeTokenCandidates(translated, placeholders);
 
         for (var index = 0; index < placeholders.Count; index++)
         {
@@ -66,6 +66,36 @@ public sealed partial class PlaceholderProtector
         return true;
     }
 
+    public string NormalizeTokenCandidates(string translated, IReadOnlyList<string> placeholders)
+    {
+        if (string.IsNullOrWhiteSpace(translated) || placeholders.Count == 0)
+        {
+            return translated;
+        }
+
+        var normalized = ReplaceLooseTokenPattern(translated, MissingTrailingUnderscorePattern(), placeholders);
+        normalized = ReplaceLooseTokenPattern(normalized, MissingLeadingUnderscorePattern(), placeholders);
+        normalized = ReplaceLooseTokenPattern(normalized, MissingBothUnderscoresPattern(), placeholders);
+        return normalized;
+    }
+
+    private static string ReplaceLooseTokenPattern(string translated, Regex pattern, IReadOnlyList<string> placeholders)
+    {
+        return pattern.Replace(
+            translated,
+            match =>
+            {
+                if (!int.TryParse(match.Groups["index"].Value, out var index)
+                    || index < 0
+                    || index >= placeholders.Count)
+                {
+                    return match.Value;
+                }
+
+                return GetToken(index);
+            });
+    }
+
     private static List<Match> CollectMatches(string input)
     {
         var patterns = new[]
@@ -75,6 +105,7 @@ public sealed partial class PlaceholderProtector
             BracePlaceholderPattern(),
             AnglePlaceholderPattern(),
             ChoiceLabelPattern(),
+            FullWidthSpacePattern(),
             FullWidthSpecialCharacterPattern(),
         };
         var selected = new List<Match>();
@@ -119,6 +150,18 @@ public sealed partial class PlaceholderProtector
 
     [GeneratedRegex(@"[／【】＜＞「」％]", RegexOptions.Compiled)]
     private static partial Regex FullWidthSpecialCharacterPattern();
+
+    [GeneratedRegex(@"　+", RegexOptions.Compiled)]
+    private static partial Regex FullWidthSpacePattern();
+
+    [GeneratedRegex(@"(?<!_)__PH\s*(?<index>\d+)_(?!_)", RegexOptions.Compiled)]
+    private static partial Regex MissingTrailingUnderscorePattern();
+
+    [GeneratedRegex(@"(?<!_)_PH\s*(?<index>\d+)__(?!_)", RegexOptions.Compiled)]
+    private static partial Regex MissingLeadingUnderscorePattern();
+
+    [GeneratedRegex(@"(?<!_)_PH\s*(?<index>\d+)_(?!_)", RegexOptions.Compiled)]
+    private static partial Regex MissingBothUnderscoresPattern();
 
     [GeneratedRegex(@"__PH\d+__", RegexOptions.Compiled)]
     private static partial Regex TokenPattern();

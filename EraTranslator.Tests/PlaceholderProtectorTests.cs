@@ -35,6 +35,21 @@ public sealed class PlaceholderProtectorTests
     }
 
     [Fact]
+    public void ProtectAndRestore_RoundTripsFullWidthSpaces()
+    {
+        var protector = new PlaceholderProtector();
+        var original = "앞　　중간　끝";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.True(protectedText.Placeholders.Any(static placeholder => placeholder.Contains('　')));
+        Assert.True(protector.HasAllTokens(protectedText.Text, protectedText.Placeholders, out _));
+
+        var restored = protector.Restore(protectedText.Text, protectedText.Placeholders);
+        Assert.Equal(original, restored);
+    }
+
+    [Fact]
     public void HasAllTokens_FailsWhenPlaceholderOrderIsBroken()
     {
         var protector = new PlaceholderProtector();
@@ -44,5 +59,17 @@ public sealed class PlaceholderProtectorTests
 
         Assert.False(isValid);
         Assert.Contains("손상", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NormalizeTokenCandidates_RepairsNearMissPlaceholderTokens()
+    {
+        var protector = new PlaceholderProtector();
+        var placeholders = new[] { "「", "　", "」" };
+
+        var normalized = protector.NormalizeTokenCandidates("__PH0__……그런 얼굴 하지 마.__PH1__도와달라고 할 생각은 없어.__PH2_", placeholders);
+
+        Assert.Equal("__PH0__……그런 얼굴 하지 마.__PH1__도와달라고 할 생각은 없어.__PH2__", normalized);
+        Assert.True(protector.HasAllTokens(normalized, placeholders, out _));
     }
 }

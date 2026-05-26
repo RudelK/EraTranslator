@@ -111,6 +111,39 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void HandleTranslatedTextEdited_AppliesManualEditToItemsWithSameOriginalText()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithDuplicateOriginals(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+
+        var first = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:0");
+        var second = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:1");
+        first.TranslatedText = "안녕히 가세요";
+
+        viewModel.HandleTranslatedTextEdited(first);
+
+        Assert.Equal("안녕히 가세요", first.TranslatedText);
+        Assert.Equal("안녕히 가세요", second.TranslatedText);
+        Assert.Equal("수동 수정", first.Status);
+        Assert.Equal("수동 수정", second.Status);
+        Assert.Equal("통과", first.ValidationStatus);
+        Assert.Equal("통과", second.ValidationStatus);
+    }
+
+    [Fact]
     public void EzTransSettings_ArePersistedThroughConfig()
     {
         var configPath = Path.Combine(_rootPath, "Config");
@@ -133,6 +166,30 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         Assert.Equal(@"C:\Utils\ezTransXPggudor", second.EzTransInstallationPath);
         Assert.Equal(6, second.EzTransProcessCount);
+    }
+
+    [Fact]
+    public void TryFormatRemainingTime_ReturnsMinuteAndSecondEstimate()
+    {
+        var formatted = MainWindowViewModel.TryFormatRemainingTime(0.25, TimeSpan.FromMinutes(1));
+
+        Assert.Equal("3분", formatted);
+    }
+
+    [Fact]
+    public void TryFormatRemainingTime_ReturnsNullWithoutProgress()
+    {
+        var formatted = MainWindowViewModel.TryFormatRemainingTime(0, TimeSpan.FromSeconds(30));
+
+        Assert.Null(formatted);
+    }
+
+    [Fact]
+    public void FormatDuration_ReturnsMinuteAndSecondText()
+    {
+        var formatted = MainWindowViewModel.FormatDuration(TimeSpan.FromSeconds(65));
+
+        Assert.Equal("1분 5초", formatted);
     }
 
     private static ScanSession BuildSession(string gameDirectory)
@@ -188,6 +245,88 @@ public sealed class MainWindowViewModelTests : IDisposable
         session.Metrics["Documents"] = 1;
         session.Metrics["Items"] = 1;
         session.Metrics["ErbItems"] = 1;
+        session.Metrics["CsvItems"] = 0;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+    }
+
+    private static ScanSession BuildSessionWithDuplicateOriginals(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+
+        var document = new SourceFileDocument
+        {
+            DocumentId = "ERB/Test.ERB",
+            FullPath = Path.Combine(gameDirectory, "ERB", "Test.ERB"),
+            RelativePath = Path.Combine("ERB", "Test.ERB"),
+            FileType = "ERB",
+            OriginalText = "PRINTFORMW \"こんにちは\"\nPRINTFORMW \"こんにちは\"",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = new UTF8Encoding(true),
+                Name = "UTF-8 BOM",
+                Kind = DetectedEncodingKind.Utf8Bom,
+                HasBom = true,
+            },
+            NewLineSequence = Environment.NewLine,
+            CsvKind = CsvDocumentKind.None,
+        };
+
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = document.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = 12,
+            Length = 5,
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+        });
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/Test.ERB:1",
+            DocumentId = document.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = 31,
+            Length = 5,
+            LineNumber = 2,
+            OriginalText = "こんにちは",
+        });
+
+        session.Documents[document.DocumentId] = document;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = document.DocumentId,
+            FileType = "ERB",
+            RelativePath = document.RelativePath,
+            EncodingName = "UTF-8 BOM",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            WarningText = string.Empty,
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/Test.ERB:1",
+            DocumentId = document.DocumentId,
+            FileType = "ERB",
+            RelativePath = document.RelativePath,
+            EncodingName = "UTF-8 BOM",
+            SegmentType = "quoted-string",
+            LineNumber = 2,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            WarningText = string.Empty,
+        });
+        session.Metrics["Documents"] = 1;
+        session.Metrics["Items"] = 2;
+        session.Metrics["ErbItems"] = 2;
         session.Metrics["CsvItems"] = 0;
         session.Metrics["Warnings"] = 0;
         session.Metrics["JosaPatterns"] = 0;

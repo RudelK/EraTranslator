@@ -1,12 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows.Data;
 using EraTranslator.Services;
 
 namespace EraTranslator.ViewModels;
 
-public sealed class MainWindowViewModel : BindableBase
+public sealed class MainWindowViewModel : BindableBase, IDisposable
 {
     private readonly FileScanner _fileScanner;
     private readonly TranslationCoordinator _translationCoordinator;
@@ -56,7 +57,10 @@ public sealed class MainWindowViewModel : BindableBase
     private string _ezTransInstallationPath = string.Empty;
     private int _ezTransProcessCount = 1;
     private bool _suppressItemStatePersistence;
+    private DateTimeOffset _lastProgressSaveAtUtc = DateTimeOffset.MinValue;
     private string _activeProjectDataDirectory = string.Empty;
+    private readonly Stopwatch _translationProgressStopwatch = new();
+    private bool _resumeTranslationTimingOnNextRun;
 
     public MainWindowViewModel(
         FileScanner? fileScanner = null,
@@ -111,6 +115,13 @@ public sealed class MainWindowViewModel : BindableBase
     public void FlushPendingConfigSave()
     {
         _appConfigCoordinator.FlushPendingSave();
+    }
+
+    public void Dispose()
+    {
+        StopCurrentOperation();
+        FlushPendingConfigSave();
+        _translationCoordinator.Dispose();
     }
 
     public BulkObservableCollection<ExtractedTextItem> Items { get; } = [];
@@ -728,36 +739,51 @@ public sealed class MainWindowViewModel : BindableBase
             async cancellationToken =>
             {
                 ProgressValue = 0;
+                StartTranslationTiming();
                 var progress = new Progress<(double value, string status, string detail)>(tuple =>
                 {
                     ProgressValue = tuple.value;
                     StatusText = tuple.status;
-                    CurrentOperationDetail = string.IsNullOrWhiteSpace(tuple.detail) ? tuple.status : $"현재 파일: {tuple.detail}";
+                    CurrentOperationDetail = BuildTranslationProgressDetail(tuple.detail, tuple.value);
                 });
 
                 CurrentOperationDetail = "번역 준비 중";
-                await _translationCoordinator.TranslateAsync(
-                    translationScope,
-                    BuildSettings(),
-                    _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
-                    progress,
-                    SaveTranslationProgress,
-                    cancellationToken);
-                SaveTranslationProgress();
+                _suppressItemStatePersistence = true;
+                _lastProgressSaveAtUtc = DateTimeOffset.MinValue;
+                try
+                {
+                    await _translationCoordinator.TranslateAsync(
+                        translationScope,
+                        BuildSettings(),
+                        _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
+                        progress,
+                        () => SaveTranslationProgressIfDue(),
+                        cancellationToken);
+                }
+                finally
+                {
+                    _suppressItemStatePersistence = false;
+                }
+
+                SaveTranslationProgress(force: true);
                 var remainingCount = translationScope.Count(item => item.NeedsTranslation);
                 var completedCount = translationScope.Count(item => item.IsTranslatedSuccessfully);
+                StopTranslationTiming(resumeOnNextRun: false);
                 StatusText = remainingCount == 0
                     ? $"번역이 완료되었습니다. 완료 {completedCount}개"
                     : $"번역이 끝났지만 자동 재번역 대상 항목 {remainingCount}개가 남았습니다.";
                 var firstRemaining = translationScope.FirstOrDefault(item => item.NeedsTranslation);
+                var elapsedText = FormatDuration(_translationProgressStopwatch.Elapsed);
                 CurrentOperationDetail = firstRemaining is null
-                    ? "번역 작업 완료"
-                    : $"다음 재개 지점: {firstRemaining.RelativePath}";
+                    ? $"번역 작업 완료 | 경과 시간: {elapsedText}"
+                    : $"다음 재개 지점: {firstRemaining.RelativePath} | 경과 시간: {elapsedText}";
                 ProgressValue = 1.0;
                 ItemsView.Refresh();
             },
             cancelStatusText: "번역이 중지되었습니다. 다시 시작해도 미번역 또는 번역 실패 항목만 이어집니다.",
-            cancelDetailText: "현재 번역 상태를 저장했습니다.");
+            cancelDetailFactory: () => $"현재 번역 상태를 저장했습니다. | 경과 시간: {FormatDuration(_translationProgressStopwatch.Elapsed)}",
+            onCanceled: () => StopTranslationTiming(resumeOnNextRun: true),
+            onFailed: _ => StopTranslationTiming(resumeOnNextRun: false));
     }
 
     public async Task SaveAsync()
@@ -989,7 +1015,28 @@ public sealed class MainWindowViewModel : BindableBase
 
     public void HandleTranslatedTextEdited(ExtractedTextItem item)
     {
-        item.ApplyManualTranslationEdit();
+        var groupItems = Items
+            .Where(candidate => string.Equals(candidate.OriginalText, item.OriginalText, StringComparison.Ordinal))
+            .ToList();
+        if (groupItems.Count == 0)
+        {
+            groupItems.Add(item);
+        }
+
+        _suppressItemStatePersistence = true;
+        try
+        {
+            foreach (var groupItem in groupItems)
+            {
+                groupItem.TranslatedText = item.TranslatedText;
+                groupItem.ApplyManualTranslationEdit();
+            }
+        }
+        finally
+        {
+            _suppressItemStatePersistence = false;
+        }
+
         ItemsView.Refresh();
         SaveTranslationProgress();
     }
@@ -1302,6 +1349,29 @@ public sealed class MainWindowViewModel : BindableBase
         }
 
         _projectStatePersistenceService.SaveTranslationProgress(GetProjectDataDirectory(_session.GameRoot), Items);
+        _lastProgressSaveAtUtc = DateTimeOffset.UtcNow;
+    }
+
+    private void SaveTranslationProgress(bool force)
+    {
+        if (!force)
+        {
+            SaveTranslationProgressIfDue();
+            return;
+        }
+
+        SaveTranslationProgress();
+    }
+
+    private void SaveTranslationProgressIfDue()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastProgressSaveAtUtc < TimeSpan.FromMilliseconds(750))
+        {
+            return;
+        }
+
+        SaveTranslationProgress();
     }
 
     private TranslationProgressCarryoverResult ApplySession(
@@ -1382,7 +1452,10 @@ public sealed class MainWindowViewModel : BindableBase
         string startingMessage,
         Func<CancellationToken, Task> action,
         string cancelStatusText = "작업이 취소되었습니다.",
-        string cancelDetailText = "사용자 요청으로 작업이 중단되었습니다.")
+        string cancelDetailText = "사용자 요청으로 작업이 중단되었습니다.",
+        Func<string>? cancelDetailFactory = null,
+        Action? onCanceled = null,
+        Action<Exception>? onFailed = null)
     {
         if (IsBusy)
         {
@@ -1401,12 +1474,14 @@ public sealed class MainWindowViewModel : BindableBase
         }
         catch (OperationCanceledException)
         {
-            SaveTranslationProgress();
+            onCanceled?.Invoke();
+            SaveTranslationProgress(force: true);
             StatusText = cancelStatusText;
-            CurrentOperationDetail = cancelDetailText;
+            CurrentOperationDetail = cancelDetailFactory?.Invoke() ?? cancelDetailText;
         }
         catch (Exception ex)
         {
+            onFailed?.Invoke(ex);
             StatusText = $"작업 실패: {ex.Message}";
             CurrentOperationDetail = "오류가 발생해 작업을 중단했습니다.";
         }
@@ -1592,6 +1667,74 @@ public sealed class MainWindowViewModel : BindableBase
     {
         return string.IsNullOrEmpty(e.PropertyName)
             || string.Equals(e.PropertyName, propertyName, StringComparison.Ordinal);
+    }
+
+    internal string BuildTranslationProgressDetail(string? detail, double progressValue)
+    {
+        var baseDetail = string.IsNullOrWhiteSpace(detail) ? "번역 진행 중" : $"현재 파일: {detail}";
+        var elapsedTimeText = FormatDuration(_translationProgressStopwatch.Elapsed);
+        var remainingTimeText = TryFormatRemainingTime(progressValue, _translationProgressStopwatch.Elapsed);
+        return string.IsNullOrWhiteSpace(remainingTimeText)
+            ? $"{baseDetail} | 경과 시간: {elapsedTimeText}"
+            : $"{baseDetail} | 경과 시간: {elapsedTimeText} | 예상 남은 시간: {remainingTimeText}";
+    }
+
+    internal static string? TryFormatRemainingTime(double progressValue, TimeSpan elapsed)
+    {
+        if (progressValue <= 0
+            || progressValue >= 1
+            || elapsed <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        var estimatedTotalTicks = elapsed.Ticks / progressValue;
+        var remainingTicks = estimatedTotalTicks - elapsed.Ticks;
+        if (remainingTicks <= 0)
+        {
+            return null;
+        }
+
+        return FormatDuration(TimeSpan.FromTicks((long)Math.Ceiling(remainingTicks)));
+    }
+
+    internal static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+        {
+            var hours = (int)duration.TotalHours;
+            var minutes = duration.Minutes;
+            return minutes > 0 ? $"{hours}시간 {minutes}분" : $"{hours}시간";
+        }
+
+        if (duration.TotalMinutes >= 1)
+        {
+            var minutes = (int)duration.TotalMinutes;
+            var seconds = duration.Seconds;
+            return seconds > 0 ? $"{minutes}분 {seconds}초" : $"{minutes}분";
+        }
+
+        return $"{Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds))}초";
+    }
+
+    private void StartTranslationTiming()
+    {
+        if (_resumeTranslationTimingOnNextRun && _translationProgressStopwatch.Elapsed > TimeSpan.Zero)
+        {
+            _translationProgressStopwatch.Start();
+        }
+        else
+        {
+            _translationProgressStopwatch.Restart();
+        }
+
+        _resumeTranslationTimingOnNextRun = false;
+    }
+
+    private void StopTranslationTiming(bool resumeOnNextRun)
+    {
+        _translationProgressStopwatch.Stop();
+        _resumeTranslationTimingOnNextRun = resumeOnNextRun;
     }
 
     private void ApplySourceLanguageFilter()

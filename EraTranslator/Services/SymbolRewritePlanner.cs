@@ -145,7 +145,7 @@ public sealed class SymbolRewritePlanner
                     continue;
                 }
 
-                entry.NewKey = $"{entry.NewKey}__{TranslationQualityRules.NormalizeTranslatedText(entry.Item.FileType, entry.OriginalKey)}";
+                entry.NewKey = $"{entry.NewKey}__{TranslationQualityRules.NormalizeTranslatedText(entry.Item.FileType, entry.OriginalKey, entry.Item.PreserveWhitespace)}";
                 entry.Item.ApplyTranslationState("검수 필요", "통과", "번역 키 충돌로 원문 접미사를 덧붙였습니다.", true, entry.NewKey);
             }
         }

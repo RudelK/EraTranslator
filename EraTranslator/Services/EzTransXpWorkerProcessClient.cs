@@ -5,6 +5,8 @@ namespace EraTranslator.Services;
 
 internal interface IEzTransXpWorkerClient : IAsyncDisposable
 {
+    bool IsAlive { get; }
+
     Task<IReadOnlyList<string>> TranslateAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken);
 }
 
@@ -29,6 +31,8 @@ internal sealed class EzTransXpWorkerProcessClient : IEzTransXpWorkerClient
     private readonly StreamReader _stderr;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
+
+    public bool IsAlive => !_disposed && !_process.HasExited;
 
     public EzTransXpWorkerProcessClient(string workerExecutablePath, EzTransXpInstallationInfo installationInfo)
     {
@@ -64,7 +68,7 @@ internal sealed class EzTransXpWorkerProcessClient : IEzTransXpWorkerClient
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            if (_process.HasExited)
+            if (!IsAlive)
             {
                 throw CreateProcessExitException();
             }
@@ -112,7 +116,7 @@ internal sealed class EzTransXpWorkerProcessClient : IEzTransXpWorkerClient
             if (!_process.HasExited)
             {
                 _stdin.Close();
-                await _process.WaitForExitAsync();
+                await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             }
         }
         catch
@@ -120,6 +124,13 @@ internal sealed class EzTransXpWorkerProcessClient : IEzTransXpWorkerClient
             if (!_process.HasExited)
             {
                 _process.Kill(entireProcessTree: true);
+                try
+                {
+                    await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
             }
         }
         finally

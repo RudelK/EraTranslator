@@ -26,6 +26,8 @@ public sealed class JosaPatternAnalyzerTests
     [InlineData("%CALLNAME:ARG%(은)는", "%ARG는%")]
     [InlineData("%플레이어는()%","%플레이어는%")]
     [InlineData("%NAME:TARGET%(을)를", "%조사처리(NAME:TARGET,\"을\")%")]
+    [InlineData("%~%(은)는", "%조사처리(~,\"는\")%")]
+    [InlineData("%~%의", "%조사처리(~,\"의\")%")]
     [InlineData("%조사처리(CALLNAME:MASTER,\"의\")%", "%플레이어의%")]
     [InlineData("%조사처리(CALLNAME:(LOCAL:11),\"과\")%", "%조사처리(CALLNAME:(LOCAL:11),\"과\")%")]
     public void RewriteText_RewritesToLatestMacroOrGenericForm(string source, string expected)

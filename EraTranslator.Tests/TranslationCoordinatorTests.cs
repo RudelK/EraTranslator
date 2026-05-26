@@ -208,6 +208,41 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_RepairsNearMissPlaceholderTokensBeforeRestore()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "__PH0__……그런 얼굴 하지 마.__PH1__도와달라고 할 생각은 없어.__PH2_";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "「……そんな顔しないでよ。　手伝ってくれなんていう気はないんだ」"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("번역 완료", items[0].Status);
+        Assert.True(items[0].CanSave);
+        Assert.Equal("「……그런 얼굴 하지 마.　도와달라고 할 생각은 없어.」", items[0].TranslatedText);
+    }
+
+    [Fact]
     public async Task TranslateAsync_MarksAlternativeCandidatesAsReviewNeeded()
     {
         var provider = new SequencedProvider(requests =>

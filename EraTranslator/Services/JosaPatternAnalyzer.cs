@@ -390,7 +390,7 @@ public sealed partial class JosaPatternAnalyzer
     [GeneratedRegex("""%(?<base>플레이어|마스터|MASTER|타겟|TARGET|조교자|조수|ARG)(?<particle>으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)%""", RegexOptions.Compiled)]
     private static partial Regex MacroPattern();
 
-    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+)%(?<particle>\(은\)는|\(이\)가|\(을\)를|\(와\)과|\(로\)으로|\(랑\)이랑|\(며\)이며|\(고\)이고|\(라\)이라|\(다\)이다|\(였\)이었|\(여\)이여|\(야\)이야|\(나\)이나|\(면\)이면|의|에게)""", RegexOptions.Compiled)]
+    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%(?<particle>\(은\)는|\(이\)가|\(을\)를|\(와\)과|\(로\)으로|\(랑\)이랑|\(며\)이며|\(고\)이고|\(라\)이라|\(다\)이다|\(였\)이었|\(여\)이여|\(야\)이야|\(나\)이나|\(면\)이면|의|에게)""", RegexOptions.Compiled)]
     private static partial Regex PostfixPairPattern();
 
     private enum JosaInputKind

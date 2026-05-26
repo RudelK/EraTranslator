@@ -22,7 +22,8 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        _viewModel.FlushPendingConfigSave();
+        _viewModel.StopCurrentOperation();
+        _viewModel.Dispose();
         base.OnClosed(e);
     }
 

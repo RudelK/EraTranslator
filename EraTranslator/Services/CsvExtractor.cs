@@ -62,6 +62,7 @@ public sealed class CsvExtractor
                     FieldIndex = fieldIndex,
                     SourceKey = sourceKey,
                     CsvFieldRole = classification.Role,
+                    PreserveWhitespace = classification.PreserveWhitespace,
                     SymbolNamespace = classification.SymbolNamespace,
                     OriginalSymbolKey = classification.OriginalSymbolKey,
                     IsReferenceBearingKey = classification.IsReferenceBearingKey,
