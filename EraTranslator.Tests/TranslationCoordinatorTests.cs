@@ -315,6 +315,43 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_MarksAsciiNoiseAsReviewNeededInsteadOfFailure()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "나는 당신과 다르게 바빠요 much";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "あなたと違って忙しいの。"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("검수 필요", items[0].Status);
+        Assert.Equal("통과", items[0].ValidationStatus);
+        Assert.True(items[0].CanSave);
+        Assert.Equal("영어 또는 로마자 잡음이 섞여 있어 검토가 필요합니다.", items[0].TranslationError);
+        Assert.Equal("나는 당신과 다르게 바빠요 much", items[0].TranslatedText);
+    }
+
+    [Fact]
     public async Task TranslateAsync_EzTransUsesProcessCountToExpandBatch()
     {
         var provider = new SequencedProvider(requests =>

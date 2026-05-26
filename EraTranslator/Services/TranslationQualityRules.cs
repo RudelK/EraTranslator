@@ -35,8 +35,8 @@ public static partial class TranslationQualityRules
             return false;
         }
 
-        return translatedLength >= originalLength * 1.5
-            || originalLength >= translatedLength * 1.5;
+        return translatedLength < originalLength
+            || translatedLength >= originalLength * 1.5;
     }
 
     public static string? GetReviewReason(string originalText, string translatedText)
@@ -52,6 +52,11 @@ public static partial class TranslationQualityRules
         if (!SourceContainsParentheses(normalizedSource) && AddedExplanationParenthesesPattern().IsMatch(normalizedTranslated))
         {
             return "설명 괄호가 추가되어 검토가 필요합니다.";
+        }
+
+        if (!ContainsAsciiWord(normalizedSource) && ContainsAsciiWord(normalizedTranslated))
+        {
+            return "영어 또는 로마자 잡음이 섞여 있어 검토가 필요합니다.";
         }
 
         if (RequiresLengthReview(originalText, translatedText))
@@ -105,6 +110,11 @@ public static partial class TranslationQualityRules
             || source.Contains('）', StringComparison.Ordinal);
     }
 
+    private static bool ContainsAsciiWord(string value)
+    {
+        return AsciiWordPattern().IsMatch(value);
+    }
+
     [GeneratedRegex(@"\s*([、。，．：；！？…‥・／＼｜【】〈〉《》「」『』（）［］｛｝＜＞％])\s*", RegexOptions.Compiled)]
     private static partial Regex ProtectedFullWidthCharacterSpacingPattern();
 
@@ -113,6 +123,9 @@ public static partial class TranslationQualityRules
 
     [GeneratedRegex(@"[\(\（][^)\）\r\n]{2,}[\)\）]", RegexOptions.Compiled)]
     private static partial Regex AddedExplanationParenthesesPattern();
+
+    [GeneratedRegex(@"(?<![A-Za-z])[A-Za-z][A-Za-z'-]{2,}(?![A-Za-z])", RegexOptions.Compiled)]
+    private static partial Regex AsciiWordPattern();
 
     [GeneratedRegex(@",", RegexOptions.Compiled)]
     private static partial Regex CsvAsciiCommaPattern();

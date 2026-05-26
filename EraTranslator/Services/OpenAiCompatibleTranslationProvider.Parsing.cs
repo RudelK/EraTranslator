@@ -52,6 +52,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
         working = StripWrappedPipes(working);
         working = TrimTrailingPipe(working).Trim();
+        working = NormalizeSingleSegmentPipeArtifacts(working, request);
 
         if (LooksLikePromptEchoLine(working) || LooksLikeExplanationLine(working))
         {
@@ -185,6 +186,22 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             : value;
     }
 
+    private static string NormalizeSingleSegmentPipeArtifacts(string value, ProtectedSegment request)
+    {
+        if (string.IsNullOrWhiteSpace(value) || SourceContainsPipe(request.OriginalText))
+        {
+            return value;
+        }
+
+        var normalized = value.Trim();
+        normalized = LeadingPipeBeforePlaceholderPattern().Replace(normalized, string.Empty);
+        normalized = PlaceholderBoundaryPipePattern().Replace(normalized, string.Empty);
+        normalized = PipeBeforePlaceholderPattern().Replace(normalized, string.Empty);
+        normalized = PipeAfterPlaceholderPattern().Replace(normalized, string.Empty);
+        normalized = TrailingPipePattern().Replace(normalized, string.Empty);
+        return normalized.Trim();
+    }
+
     private static bool LooksLikePromptEchoLine(string line)
     {
         var normalized = line.Trim();
@@ -211,7 +228,9 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             || normalized.Contains("Since the prompt", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("*Note", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("Note:", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("문맥에 따라", StringComparison.OrdinalIgnoreCase);
+            || normalized.StartsWith("문맥에 따라", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("*문맥에 따라", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("주:", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksLikeUnrecoverableOutput(string translated, ProtectedSegment request)
@@ -224,19 +243,13 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             return true;
         }
 
-        if (!ContainsAsciiWord(source) && ContainsAsciiWord(normalized))
-        {
-            return true;
-        }
-
         return false;
     }
 
-    private static bool SourceContainsPipe(string source) => source.Contains('|', StringComparison.Ordinal);
-
-    private static bool ContainsAsciiWord(string value)
+    private static bool SourceContainsPipe(string source)
     {
-        return AsciiWordPattern().IsMatch(value);
+        return source.Contains('|', StringComparison.Ordinal)
+            || source.Contains('｜', StringComparison.Ordinal);
     }
 
     private static bool TryParseTranslations(
@@ -323,7 +336,20 @@ public sealed partial class OpenAiCompatibleTranslationProvider
     private static bool LooksLikeJsonEnvelope(string content)
     {
         var trimmed = content.TrimStart();
-        return trimmed.StartsWith('{') || trimmed.StartsWith('[');
+        if (!trimmed.StartsWith('{') && !trimmed.StartsWith('['))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var _ = JsonDocument.Parse(trimmed);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool TryParsePipeDelimitedTranslations(string content, out Dictionary<string, string> translations)
@@ -427,4 +453,19 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         json = string.Empty;
         return false;
     }
+
+    [GeneratedRegex(@"^\|(?=__PH\d+__)", RegexOptions.Compiled)]
+    private static partial Regex LeadingPipeBeforePlaceholderPattern();
+
+    [GeneratedRegex(@"\|(?=__PH\d+__)", RegexOptions.Compiled)]
+    private static partial Regex PipeBeforePlaceholderPattern();
+
+    [GeneratedRegex(@"__\|(?=__PH\d+__)", RegexOptions.Compiled)]
+    private static partial Regex PlaceholderBoundaryPipePattern();
+
+    [GeneratedRegex(@"(?<=__PH\d+__)\|", RegexOptions.Compiled)]
+    private static partial Regex PipeAfterPlaceholderPattern();
+
+    [GeneratedRegex(@"\|$", RegexOptions.Compiled)]
+    private static partial Regex TrailingPipePattern();
 }

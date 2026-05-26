@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Threading;
 using System.Windows.Data;
 using EraTranslator.Services;
 
@@ -1037,7 +1039,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             _suppressItemStatePersistence = false;
         }
 
-        ItemsView.Refresh();
+        RequestItemsViewRefresh();
         SaveTranslationProgress();
     }
 
@@ -1667,6 +1669,28 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         return string.IsNullOrEmpty(e.PropertyName)
             || string.Equals(e.PropertyName, propertyName, StringComparison.Ordinal);
+    }
+
+    private void RequestItemsViewRefresh()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null)
+        {
+            ItemsView.Refresh();
+            return;
+        }
+
+        if (!dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(
+                DispatcherPriority.ApplicationIdle,
+                new Action(() => ItemsView.Refresh()));
+            return;
+        }
+
+        dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(() => ItemsView.Refresh()));
     }
 
     internal string BuildTranslationProgressDetail(string? detail, double progressValue)

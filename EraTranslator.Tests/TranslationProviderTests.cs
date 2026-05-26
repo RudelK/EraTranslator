@@ -161,6 +161,132 @@ public sealed class TranslationProviderTests
     }
 
     [Fact]
+    public async Task LmStudioProvider_AcceptsSingleSegmentWithPlaceholderAndBracketLabel()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"[양도]__PH0__"} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "[両刀]__PH0__", "[両刀]　", ["　"])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("[양도]__PH0__", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_AcceptsSingleSegmentNoticeWithAsciiTerms()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"※이것은 조교 SLG 제작 툴 erakanon의 개변·재배포입니다."} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "※これは調教SLG作成ツールerakanonの改変・再配布です。", "※これは調教SLG作成ツールerakanonの改変・再配布です。", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("※이것은 조교 SLG 제작 툴 erakanon의 개변·재배포입니다.", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_AcceptsLegitimateSentenceContainingContextDependentPhrase()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"이 표현은 문맥에 따라 의미가 달라진다."} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "この表現は文脈によって意味が変わる。", "この表現は文脈によって意味が変わる。", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("이 표현은 문맥에 따라 의미가 달라진다.", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_AcceptsAsciiPipeWhenSourceUsesFullWidthPipe()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"후보 비율 | 유두 색깔 | 갈색 피부 | 합계"} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "候補割合｜乳首の色｜褐色肌｜合計", "候補割合｜乳首の色｜褐色肌｜合計", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("후보 비율 | 유두 색깔 | 갈색 피부 | 합계", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_RepairsSingleSegmentPlaceholderPipeArtifacts()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"|__PH0__는 방 침대에 말없이 앉았다.__PH1__옆에 앉도록 이쪽을 재촉한다."} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "__PH0__はベッドに無言で座った。__PH1__隣に座るようこちらを促す。", "__PH0__はベッドに無言で座った。__PH1__隣に座るようこちらを促す。", ["「", "」"])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("__PH0__는 방 침대에 말없이 앉았다.__PH1__옆에 앉도록 이쪽을 재촉한다.", result.Translations["id-1"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_RepairsPlaceholderBoundaryPipes()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"|__PH0__나는 당신과 다르게 바빠.__|__PH1__제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__|__PH2__|"} }]}
+"""));
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "__PH0__あなたと違って忙しいの。__PH1__ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH2__", "__PH0__あなたと違って忙しいの。__PH1__ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH2__", ["「", "」", "　"])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("__PH0__나는 당신과 다르게 바빠.__PH1__제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__PH2__", result.Translations["id-1"]);
+    }
+
+    [Fact]
     public async Task LmStudioProvider_RecoversFromSourcePipeAndExplanationNoise()
     {
         var factory = new FakeHttpClientFactory(_ => JsonResponse("""

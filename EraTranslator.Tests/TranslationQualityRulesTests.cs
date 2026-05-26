@@ -20,6 +20,12 @@ public sealed class TranslationQualityRulesTests
     }
 
     [Fact]
+    public void RequiresLengthReview_ReturnsTrueWhenTranslationIsShorterThanSource()
+    {
+        Assert.True(TranslationQualityRules.RequiresLengthReview("おはようございます", "안녕"));
+    }
+
+    [Fact]
     public void GetReviewReason_ReturnsAlternativeCandidateReason()
     {
         var reason = TranslationQualityRules.GetReviewReason("デフォ子", "데포자/기본 캐릭터");
@@ -33,6 +39,14 @@ public sealed class TranslationQualityRulesTests
         var reason = TranslationQualityRules.GetReviewReason("パイパン", "파이판(무모/제모 상태)");
 
         Assert.Equal("대체 후보가 함께 출력되어 검토가 필요합니다.", reason);
+    }
+
+    [Fact]
+    public void GetReviewReason_ReturnsAsciiNoiseReason()
+    {
+        var reason = TranslationQualityRules.GetReviewReason("あなたと違って忙しいの。", "나는 당신과 다르게 바빠요 much");
+
+        Assert.Equal("영어 또는 로마자 잡음이 섞여 있어 검토가 필요합니다.", reason);
     }
 
     [Fact]

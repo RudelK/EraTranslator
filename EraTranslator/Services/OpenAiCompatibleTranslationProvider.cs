@@ -131,7 +131,4 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
 
     [GeneratedRegex(@"(?ms)^SEGMENT (?<id>[^\r\n]+)\r?\n(?<text>.*?)\r?\nEND SEGMENT\s*$", RegexOptions.Compiled | RegexOptions.Multiline)]
     private static partial Regex LegacyOutputBlockPattern();
-
-    [GeneratedRegex(@"\b[A-Za-z][A-Za-z'-]{2,}\b", RegexOptions.Compiled)]
-    private static partial Regex AsciiWordPattern();
 }

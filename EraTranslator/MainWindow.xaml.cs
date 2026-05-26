@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Threading;
 using EraTranslator.Models;
 using EraTranslator.ViewModels;
 using Forms = System.Windows.Forms;
@@ -185,6 +186,8 @@ public partial class MainWindow : Window
             item.TranslatedText = textBox.Text;
         }
 
-        _viewModel.HandleTranslatedTextEdited(item);
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(() => _viewModel.HandleTranslatedTextEdited(item)));
     }
 }
