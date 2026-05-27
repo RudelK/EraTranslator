@@ -6,20 +6,33 @@ namespace EraTranslator.Tests;
 public sealed class FileScannerIntegrationTests
 {
     [Fact]
-    public void Scan_SampleGame_FindsErbAndCsvItems()
+    public void Scan_SyntheticGame_FindsErbAndCsvItems()
     {
-        var samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "sample", "era魔界牧場1.050"));
-        Assert.True(Directory.Exists(samplePath), $"샘플 경로를 찾지 못했습니다: {samplePath}");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "CSV"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "ERB"));
+        File.WriteAllText(Path.Combine(tempRoot, "CSV", "Item.csv"), "0,薬草\r\n1,魔石\r\n");
+        File.WriteAllText(Path.Combine(tempRoot, "ERB", "Test.ERB"), "PRINTFORMW こんにちは\r\n");
 
-        var scanner = new FileScanner();
-        var session = scanner.Scan(samplePath);
+        try
+        {
+            var scanner = new FileScanner();
+            var session = scanner.Scan(tempRoot);
 
-        Assert.NotEmpty(session.Documents);
-        Assert.NotEmpty(session.Items);
-        Assert.True(session.Metrics.GetValueOrDefault("ErbItems") > 0);
-        Assert.True(session.Metrics.GetValueOrDefault("CsvItems") > 0);
-        Assert.Equal(CsvDocumentKind.IdFirstTable, session.Documents["CSV/Item.csv"].CsvKind);
-        Assert.DoesNotContain(session.Documents.Values.SelectMany(document => document.ScanWarnings), warning => warning.Contains("전용 추출 규칙", StringComparison.Ordinal));
+            Assert.NotEmpty(session.Documents);
+            Assert.NotEmpty(session.Items);
+            Assert.True(session.Metrics.GetValueOrDefault("ErbItems") > 0);
+            Assert.True(session.Metrics.GetValueOrDefault("CsvItems") > 0);
+            Assert.Equal(CsvDocumentKind.IdFirstTable, session.Documents["CSV/Item.csv"].CsvKind);
+            Assert.DoesNotContain(session.Documents.Values.SelectMany(document => document.ScanWarnings), warning => warning.Contains("전용 추출 규칙", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]

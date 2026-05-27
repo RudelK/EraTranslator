@@ -30,6 +30,17 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_LeavesResultStateLoggingDisabledByDefault()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            restoreLastSessionOnStartup: false);
+
+        Assert.False(viewModel.EnableResultStateLogging);
+    }
+
+    [Fact]
     public void ChangingProjectDataDirectory_ClearsStaleSessionWhenTargetHasNoSavedState()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");

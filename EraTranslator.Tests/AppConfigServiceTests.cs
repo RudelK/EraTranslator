@@ -16,6 +16,17 @@ public sealed class AppConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public void Load_ReturnsResultStateLoggingDisabledByDefault()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+
+        var actual = service.Load();
+
+        Assert.False(actual.EnableResultStateLogging);
+    }
+
+    [Fact]
     public void SaveAndLoad_RoundTripsConfigInTargetDirectory()
     {
         Directory.CreateDirectory(_rootPath);
