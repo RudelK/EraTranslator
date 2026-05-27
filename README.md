@@ -2,6 +2,13 @@
 
 Emuera 게임의 `ERB`, `ERA`, `CSV`, `CVS` 파일을 스캔해 번역 가능한 텍스트를 추출하고, 번역 진행 상태를 관리하며, 결과물을 게임 폴더에 다시 적용할 수 있도록 돕는 WPF 번역 보조 도구입니다.
 
+## 실행 요구 사항
+
+- Windows 환경에서 실행합니다.
+- `.NET 8 Desktop Runtime`이 필요합니다.
+- 설치되어 있지 않다면 Microsoft 공식 [.NET 8 다운로드 페이지](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)에서 `Run apps - Runtime` 섹션의 `.NET Desktop Runtime 8` Windows 버전을 설치하세요.
+- 앱을 직접 빌드하려면 `.NET 8 SDK`가 필요합니다.
+
 ## 주요 기능
 
 ### 추출과 스캔
