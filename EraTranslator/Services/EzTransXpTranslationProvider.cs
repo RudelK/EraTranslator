@@ -29,8 +29,16 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
     {
         _installationService = installationService ?? new EzTransXpInstallationService();
         _logger = logger;
-        var resolvedWorkerExecutablePath = workerExecutablePath ?? Path.Combine(AppContext.BaseDirectory, "EraTranslator.EzTransWorker.exe");
+        var resolvedWorkerExecutablePath = workerExecutablePath ?? ResolveDefaultWorkerExecutablePath();
         _workerClientFactory = workerClientFactory ?? new EzTransXpWorkerClientFactory(resolvedWorkerExecutablePath);
+    }
+
+    internal static string ResolveDefaultWorkerExecutablePath()
+    {
+        var internalWorkerPath = Path.Combine(AppContext.BaseDirectory, "workers", "EzTransXP", "EraTranslator.EzTransWorker.exe");
+        return File.Exists(internalWorkerPath)
+            ? internalWorkerPath
+            : Path.Combine(AppContext.BaseDirectory, "EraTranslator.EzTransWorker.exe");
     }
 
     public async Task<TranslationProviderResult> TranslateAsync(

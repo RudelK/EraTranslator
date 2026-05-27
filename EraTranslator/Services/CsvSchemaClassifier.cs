@@ -163,6 +163,15 @@ public sealed class CsvSchemaClassifier
             };
         }
 
+        if (IsGameBaseFile(relativePath) && fieldIndex == 0)
+        {
+            return new CsvFieldClassification
+            {
+                Role = role,
+                ShouldExtract = false,
+            };
+        }
+
         if (kind == CsvDocumentKind.CharacterSheet)
         {
             return ClassifyCharacterSheetField(fields, fieldIndex, role);
@@ -170,16 +179,26 @@ public sealed class CsvSchemaClassifier
 
         var symbolNamespace = ResolveFileNamespace(relativePath);
         var current = fieldIndex < fields.Count ? fields[fieldIndex].Value.Trim() : string.Empty;
-        var isKeyField = fieldIndex == 0 && role == CsvFieldRole.Key;
-        var shouldExtract = isKeyField || role == CsvFieldRole.TranslatableValue;
+        var isNumericReferenceTableIdField = kind == CsvDocumentKind.IdFirstTable
+            && fieldIndex == 0
+            && role == CsvFieldRole.Key
+            && !string.IsNullOrWhiteSpace(symbolNamespace);
+        var isReferenceBearingNameField = kind == CsvDocumentKind.IdFirstTable
+            && fieldIndex == 1
+            && role == CsvFieldRole.TranslatableValue
+            && !string.IsNullOrWhiteSpace(symbolNamespace);
+        var isKeyField = fieldIndex == 0
+            && role == CsvFieldRole.Key
+            && !isNumericReferenceTableIdField;
+        var shouldExtract = isKeyField || isReferenceBearingNameField || role == CsvFieldRole.TranslatableValue;
 
         return new CsvFieldClassification
         {
             Role = role,
             ShouldExtract = shouldExtract,
-            SymbolNamespace = isKeyField ? symbolNamespace : string.Empty,
-            OriginalSymbolKey = isKeyField ? current : string.Empty,
-            IsReferenceBearingKey = isKeyField && !string.IsNullOrWhiteSpace(symbolNamespace),
+            SymbolNamespace = isReferenceBearingNameField || isKeyField ? symbolNamespace : string.Empty,
+            OriginalSymbolKey = isReferenceBearingNameField || isKeyField ? current : string.Empty,
+            IsReferenceBearingKey = (isReferenceBearingNameField || isKeyField) && !string.IsNullOrWhiteSpace(symbolNamespace),
         };
     }
 

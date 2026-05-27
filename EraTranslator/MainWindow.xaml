@@ -3,9 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:app="clr-namespace:EraTranslator"
         xmlns:models="clr-namespace:EraTranslator.Models"
         mc:Ignorable="d"
-        Title="EraTranslator"
+        Title="{x:Static app:ApplicationInfo.WindowTitle}"
         Width="1440"
         Height="900"
         MinWidth="1180"
@@ -199,56 +200,80 @@
         </Grid>
 
         <GroupBox Grid.Row="1" Margin="0,12,0,12" Header="필터">
-            <WrapPanel Margin="8">
-                <ComboBox Width="110"
-                          Margin="0,0,8,0"
-                          IsEnabled="{Binding CanStartActions}"
-                          ItemsSource="{Binding SearchFieldFilters}"
-                          SelectedItem="{Binding SelectedSearchFieldFilter}" />
-                <TextBox Width="320"
-                         Margin="0,0,8,0"
-                         IsEnabled="{Binding CanStartActions}"
-                         ToolTip="텍스트 또는 파일 경로 검색"
-                         Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}" />
-                <ComboBox Width="120"
-                          Margin="0,0,8,0"
-                          IsEnabled="{Binding CanStartActions}"
-                          ItemsSource="{Binding FileTypeFilters}"
-                          SelectedItem="{Binding SelectedFileTypeFilter}" />
-                <ComboBox Width="120"
-                          Margin="0,0,8,0"
-                          IsEnabled="{Binding CanStartActions}"
-                          ItemsSource="{Binding StatusFilters}"
-                          SelectedItem="{Binding SelectedStatusFilter}" />
-                <CheckBox Margin="0,0,8,0"
-                          VerticalAlignment="Center"
-                          IsEnabled="{Binding CanStartActions}"
-                          Content="정규식"
-                          IsChecked="{Binding UseRegexFilter}" />
-                <Button Width="108"
-                        Margin="0,0,8,0"
-                        IsEnabled="{Binding CanStartActions}"
-                        Click="OpenGlobalReplace_Click"
-                        Content="전역 치환..." />
-                <CheckBox Margin="0,0,8,0"
-                          VerticalAlignment="Center"
-                          IsEnabled="{Binding CanStartActions}"
-                          Content="경고만 보기"
-                          IsChecked="{Binding WarningsOnly}" />
-                <CheckBox VerticalAlignment="Center"
-                          IsEnabled="{Binding CanStartActions}"
-                          ToolTip="체크하면 번역문 수정 직후 현재 필터를 다시 적용합니다."
-                          Content="실시간 갱신"
-                          IsChecked="{Binding RefreshGridDuringTranslatedTextEdit}" />
-                <Button Width="72"
-                        Margin="8,0,0,0"
-                        IsEnabled="{Binding CanStartActions}"
-                        Click="RefreshFilter_Click"
-                        Content="갱신" />
-            </WrapPanel>
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <WrapPanel Grid.Column="0">
+                    <ComboBox Width="110"
+                              Margin="0,0,8,0"
+                              IsEnabled="{Binding CanStartActions}"
+                              ItemsSource="{Binding SearchFieldFilters}"
+                              SelectedItem="{Binding SelectedSearchFieldFilter}" />
+                    <TextBox Width="320"
+                             Margin="0,0,8,0"
+                             IsEnabled="{Binding CanStartActions}"
+                             ToolTip="텍스트 또는 파일 경로 검색"
+                             Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}" />
+                    <ComboBox Width="120"
+                              Margin="0,0,8,0"
+                              IsEnabled="{Binding CanStartActions}"
+                              ItemsSource="{Binding FileTypeFilters}"
+                              SelectedItem="{Binding SelectedFileTypeFilter}" />
+                    <ComboBox Width="120"
+                              Margin="0,0,8,0"
+                              IsEnabled="{Binding CanStartActions}"
+                              ItemsSource="{Binding StatusFilters}"
+                              SelectedItem="{Binding SelectedStatusFilter}" />
+                    <CheckBox Margin="0,0,8,0"
+                              VerticalAlignment="Center"
+                              IsEnabled="{Binding CanStartActions}"
+                              Content="정규식"
+                              IsChecked="{Binding UseRegexFilter}" />
+                    <Button Width="108"
+                            Margin="0,0,8,0"
+                            IsEnabled="{Binding CanStartActions}"
+                            Click="OpenGlobalReplace_Click"
+                            Content="전역 치환..." />
+                    <CheckBox Margin="0,0,8,0"
+                              VerticalAlignment="Center"
+                              IsEnabled="{Binding CanStartActions}"
+                              Content="경고만 보기"
+                              IsChecked="{Binding WarningsOnly}" />
+                    <CheckBox Margin="0,0,8,0"
+                              VerticalAlignment="Center"
+                              IsEnabled="{Binding CanStartActions}"
+                              ToolTip="체크하면 번역문 수정 직후 현재 필터를 다시 적용합니다."
+                              Content="실시간 갱신"
+                              IsChecked="{Binding RefreshGridDuringTranslatedTextEdit}" />
+                    <Button Width="72"
+                            Margin="8,0,0,0"
+                            IsEnabled="{Binding CanStartActions}"
+                            Click="RefreshFilter_Click"
+                            Content="갱신" />
+                </WrapPanel>
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right">
+                    <Button Width="92"
+                            Margin="8,0,8,0"
+                            IsEnabled="{Binding CanStartActions}"
+                            Click="ApplyJosaRewrite_Click"
+                            Content="조사처리" />
+                    <Button Width="92"
+                            Margin="0,0,8,0"
+                            IsEnabled="{Binding CanStartActions}"
+                            Click="ApplyErbFunctionCorrection_Click"
+                            Content="함수 교정" />
+                </StackPanel>
+            </Grid>
         </GroupBox>
 
-        <DataGrid Grid.Row="2"
+        <DataGrid x:Name="TranslationGrid"
+                  Grid.Row="2"
                   ItemsSource="{Binding ItemsView}"
                   SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                   AutoGenerateColumns="False"
@@ -318,6 +343,7 @@
                          HorizontalScrollBarVisibility="Auto"
                          AcceptsReturn="True"
                          TextWrapping="Wrap"
+                         TextChanged="SelectedTranslationEditor_TextChanged"
                          LostFocus="SelectedTranslationEditor_LostFocus"
                          Text="{Binding SelectedItemTranslatedTextEditor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             </Grid>

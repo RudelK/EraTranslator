@@ -21,6 +21,8 @@ public sealed class TranslationProgressItemState
 
     public bool CanSave { get; init; }
 
+    public string ReferenceOriginalSymbolKey { get; init; } = string.Empty;
+
     public int ReferenceImpactCount { get; init; }
 
     public bool RequiresReferenceRewrite { get; init; }

@@ -36,7 +36,7 @@ public sealed class FileScanner
             var path = files[fileIndex];
             var bytes = File.ReadAllBytes(path);
             var encodingInfo = _encodingDetector.Detect(bytes);
-            var content = encodingInfo.Encoding.GetString(bytes);
+            var content = DecodeContent(bytes, encodingInfo);
             var relativePath = Path.GetRelativePath(gameRoot, path);
             var extension = Path.GetExtension(path).ToLowerInvariant();
             var fileType = CsvExtensions.Contains(extension) ? "CSV" : "ERB";
@@ -99,6 +99,7 @@ public sealed class FileScanner
                     SymbolNamespace = segment.SymbolNamespace,
                     OriginalSymbolKey = segment.OriginalSymbolKey,
                     IsReferenceBearingKey = segment.IsReferenceBearingKey,
+                    ReferenceOriginalSymbolKey = segment.OriginalSymbolKey,
                     WarningText = string.Join(" | ", document.ScanWarnings),
                 });
             }
@@ -140,7 +141,7 @@ public sealed class FileScanner
                 continue;
             }
 
-            var text = encodingInfo.Encoding.GetString(bytes);
+            var text = DecodeContent(bytes, encodingInfo);
             File.WriteAllText(path, text, utf8Bom);
             converted.Add(relativePath);
             progress?.Report((((fileIndex + 1) / (double)Math.Max(files.Count, 1)) * 0.95, $"변환 중: {relativePath}"));
@@ -184,6 +185,17 @@ public sealed class FileScanner
         }
 
         return content.Contains('\n') ? "\n" : Environment.NewLine;
+    }
+
+    private static string DecodeContent(byte[] bytes, DetectedEncodingInfo encodingInfo)
+    {
+        var content = encodingInfo.Encoding.GetString(bytes);
+        if (encodingInfo.HasBom && content.Length > 0 && content[0] == '\uFEFF')
+        {
+            return content[1..];
+        }
+
+        return content;
     }
 
     private static IEnumerable<string> FindErbWarnings(string content)

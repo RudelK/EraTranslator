@@ -13,7 +13,74 @@ public static partial class TranslationQualityRules
             return RemoveSpacesForCsv(normalizedCsv, preserveWhitespace);
         }
 
-        return NormalizeProtectedCharacterSpacing(text);
+        return NormalizeErbFunctionArgumentSeparators(NormalizeProtectedCharacterSpacing(text));
+    }
+
+    public static string NormalizeErbFunctionArgumentSeparators(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)
+            || (!text.Contains('(') && !text.Contains('{'))
+            || !text.Contains('、'))
+        {
+            return text;
+        }
+
+        var builder = new System.Text.StringBuilder(text.Length);
+        var quote = false;
+        var rewriteContextDepth = 0;
+        var rewriteContextStack = new Stack<(char closingCharacter, bool rewriteSeparators)>();
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            var character = text[index];
+            if (character == '"')
+            {
+                quote = !quote;
+                builder.Append(character);
+                continue;
+            }
+
+            if (!quote && (character == '(' || character == '{'))
+            {
+                var rewriteSeparators = character == '('
+                    ? LooksLikeErbFunctionCall(text, index)
+                    : LooksLikeErbBraceExpression(text, index);
+                rewriteContextStack.Push((character == '(' ? ')' : '}', rewriteSeparators));
+                if (rewriteSeparators)
+                {
+                    rewriteContextDepth++;
+                }
+
+                builder.Append(character);
+                continue;
+            }
+
+            if (!quote && (character == ')' || character == '}'))
+            {
+                if (rewriteContextStack.Count > 0
+                    && rewriteContextStack.Peek().closingCharacter == character)
+                {
+                    var context = rewriteContextStack.Pop();
+                    if (context.rewriteSeparators)
+                    {
+                        rewriteContextDepth = Math.Max(0, rewriteContextDepth - 1);
+                    }
+                }
+
+                builder.Append(character);
+                continue;
+            }
+
+            if (!quote && character == '、' && rewriteContextDepth > 0)
+            {
+                builder.Append(',');
+                continue;
+            }
+
+            builder.Append(character);
+        }
+
+        return builder.ToString();
     }
 
     public static string NormalizeProtectedCharacterSpacing(string text)
@@ -113,6 +180,102 @@ public static partial class TranslationQualityRules
     private static bool ContainsAsciiWord(string value)
     {
         return AsciiWordPattern().IsMatch(value);
+    }
+
+    private static bool LooksLikeErbFunctionCall(string text, int openParenIndex)
+    {
+        var end = openParenIndex - 1;
+        while (end >= 0 && char.IsWhiteSpace(text[end]))
+        {
+            end--;
+        }
+
+        if (end < 0)
+        {
+            return false;
+        }
+
+        var start = end;
+        while (start >= 0 && IsFunctionTokenCharacter(text[start]))
+        {
+            start--;
+        }
+
+        var token = text[(start + 1)..(end + 1)];
+        if (token.Length == 0)
+        {
+            return false;
+        }
+
+        return token is "조사처리" or "조사만처리" or "조사선택"
+            || token.Any(static character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_');
+    }
+
+    private static bool LooksLikeErbBraceExpression(string text, int openBraceIndex)
+    {
+        var quote = false;
+        var depth = 0;
+        var hasSeparator = false;
+        var hasToken = false;
+
+        for (var index = openBraceIndex + 1; index < text.Length; index++)
+        {
+            var character = text[index];
+            if (character == '"')
+            {
+                quote = !quote;
+                continue;
+            }
+
+            if (quote)
+            {
+                continue;
+            }
+
+            if (character == '{')
+            {
+                depth++;
+                continue;
+            }
+
+            if (character == '}')
+            {
+                if (depth == 0)
+                {
+                    break;
+                }
+
+                depth--;
+                continue;
+            }
+
+            if (character is '、' or ',')
+            {
+                hasSeparator = true;
+                continue;
+            }
+
+            if (IsBraceExpressionTokenCharacter(character))
+            {
+                hasToken = true;
+            }
+        }
+
+        return hasSeparator && hasToken;
+    }
+
+    private static bool IsFunctionTokenCharacter(char character)
+    {
+        return char.IsLetterOrDigit(character) || character == '_';
+    }
+
+    private static bool IsBraceExpressionTokenCharacter(char character)
+    {
+        return character is >= 'A' and <= 'Z'
+            or >= 'a' and <= 'z'
+            or >= '0' and <= '9'
+            or '_'
+            or ':';
     }
 
     [GeneratedRegex(@"\s*([、。，．：；！？…‥・／＼｜【】〈〉《》「」『』（）［］｛｝＜＞％])\s*", RegexOptions.Compiled)]

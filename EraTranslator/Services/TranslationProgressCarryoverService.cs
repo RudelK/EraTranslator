@@ -28,12 +28,12 @@ public sealed class TranslationProgressCarryoverService
         {
             if (!previousItemsBySegmentId.TryGetValue(currentItem.SegmentId, out var previousItem)
                 || !previousStatesBySegmentId.TryGetValue(currentItem.SegmentId, out var previousState)
-                || !CanExactlyRestore(previousItem, currentItem))
+                || !CanExactlyRestore(previousItem, previousState, currentItem))
             {
                 continue;
             }
 
-            ApplyExactRestore(currentItem, previousState);
+            ApplyExactRestore(currentItem, previousItem, previousState);
             matchedCurrentIds.Add(currentItem.SegmentId);
             usedPreviousIds.Add(previousItem.SegmentId);
             exactRestoredCount++;
@@ -114,13 +114,13 @@ public sealed class TranslationProgressCarryoverService
 
             var currentItem = currentGroup[0];
             var previousCandidate = previousGroup[0];
-            if (!HasSameOriginalText(previousCandidate.Item.OriginalText, currentItem.OriginalText))
+            if (!HasSameRestorableOriginalText(previousCandidate.Item, previousCandidate.State, currentItem))
             {
                 blockedFromWeakMatching.Add(currentItem.SegmentId);
                 continue;
             }
 
-            ApplyHeuristicRestore(currentItem, previousCandidate.State);
+            ApplyHeuristicRestore(currentItem, previousCandidate.Item, previousCandidate.State);
             matchedCurrentIds.Add(currentItem.SegmentId);
             usedPreviousIds.Add(previousCandidate.Item.SegmentId);
             restoredCount++;
@@ -158,7 +158,7 @@ public sealed class TranslationProgressCarryoverService
                 continue;
             }
 
-            ApplyHeuristicRestore(currentItem, previousCandidate.State);
+            ApplyHeuristicRestore(currentItem, previousCandidate.Item, previousCandidate.State);
             matchedCurrentIds.Add(currentItem.SegmentId);
             usedPreviousIds.Add(previousCandidate.Item.SegmentId);
             previousByOccurrenceKey.Remove(occurrenceKey);
@@ -192,16 +192,19 @@ public sealed class TranslationProgressCarryoverService
         return keys;
     }
 
-    private static bool CanExactlyRestore(ExtractedTextItem previousItem, ExtractedTextItem currentItem)
+    private static bool CanExactlyRestore(
+        ExtractedTextItem previousItem,
+        TranslationProgressItemState previousState,
+        ExtractedTextItem currentItem)
     {
         return string.Equals(previousItem.RelativePath, currentItem.RelativePath, StringComparison.OrdinalIgnoreCase)
             && string.Equals(previousItem.SegmentType, currentItem.SegmentType, StringComparison.Ordinal)
-            && HasSameOriginalText(previousItem.OriginalText, currentItem.OriginalText)
+            && HasSameRestorableOriginalText(previousItem, previousState, currentItem)
             && string.Equals(previousItem.SourceKey ?? string.Empty, currentItem.SourceKey ?? string.Empty, StringComparison.Ordinal)
             && previousItem.FieldIndex == currentItem.FieldIndex
             && previousItem.CsvFieldRole == currentItem.CsvFieldRole
             && string.Equals(previousItem.SymbolNamespace, currentItem.SymbolNamespace, StringComparison.Ordinal)
-            && string.Equals(previousItem.OriginalSymbolKey, currentItem.OriginalSymbolKey, StringComparison.Ordinal);
+            && HasSameRestorableSymbolKey(previousItem, previousState, currentItem);
     }
 
     private static bool CanHeuristicallyCarryOver(TranslationProgressItemState state)
@@ -211,15 +214,13 @@ public sealed class TranslationProgressCarryoverService
             && state.Status is "번역 완료" or "검수 필요" or "수동 수정";
     }
 
-    private static void ApplyExactRestore(ExtractedTextItem item, TranslationProgressItemState state)
+    private static void ApplyExactRestore(ExtractedTextItem item, ExtractedTextItem previousItem, TranslationProgressItemState state)
     {
         item.ApplyPersistedState(state);
-        item.ReferenceImpactCount = state.ReferenceImpactCount;
-        item.RequiresReferenceRewrite = state.RequiresReferenceRewrite;
-        item.ReferenceResolutionStatus = state.ReferenceResolutionStatus;
+        item.ReferenceOriginalSymbolKey = ResolveReferenceOriginalSymbolKey(previousItem, state, item);
     }
 
-    private static void ApplyHeuristicRestore(ExtractedTextItem item, TranslationProgressItemState state)
+    private static void ApplyHeuristicRestore(ExtractedTextItem item, ExtractedTextItem previousItem, TranslationProgressItemState state)
     {
         item.ApplyTranslationState(
             "검수 필요",
@@ -227,11 +228,79 @@ public sealed class TranslationProgressCarryoverService
             HeuristicCarryoverMessage,
             true,
             state.TranslatedText);
+        item.ReferenceOriginalSymbolKey = ResolveReferenceOriginalSymbolKey(previousItem, state, item);
     }
 
     private static bool HasSameOriginalText(string left, string right)
     {
         return string.Equals(NormalizeText(left), NormalizeText(right), StringComparison.Ordinal);
+    }
+
+    private static bool HasSameRestorableOriginalText(
+        ExtractedTextItem previousItem,
+        TranslationProgressItemState previousState,
+        ExtractedTextItem currentItem)
+    {
+        if (HasSameOriginalText(previousItem.OriginalText, currentItem.OriginalText))
+        {
+            return true;
+        }
+
+        if (!previousItem.IsReferenceBearingKey || !currentItem.IsReferenceBearingKey || string.IsNullOrWhiteSpace(previousState.TranslatedText))
+        {
+            return false;
+        }
+
+        var normalizedTranslatedKey = TranslationQualityRules.NormalizeTranslatedText(
+            previousItem.FileType,
+            previousState.TranslatedText,
+            previousItem.PreserveWhitespace);
+        return HasSameOriginalText(normalizedTranslatedKey, currentItem.OriginalText);
+    }
+
+    private static bool HasSameRestorableSymbolKey(
+        ExtractedTextItem previousItem,
+        TranslationProgressItemState previousState,
+        ExtractedTextItem currentItem)
+    {
+        if (string.Equals(previousItem.OriginalSymbolKey, currentItem.OriginalSymbolKey, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!previousItem.IsReferenceBearingKey || !currentItem.IsReferenceBearingKey || string.IsNullOrWhiteSpace(previousState.TranslatedText))
+        {
+            return false;
+        }
+
+        var normalizedTranslatedKey = TranslationQualityRules.NormalizeTranslatedText(
+            previousItem.FileType,
+            previousState.TranslatedText,
+            previousItem.PreserveWhitespace);
+        return string.Equals(normalizedTranslatedKey, currentItem.OriginalSymbolKey, StringComparison.Ordinal);
+    }
+
+    private static string ResolveReferenceOriginalSymbolKey(
+        ExtractedTextItem previousItem,
+        TranslationProgressItemState previousState,
+        ExtractedTextItem currentItem)
+    {
+        if (!currentItem.IsReferenceBearingKey)
+        {
+            return currentItem.OriginalSymbolKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(previousState.ReferenceOriginalSymbolKey))
+        {
+            return previousState.ReferenceOriginalSymbolKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(previousItem.ReferenceOriginalSymbolKey))
+        {
+            return previousItem.ReferenceOriginalSymbolKey;
+        }
+
+        return previousItem.OriginalSymbolKey;
     }
 
     private static string NormalizeText(string value)

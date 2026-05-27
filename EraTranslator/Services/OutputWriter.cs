@@ -1,7 +1,13 @@
+using System.Text;
+
 namespace EraTranslator.Services;
 
 public sealed class OutputWriter
 {
+    private static readonly UTF8Encoding Utf8BomEncoding = new(true);
+    private static readonly UTF8Encoding Utf8NoBomEncoding = new(false);
+    private static readonly UnicodeEncoding Utf16LeBomEncoding = new(false, true, true);
+    private static readonly UnicodeEncoding Utf16LeNoBomEncoding = new(false, false, true);
     private readonly SymbolRewritePlanner _rewritePlanner = new();
     private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
     private readonly JosaPatternAnalyzer _josaPatternAnalyzer = new();
@@ -14,6 +20,7 @@ public sealed class OutputWriter
         IProgress<(double value, string detail)>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        ErbReferenceSessionRefresher.Refresh(session);
         var rewritePlan = _rewritePlanner.CreatePlan(session);
         var packageInfo = session.JosaPackageInfo.ErbExists || session.JosaPackageInfo.ErhExists
             ? session.JosaPackageInfo
@@ -35,6 +42,7 @@ public sealed class OutputWriter
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(outputDirectory);
+        CopyGameRootToExportDirectory(session.GameRoot, outputDirectory, cancellationToken);
         var result = new OutputWriteResult();
         var documents = session.Documents.Values.ToList();
 
@@ -58,7 +66,7 @@ public sealed class OutputWriter
             var content = ApplyTranslations(document, translatedMap, rewritePlan, josaDocumentReplacements, packageInfo);
             var fullPath = Path.Combine(outputDirectory, document.RelativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-            File.WriteAllText(fullPath, content, document.EncodingInfo.Encoding);
+            File.WriteAllText(fullPath, content, ResolveOutputEncoding(document.EncodingInfo));
             result.WrittenFiles.Add(fullPath);
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
         }
@@ -66,6 +74,31 @@ public sealed class OutputWriter
         WriteBundledJosaPackage(outputDirectory, result, backupRoot: null);
         progress?.Report((1.0, result.WrittenFiles.Count == 0 ? "저장할 파일 없음" : $"저장 완료: {result.WrittenFiles.Count}개 파일"));
         return result;
+    }
+
+    private static void CopyGameRootToExportDirectory(string gameRoot, string outputDirectory, CancellationToken cancellationToken)
+    {
+        var normalizedGameRoot = NormalizeDirectoryPath(gameRoot);
+        var normalizedOutputRoot = NormalizeDirectoryPath(outputDirectory);
+        var backupRoot = Path.Combine(normalizedGameRoot, ".era-translator-backup");
+        var backupStateRoot = Path.Combine(normalizedGameRoot, ".era-translator");
+
+        foreach (var sourcePath in Directory.EnumerateFiles(normalizedGameRoot, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (IsUnderDirectory(sourcePath, normalizedOutputRoot)
+                || IsUnderDirectory(sourcePath, backupRoot)
+                || IsUnderDirectory(sourcePath, backupStateRoot))
+            {
+                continue;
+            }
+
+            var relativePath = Path.GetRelativePath(normalizedGameRoot, sourcePath);
+            var destinationPath = Path.Combine(normalizedOutputRoot, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+        }
     }
 
     private OutputWriteResult SaveInPlaceWithBackup(
@@ -102,7 +135,7 @@ public sealed class OutputWriter
             result.BackupFiles.Add(backupPath);
 
             var content = ApplyTranslations(document, translatedMap, rewritePlan, josaDocumentReplacements, packageInfo);
-            File.WriteAllText(document.FullPath, content, document.EncodingInfo.Encoding);
+            File.WriteAllText(document.FullPath, content, ResolveOutputEncoding(document.EncodingInfo));
             result.WrittenFiles.Add(document.FullPath);
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
         }
@@ -206,7 +239,7 @@ public sealed class OutputWriter
                 .Insert(replacement.Start, replacement.Value);
         }
 
-        return EnsureErhIncludeIfNeeded(buffer, document.NewLineSequence);
+        return buffer;
     }
 
     private static string ApplyCsvTranslations(
@@ -254,46 +287,14 @@ public sealed class OutputWriter
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap,
         JosaSupportPackageInfo packageInfo)
     {
-        var symbolRewritten = _inlineSymbolReferenceRewriter.Rewrite(rewritePlan.GetOutputTranslatedText(item), renameMap);
+        var symbolRewritten = _inlineSymbolReferenceRewriter.Rewrite(
+            rewritePlan.GetOutputTranslatedText(item),
+            renameMap,
+            rewritePlan.StringLookupRenameMap);
         var josaRewritten = _josaPatternAnalyzer.RewriteText(symbolRewritten, renameMap, packageInfo);
-        return josaRewritten.Text;
-    }
-
-    private string EnsureErhIncludeIfNeeded(string content, string newLineSequence)
-    {
-        if (!_josaSupportPackageService.HasErhInclude(content) && ContainsMacroJosaUsage(content))
-        {
-            var lines = SplitLines(content, newLineSequence);
-            var insertIndex = FindIncludeInsertionLine(lines);
-            lines.Insert(insertIndex, "#INCLUDE \"ZNAME.ERH\"");
-            return string.Join(newLineSequence, lines);
-        }
-
-        return content;
-    }
-
-    private static int FindIncludeInsertionLine(IReadOnlyList<string> lines)
-    {
-        var index = 0;
-        while (index < lines.Count)
-        {
-            var trimmed = lines[index].Trim();
-            if (trimmed.Length == 0 || trimmed.StartsWith(';') || trimmed.StartsWith('#'))
-            {
-                index++;
-                continue;
-            }
-
-            break;
-        }
-
-        return index;
-    }
-
-    private static bool ContainsMacroJosaUsage(string content)
-    {
-        var analysis = new JosaPatternAnalyzer().AnalyzeDocument(content, new JosaSupportPackageInfo());
-        return analysis.MacroPatternCount > 0;
+        return string.Equals(item.FileType, "ERB", StringComparison.OrdinalIgnoreCase)
+            ? TranslationQualityRules.NormalizeErbFunctionArgumentSeparators(josaRewritten.Text)
+            : josaRewritten.Text;
     }
 
     private void WriteBundledJosaPackage(string rootDirectory, OutputWriteResult result, string? backupRoot)
@@ -319,11 +320,41 @@ public sealed class OutputWriter
             }
         }
 
-        File.WriteAllText(targetPath, content);
+        File.WriteAllText(targetPath, content, Utf8BomEncoding);
         if (!result.WrittenFiles.Contains(targetPath, StringComparer.OrdinalIgnoreCase))
         {
             result.WrittenFiles.Add(targetPath);
         }
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        return Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static bool IsUnderDirectory(string path, string directoryPath)
+    {
+        var normalizedPath = NormalizeDirectoryPath(path);
+        var normalizedDirectory = NormalizeDirectoryPath(directoryPath);
+
+        if (normalizedPath.Length <= normalizedDirectory.Length)
+        {
+            return false;
+        }
+
+        return normalizedPath.StartsWith(normalizedDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Encoding ResolveOutputEncoding(DetectedEncodingInfo encodingInfo)
+    {
+        return encodingInfo.Kind switch
+        {
+            DetectedEncodingKind.Utf8Bom => Utf8BomEncoding,
+            DetectedEncodingKind.Utf8 => encodingInfo.HasBom ? Utf8BomEncoding : Utf8NoBomEncoding,
+            DetectedEncodingKind.Unicode => encodingInfo.HasBom ? Utf16LeBomEncoding : Utf16LeNoBomEncoding,
+            _ => encodingInfo.Encoding,
+        };
     }
 
     private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)

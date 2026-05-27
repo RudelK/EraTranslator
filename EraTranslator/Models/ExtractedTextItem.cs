@@ -6,6 +6,7 @@ namespace EraTranslator.Models;
 public sealed class ExtractedTextItem : BindableBase
 {
     private const string PendingStatus = "번역 대기";
+    private const string ManualExcludedValidationStatus = "수동 제외";
     private string _translatedText = string.Empty;
     private string _status = PendingStatus;
     private string _translationError = string.Empty;
@@ -43,6 +44,8 @@ public sealed class ExtractedTextItem : BindableBase
     public string OriginalSymbolKey { get; init; } = string.Empty;
 
     public bool IsReferenceBearingKey { get; init; }
+
+    public string ReferenceOriginalSymbolKey { get; set; } = string.Empty;
 
     public int ReferenceImpactCount { get; set; }
 
@@ -202,8 +205,8 @@ public sealed class ExtractedTextItem : BindableBase
                 break;
             case "제외됨":
                 _status = "제외됨";
-                _translationError = string.IsNullOrWhiteSpace(_translationError) ? "수동으로 제외 상태로 표시했습니다." : _translationError;
-                _validationStatus = "언어 제외";
+                _translationError = "수동으로 제외 상태로 표시했습니다.";
+                _validationStatus = ManualExcludedValidationStatus;
                 _canSave = true;
                 _translatedText = string.Empty;
                 break;
@@ -306,6 +309,20 @@ public sealed class ExtractedTextItem : BindableBase
         IsReferenceBearingKey && !string.IsNullOrWhiteSpace(TranslatedText)
             ? TranslationQualityRules.NormalizeTranslatedText(FileType, TranslatedText, PreserveWhitespace)
             : string.Empty;
+
+    public IEnumerable<string> GetReferenceLookupKeys()
+    {
+        if (!string.IsNullOrWhiteSpace(ReferenceOriginalSymbolKey))
+        {
+            yield return ReferenceOriginalSymbolKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(OriginalSymbolKey)
+            && !string.Equals(OriginalSymbolKey, ReferenceOriginalSymbolKey, StringComparison.Ordinal))
+        {
+            yield return OriginalSymbolKey;
+        }
+    }
 
     private static bool IsPendingStatus(string? status)
     {

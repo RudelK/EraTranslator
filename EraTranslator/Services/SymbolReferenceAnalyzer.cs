@@ -20,10 +20,12 @@ public sealed class SymbolReferenceAnalyzer
                 continue;
             }
 
+            var lookupKeys = item.GetReferenceLookupKeys().ToHashSet(StringComparer.Ordinal);
+            var matchingNamespaces = GetNamespaceAliases(item.SymbolNamespace);
             var matchingReferences = references
-                .Where(reference => string.Equals(reference.Namespace, item.SymbolNamespace, StringComparison.Ordinal)
-                    && (string.Equals(reference.OriginalKey, item.OriginalSymbolKey, StringComparison.Ordinal)
-                        || reference.CandidateKeys.Contains(item.OriginalSymbolKey, StringComparer.Ordinal)))
+                .Where(reference => matchingNamespaces.Contains(reference.Namespace, StringComparer.Ordinal)
+                    && (lookupKeys.Contains(reference.OriginalKey)
+                        || reference.CandidateKeys.Any(candidateKey => lookupKeys.Contains(candidateKey))))
                 .ToList();
 
             item.ReferenceImpactCount = matchingReferences.Count;
@@ -55,5 +57,17 @@ public sealed class SymbolReferenceAnalyzer
         }
 
         return "직접 참조만";
+    }
+
+    private static IReadOnlyList<string> GetNamespaceAliases(string symbolNamespace)
+    {
+        return symbolNamespace switch
+        {
+            "BASE" => ["BASE", "MAXBASE"],
+            "ITEM" => ["ITEM", "ITEMPRICE"],
+            "PALAM" => ["PALAM", "JUEL"],
+            "JUEL" => ["JUEL", "PALAM"],
+            _ => [symbolNamespace],
+        };
     }
 }

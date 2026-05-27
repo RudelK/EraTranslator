@@ -77,7 +77,7 @@ public sealed class SqliteProjectStateStoreTests : IDisposable
         items[0].ReferenceResolutionStatus = "간접 참조 있음";
         items[1].ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
 
-        store.SaveTranslationProgress(_gameRoot, items);
+        store.SaveTranslationProgressSnapshot(_gameRoot, items);
 
         var freshItems = new[]
         {
@@ -116,6 +116,93 @@ public sealed class SqliteProjectStateStoreTests : IDisposable
         Assert.True(freshItems[0].RequiresReferenceRewrite);
         Assert.Equal("번역 실패", freshItems[1].Status);
         Assert.Equal("server error", freshItems[1].TranslationError);
+    }
+
+    [Fact]
+    public void UpsertTranslationProgressItems_UpdatesExistingRowsWithoutRemovingOthers()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var items = BuildProgressItems();
+        items[0].ApplyTranslationState("번역 완료", "통과", string.Empty, true, "translated-1");
+        items[1].ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
+        store.SaveTranslationProgressSnapshot(_gameRoot, items);
+
+        items[0].ApplyTranslationState("수동 수정", "통과", string.Empty, true, "translated-2");
+        store.UpsertTranslationProgressItems(_gameRoot, [items[0]]);
+
+        var snapshot = store.LoadTranslationProgress(_gameRoot);
+
+        Assert.Equal(2, snapshot.Items.Count);
+        Assert.Contains(snapshot.Items, item => item.SegmentId == "doc:1" && item.TranslatedText == "translated-2" && item.Status == "수동 수정");
+        Assert.Contains(snapshot.Items, item => item.SegmentId == "doc:2" && item.Status == "번역 실패");
+    }
+
+    [Fact]
+    public void DeleteTranslationProgressItems_RemovesOnlySpecifiedRows()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var items = BuildProgressItems();
+        items[0].ApplyTranslationState("번역 완료", "통과", string.Empty, true, "translated-1");
+        items[1].ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
+        store.SaveTranslationProgressSnapshot(_gameRoot, items);
+
+        store.DeleteTranslationProgressItems(_gameRoot, ["doc:1"]);
+
+        var snapshot = store.LoadTranslationProgress(_gameRoot);
+
+        Assert.Single(snapshot.Items);
+        Assert.Equal("doc:2", snapshot.Items[0].SegmentId);
+    }
+
+    [Fact]
+    public void SaveTranslationProgressSnapshot_RemovesStaleRows()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var items = BuildProgressItems();
+        items[0].ApplyTranslationState("번역 완료", "통과", string.Empty, true, "translated-1");
+        items[1].ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
+        store.SaveTranslationProgressSnapshot(_gameRoot, items);
+
+        store.SaveTranslationProgressSnapshot(_gameRoot, [items[0]]);
+
+        var snapshot = store.LoadTranslationProgress(_gameRoot);
+
+        Assert.Single(snapshot.Items);
+        Assert.Equal("doc:1", snapshot.Items[0].SegmentId);
+    }
+
+    private static ExtractedTextItem[] BuildProgressItems()
+    {
+        return
+        [
+            new ExtractedTextItem
+            {
+                SegmentId = "doc:1",
+                DocumentId = "doc",
+                FileType = "ERB",
+                RelativePath = "A.ERB",
+                EncodingName = "utf-8",
+                SegmentType = "PRINT",
+                LineNumber = 1,
+                OriginalText = "원문1",
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+            },
+            new ExtractedTextItem
+            {
+                SegmentId = "doc:2",
+                DocumentId = "doc",
+                FileType = "ERB",
+                RelativePath = "A.ERB",
+                EncodingName = "utf-8",
+                SegmentType = "PRINT",
+                LineNumber = 2,
+                OriginalText = "원문2",
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+            },
+        ];
     }
 
     private ScanSession BuildScanSession()

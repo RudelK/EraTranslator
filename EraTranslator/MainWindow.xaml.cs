@@ -45,6 +45,7 @@ public partial class MainWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        CommitPendingTranslationEdits();
         await _viewModel.SaveAsync();
     }
 
@@ -117,6 +118,18 @@ public partial class MainWindow : Window
         _viewModel.RefreshItemsView();
     }
 
+    private void ApplyJosaRewrite_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        _viewModel.ApplyJosaRewriteToCurrentScope();
+    }
+
+    private void ApplyErbFunctionCorrection_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        _viewModel.ApplyErbFunctionCorrectionToCurrentScope();
+    }
+
     private void BrowseGameDirectory_Click(object sender, RoutedEventArgs e)
     {
         using var dialog = new Forms.FolderBrowserDialog
@@ -186,20 +199,33 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.EditingElement is WpfTextBox textBox)
-        {
-            item.TranslatedText = textBox.Text;
-        }
+        var editedText = e.EditingElement is WpfTextBox textBox ? textBox.Text : item.TranslatedText;
 
         Dispatcher.BeginInvoke(
-            DispatcherPriority.ApplicationIdle,
-            new Action(() => _viewModel.HandleTranslatedTextEdited(item)));
+            DispatcherPriority.Background,
+            new Action(() => _viewModel.HandleTranslatedTextEdited(item, editedText)));
     }
 
     private void SelectedTranslationEditor_LostFocus(object sender, RoutedEventArgs e)
     {
-        Dispatcher.BeginInvoke(
-            DispatcherPriority.ApplicationIdle,
-            new Action(_viewModel.CommitSelectedItemTranslatedTextEdit));
+        var editedText = sender is WpfTextBox textBox
+            ? textBox.Text
+            : null;
+        _viewModel.CommitSelectedItemTranslatedTextEdit(editedText);
+    }
+
+    private void SelectedTranslationEditor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var editedText = sender is WpfTextBox textBox
+            ? textBox.Text
+            : null;
+        _viewModel.PreviewSelectedItemTranslatedTextEdit(editedText);
+    }
+
+    private void CommitPendingTranslationEdits()
+    {
+        TranslationGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        TranslationGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        _viewModel.CommitSelectedItemTranslatedTextEdit();
     }
 }

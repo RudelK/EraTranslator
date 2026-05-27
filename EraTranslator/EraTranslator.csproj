@@ -3,6 +3,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <Version>0.5.0</Version>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <FileVersion>0.5.0.0</FileVersion>
+    <InformationalVersion>0.5</InformationalVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -25,8 +29,20 @@
   <ItemGroup>
     <ProjectReference Include="..\EraTranslator.EzTransWorker\EraTranslator.EzTransWorker.csproj"
                       ReferenceOutputAssembly="false"
-                      OutputItemType="Content"
-                      CopyToOutputDirectory="PreserveNewest" />
+                      PrivateAssets="all" />
   </ItemGroup>
+
+  <Target Name="CopyEzTransWorkerToInternalFolder" AfterTargets="Build">
+    <ItemGroup>
+      <EzTransWorkerOutput Include="..\EraTranslator.EzTransWorker\bin\$(Configuration)\net8.0-windows\EraTranslator.EzTransWorker.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(EzTransWorkerOutput)"
+          DestinationFolder="$(OutDir)workers\EzTransXP\"
+          SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <EzTransWorkerRootOutput Include="$(OutDir)EraTranslator.EzTransWorker.*" />
+    </ItemGroup>
+    <Delete Files="@(EzTransWorkerRootOutput)" />
+  </Target>
 
 </Project>

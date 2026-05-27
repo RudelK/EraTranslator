@@ -228,7 +228,10 @@ public sealed class ScanSessionStateService
                 OriginalText = documentState.OriginalText,
                 EncodingInfo = new DetectedEncodingInfo
                 {
-                    Encoding = TryGetEncoding(documentState.EncodingInfo.CodePage),
+                    Encoding = TryGetEncoding(
+                        documentState.EncodingInfo.CodePage,
+                        documentState.EncodingInfo.Kind,
+                        documentState.EncodingInfo.HasBom),
                     Name = documentState.EncodingInfo.Name,
                     Kind = documentState.EncodingInfo.Kind,
                     HasBom = documentState.EncodingInfo.HasBom,
@@ -312,6 +315,7 @@ public sealed class ScanSessionStateService
             SymbolNamespace = item.SymbolNamespace,
             OriginalSymbolKey = item.OriginalSymbolKey,
             IsReferenceBearingKey = item.IsReferenceBearingKey,
+            ReferenceOriginalSymbolKey = item.OriginalSymbolKey,
             ReferenceImpactCount = item.ReferenceImpactCount,
             RequiresReferenceRewrite = item.RequiresReferenceRewrite,
             ReferenceResolutionStatus = item.ReferenceResolutionStatus,
@@ -327,8 +331,18 @@ public sealed class ScanSessionStateService
         return session;
     }
 
-    private static Encoding TryGetEncoding(int codePage)
+    private static Encoding TryGetEncoding(int codePage, DetectedEncodingKind kind, bool hasBom)
     {
+        if (kind is DetectedEncodingKind.Utf8 or DetectedEncodingKind.Utf8Bom)
+        {
+            return new UTF8Encoding(hasBom);
+        }
+
+        if (kind == DetectedEncodingKind.Unicode)
+        {
+            return new UnicodeEncoding(false, hasBom, true);
+        }
+
         try
         {
             return Encoding.GetEncoding(codePage);

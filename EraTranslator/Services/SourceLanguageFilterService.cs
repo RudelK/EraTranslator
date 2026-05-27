@@ -4,6 +4,9 @@ namespace EraTranslator.Services;
 
 public sealed class SourceLanguageFilterService
 {
+    private const string AutoExcludedValidationStatus = "언어 제외";
+    private const string AutoExcludedTranslationError = "원문이 현재 소스 언어와 일치하지 않아 자동 제외되었습니다.";
+
     public int Apply(IEnumerable<ExtractedTextItem> items, string sourceLanguage, bool enabled)
     {
         var changedCount = 0;
@@ -31,8 +34,8 @@ public sealed class SourceLanguageFilterService
 
             item.ApplyTranslationState(
                 "제외됨",
-                "언어 제외",
-                "원문이 현재 소스 언어와 일치하지 않아 자동 제외되었습니다.",
+                AutoExcludedValidationStatus,
+                AutoExcludedTranslationError,
                 true,
                 string.Empty);
             changedCount++;
@@ -49,7 +52,9 @@ public sealed class SourceLanguageFilterService
 
     private static bool TryRestoreAutoExcluded(ExtractedTextItem item)
     {
-        if (item.Status != "제외됨" || item.ValidationStatus != "언어 제외")
+        if (item.Status != "제외됨"
+            || item.ValidationStatus != AutoExcludedValidationStatus
+            || item.TranslationError != AutoExcludedTranslationError)
         {
             return false;
         }

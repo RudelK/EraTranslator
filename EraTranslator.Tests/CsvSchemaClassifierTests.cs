@@ -6,7 +6,7 @@ namespace EraTranslator.Tests;
 public sealed class CsvSchemaClassifierTests
 {
     [Fact]
-    public void KeyValueCsv_ExtractsPlainKeyAndValue()
+    public void GameBaseCsv_ExtractsOnlyValueColumn()
     {
         var classifier = new CsvSchemaClassifier();
         var fields = CsvLineParser.ParseFields("タイトル,era魔界牧場");
@@ -16,7 +16,7 @@ public sealed class CsvSchemaClassifierTests
         Assert.Equal(CsvDocumentKind.KeyValue, classifier.DetectKind("CSV\\GameBase.csv", ["タイトル,era魔界牧場"]));
         Assert.Equal(CsvFieldRole.Key, classifier.ClassifyField("CSV\\GameBase.csv", CsvDocumentKind.KeyValue, fields, 0));
         Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField("CSV\\GameBase.csv", CsvDocumentKind.KeyValue, fields, 1));
-        Assert.True(keyField.ShouldExtract);
+        Assert.False(keyField.ShouldExtract);
         Assert.False(keyField.IsReferenceBearingKey);
         Assert.True(valueField.ShouldExtract);
     }
@@ -63,6 +63,23 @@ public sealed class CsvSchemaClassifierTests
         Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField(CsvDocumentKind.IdFirstTable, fields, 1));
         Assert.Equal(CsvFieldRole.NonTranslatableValue, classifier.ClassifyField(CsvDocumentKind.IdFirstTable, fields, 2));
         Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField(CsvDocumentKind.IdFirstTable, fields, 3));
+    }
+
+    [Fact]
+    public void IdFirstReferenceTable_ExtractsSecondFieldAsReferenceBearingKey()
+    {
+        var classifier = new CsvSchemaClassifier();
+        var fields = CsvLineParser.ParseFields("178,永久発情,;(エロいことを常に求めている)");
+
+        var idField = classifier.ClassifyExtractableField("CSV\\Talent.csv", CsvDocumentKind.IdFirstTable, fields, 0);
+        var nameField = classifier.ClassifyExtractableField("CSV\\Talent.csv", CsvDocumentKind.IdFirstTable, fields, 1);
+
+        Assert.False(idField.ShouldExtract);
+        Assert.False(idField.IsReferenceBearingKey);
+        Assert.True(nameField.ShouldExtract);
+        Assert.True(nameField.IsReferenceBearingKey);
+        Assert.Equal("TALENT", nameField.SymbolNamespace);
+        Assert.Equal("永久発情", nameField.OriginalSymbolKey);
     }
 
     [Fact]

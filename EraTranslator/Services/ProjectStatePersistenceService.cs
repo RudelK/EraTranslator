@@ -32,9 +32,19 @@ public sealed class ProjectStatePersistenceService(
         return _sqliteProjectStateStore.LoadTranslationProgress(projectDataDirectory);
     }
 
-    public void SaveTranslationProgress(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
+    public void SaveTranslationProgressSnapshot(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
     {
-        _sqliteProjectStateStore.SaveTranslationProgress(projectDataDirectory, items);
+        _sqliteProjectStateStore.SaveTranslationProgressSnapshot(projectDataDirectory, items);
+    }
+
+    public void UpsertTranslationProgressItems(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
+    {
+        _sqliteProjectStateStore.UpsertTranslationProgressItems(projectDataDirectory, items);
+    }
+
+    public void DeleteTranslationProgressItems(string projectDataDirectory, IEnumerable<string> segmentIds)
+    {
+        _sqliteProjectStateStore.DeleteTranslationProgressItems(projectDataDirectory, segmentIds);
     }
 
     public void DeleteTranslationProgress(string projectDataDirectory)
@@ -80,7 +90,7 @@ public sealed class ProjectStatePersistenceService(
 
         if (progressState.Items.Count > 0)
         {
-            _sqliteProjectStateStore.SaveTranslationProgress(projectDataDirectory, progressState);
+            _sqliteProjectStateStore.SaveTranslationProgressSnapshot(projectDataDirectory, progressState);
         }
 
         BackupLegacyFile(scanStatePath, projectDataDirectory);

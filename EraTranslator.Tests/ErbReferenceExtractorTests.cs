@@ -90,4 +90,63 @@ RETURNF TALENT:MASTER:警戒 * 5 + CFLAG:targetChara:主人監禁日数
             && reference.Namespace == "CFLAG"
             && reference.OriginalKey == "主人監禁日数");
     }
+
+    [Fact]
+    public void Extract_FindsLiteralKeysAfterExpressionIndexedReferences()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF TALENT:(targetChara):脅迫
+IF TALENT:GETCHARA(205):失踪
+IF MAXBASE:(T):体力 > 1000
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TALENT"
+            && reference.OriginalKey == "脅迫");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TALENT"
+            && reference.OriginalKey == "失踪");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "MAXBASE"
+            && reference.OriginalKey == "体力");
+    }
+
+    [Fact]
+    public void Extract_FindsColonBearingAndDecoratedSymbolKeys()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF ABL:ARG:関心:学業 > 0
+IF ABL:関心:課外活動 > 0
+SIF TEQUIP:거북등무늬결박(귀갑묶기)
+expUp:GETNUM(EXP,"噴乳経験") += 1
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "ABL"
+            && reference.OriginalKey == "関心:学業");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "ABL"
+            && reference.OriginalKey == "関心:課外活動");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TEQUIP"
+            && reference.OriginalKey == "거북등무늬결박(귀갑묶기)");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "EXP"
+            && reference.OriginalKey == "噴乳経験");
+        Assert.DoesNotContain(result.references, reference =>
+            string.Equals(reference.OriginalKey, "ARG:関心:学業", StringComparison.Ordinal));
+    }
 }

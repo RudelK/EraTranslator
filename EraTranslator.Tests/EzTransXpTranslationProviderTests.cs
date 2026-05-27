@@ -16,6 +16,20 @@ public sealed class EzTransXpTranslationProviderTests : IDisposable
     }
 
     [Fact]
+    public void ResolveDefaultWorkerExecutablePath_UsesInternalWorkerFolderWhenAvailable()
+    {
+        var workerDirectory = Path.Combine(AppContext.BaseDirectory, "workers", "EzTransXP");
+        var workerPath = Path.Combine(workerDirectory, "EraTranslator.EzTransWorker.exe");
+        Directory.CreateDirectory(workerDirectory);
+        if (!File.Exists(workerPath))
+        {
+            File.WriteAllText(workerPath, string.Empty);
+        }
+
+        Assert.Equal(workerPath, EzTransXpTranslationProvider.ResolveDefaultWorkerExecutablePath());
+    }
+
+    [Fact]
     public async Task TranslateAsync_ReusesWorkerPoolAcrossCalls()
     {
         var installPath = CreateInstallationLayout();

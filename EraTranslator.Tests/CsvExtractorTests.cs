@@ -30,6 +30,20 @@ public sealed class CsvExtractorTests
     }
 
     [Fact]
+    public void Extract_GameBaseSkipsKeyColumn()
+    {
+        var extractor = new CsvExtractor();
+        var content = "タイトル,era魔界牧場\n作者,作者名";
+
+        var result = extractor.Extract("CSV/GameBase.csv", "CSV/GameBase.csv", content);
+
+        Assert.Equal(CsvDocumentKind.KeyValue, result.kind);
+        Assert.DoesNotContain(result.segments, segment => segment.FieldIndex == 0);
+        Assert.Contains(result.segments, segment => segment.OriginalText == "era魔界牧場" && segment.FieldIndex == 1);
+        Assert.Contains(result.segments, segment => segment.OriginalText == "作者名" && segment.FieldIndex == 1);
+    }
+
+    [Fact]
     public void Extract_IncludesReferenceBearingCharacterSheetKey()
     {
         var extractor = new CsvExtractor();
@@ -45,6 +59,21 @@ public sealed class CsvExtractorTests
             segment.IsReferenceBearingKey
             && segment.SymbolNamespace == "CFLAG"
             && segment.OriginalSymbolKey == "外見年齢");
+    }
+
+    [Fact]
+    public void Extract_IncludesReferenceBearingIdFirstNameField()
+    {
+        var extractor = new CsvExtractor();
+        var content = "178,永久発情,;(エロいことを常に求めている)";
+
+        var result = extractor.Extract("CSV/Talent.csv", "CSV/Talent.csv", content);
+
+        Assert.Contains(result.segments, segment =>
+            segment.IsReferenceBearingKey
+            && segment.SymbolNamespace == "TALENT"
+            && segment.OriginalSymbolKey == "永久発情"
+            && segment.FieldIndex == 1);
     }
 
     [Fact]

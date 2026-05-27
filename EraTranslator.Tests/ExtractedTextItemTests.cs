@@ -132,7 +132,7 @@ public sealed class ExtractedTextItemTests
         item.ApplyManualStatusOverride("제외됨");
 
         Assert.Equal("제외됨", item.Status);
-        Assert.Equal("언어 제외", item.ValidationStatus);
+        Assert.Equal("수동 제외", item.ValidationStatus);
         Assert.True(item.CanSave);
         Assert.Equal(string.Empty, item.TranslatedText);
     }

@@ -78,4 +78,30 @@ public sealed class SourceLanguageFilterServiceTests
         Assert.Equal("검증 전", item.ValidationStatus);
         Assert.True(item.NeedsTranslation);
     }
+
+    [Fact]
+    public void Apply_DoesNotRestoreManuallyExcludedItems()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "seg-3",
+            DocumentId = "ERB/Test.ERB",
+            FileType = "ERB",
+            RelativePath = "ERB/Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "print",
+            LineNumber = 3,
+            OriginalText = "こんにちは",
+            WarningText = string.Empty,
+        };
+        item.ApplyManualStatusOverride("제외됨");
+
+        var service = new SourceLanguageFilterService();
+        var changedCount = service.Apply([item], "ja", enabled: false);
+
+        Assert.Equal(0, changedCount);
+        Assert.Equal("제외됨", item.Status);
+        Assert.Equal("수동 제외", item.ValidationStatus);
+        Assert.False(item.NeedsTranslation);
+    }
 }

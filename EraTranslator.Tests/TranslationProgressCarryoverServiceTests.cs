@@ -100,6 +100,87 @@ public sealed class TranslationProgressCarryoverServiceTests
         Assert.Equal(string.Empty, currentItems[0].TranslatedText);
     }
 
+    [Fact]
+    public void Apply_ExactRestorePreservesCurrentReferenceAnalysis()
+    {
+        var previousSession = BuildSession(BuildItem("ERB/Test.ERB:0", "ERB/Test.ERB", 1, "같은 원문"));
+        var previousState = BuildState("ERB/Test.ERB:0", "번역 완료", "기존 번역");
+        previousState = new TranslationProgressItemState
+        {
+            SegmentId = previousState.SegmentId,
+            Status = previousState.Status,
+            ValidationStatus = previousState.ValidationStatus,
+            TranslationError = previousState.TranslationError,
+            TranslatedText = previousState.TranslatedText,
+            CanSave = previousState.CanSave,
+            ReferenceImpactCount = 1,
+            RequiresReferenceRewrite = false,
+            ReferenceResolutionStatus = "이전 참조 상태",
+        };
+        var previousProgress = BuildProgressState(previousState);
+        var currentItem = BuildItem("ERB/Test.ERB:0", "ERB/Test.ERB", 1, "같은 원문");
+        currentItem.ReferenceImpactCount = 4;
+        currentItem.RequiresReferenceRewrite = true;
+        currentItem.ReferenceResolutionStatus = "새 참조 상태";
+        var currentItems = new List<ExtractedTextItem> { currentItem };
+
+        var result = _service.Apply(previousSession, previousProgress, currentItems);
+
+        Assert.Equal(1, result.ExactRestoredCount);
+        Assert.Equal("번역 완료", currentItems[0].Status);
+        Assert.Equal("기존 번역", currentItems[0].TranslatedText);
+        Assert.Equal(4, currentItems[0].ReferenceImpactCount);
+        Assert.True(currentItems[0].RequiresReferenceRewrite);
+        Assert.Equal("새 참조 상태", currentItems[0].ReferenceResolutionStatus);
+    }
+
+    [Fact]
+    public void Apply_ReferenceBearingExactRestoreMatchesRescannedTranslatedKeyAndCarriesOriginalSymbolKey()
+    {
+        var previousItem = BuildItem(
+            "CSV/Talent.csv:0",
+            "CSV/Talent.csv",
+            1,
+            "永久発情",
+            fileType: "CSV",
+            sourceKey: "178",
+            fieldIndex: 1,
+            symbolNamespace: "TALENT",
+            originalSymbolKey: "永久発情",
+            isReferenceBearingKey: true);
+        previousItem.ReferenceOriginalSymbolKey = "永久発情";
+        var previousSession = BuildSession(previousItem);
+        var previousProgress = BuildProgressState(
+            new TranslationProgressItemState
+            {
+                SegmentId = "CSV/Talent.csv:0",
+                Status = "번역 완료",
+                ValidationStatus = "통과",
+                TranslationError = string.Empty,
+                TranslatedText = "영구발정",
+                CanSave = true,
+                ReferenceOriginalSymbolKey = "永久発情",
+            });
+        var currentItem = BuildItem(
+            "CSV/Talent.csv:0",
+            "CSV/Talent.csv",
+            1,
+            "영구발정",
+            fileType: "CSV",
+            sourceKey: "178",
+            fieldIndex: 1,
+            symbolNamespace: "TALENT",
+            originalSymbolKey: "영구발정",
+            isReferenceBearingKey: true);
+        var currentItems = new List<ExtractedTextItem> { currentItem };
+
+        var result = _service.Apply(previousSession, previousProgress, currentItems);
+
+        Assert.Equal(1, result.ExactRestoredCount);
+        Assert.Equal("영구발정", currentItems[0].TranslatedText);
+        Assert.Equal("永久発情", currentItems[0].ReferenceOriginalSymbolKey);
+    }
+
     private static ScanSession BuildSession(params ExtractedTextItem[] items)
     {
         var session = new ScanSession
@@ -143,7 +224,10 @@ public sealed class TranslationProgressCarryoverServiceTests
         string originalText,
         string fileType = "ERB",
         string? sourceKey = null,
-        int? fieldIndex = null)
+        int? fieldIndex = null,
+        string symbolNamespace = "",
+        string originalSymbolKey = "",
+        bool isReferenceBearingKey = false)
     {
         return new ExtractedTextItem
         {
@@ -158,6 +242,9 @@ public sealed class TranslationProgressCarryoverServiceTests
             SourceKey = sourceKey,
             FieldIndex = fieldIndex,
             CsvFieldRole = CsvFieldRole.TranslatableValue,
+            SymbolNamespace = symbolNamespace,
+            OriginalSymbolKey = originalSymbolKey,
+            IsReferenceBearingKey = isReferenceBearingKey,
             WarningText = string.Empty,
         };
     }

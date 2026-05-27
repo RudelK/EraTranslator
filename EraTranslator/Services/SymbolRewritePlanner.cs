@@ -12,7 +12,16 @@ public sealed class SymbolRewritePlanner
 
         foreach (var entry in renameEntries)
         {
-            plan.RenameMap[(entry.Namespace, entry.OriginalKey)] = entry.NewKey;
+            var referenceReplacement = GetReferenceReplacement(entry);
+            foreach (var symbolNamespace in GetNamespaceAliases(entry.Namespace))
+            {
+                foreach (var inputKey in entry.InputKeys)
+                {
+                    plan.RenameMap[(symbolNamespace, inputKey)] = referenceReplacement;
+                    plan.StringLookupRenameMap[(symbolNamespace, inputKey)] = entry.NewKey;
+                }
+            }
+
             foreach (var pair in entry.RequestedKeysBySegmentId)
             {
                 var requestedKey = pair.Value;
@@ -51,7 +60,10 @@ public sealed class SymbolRewritePlanner
 
             foreach (var reference in document.SymbolReferences.Where(reference => reference.Kind == ErbSymbolReferenceKind.DirectLiteral))
             {
-                if (!plan.RenameMap.TryGetValue((reference.Namespace, reference.OriginalKey), out var replacementValue))
+                var renameMap = IsStringLookupReference(document.OriginalText, reference)
+                    ? plan.StringLookupRenameMap
+                    : plan.RenameMap;
+                if (!renameMap.TryGetValue((reference.Namespace, reference.OriginalKey), out var replacementValue))
                 {
                     continue;
                 }
@@ -115,8 +127,7 @@ public sealed class SymbolRewritePlanner
             if (replacements.Count > 0)
             {
                 plan.DocumentReplacements[document.DocumentId] = replacements
-                    .GroupBy(replacement => (replacement.Start, replacement.Length))
-                    .Select(group => group.Last())
+                    .ResolveOverlaps()
                     .OrderByDescending(replacement => replacement.Start)
                     .ToList();
             }
@@ -131,11 +142,15 @@ public sealed class SymbolRewritePlanner
         return items
             .Where(item => item.IsReferenceBearingKey
                 && !string.IsNullOrWhiteSpace(item.SymbolNamespace)
-                && !string.IsNullOrWhiteSpace(item.OriginalSymbolKey)
+                && item.GetReferenceLookupKeys().Any()
                 && !string.IsNullOrWhiteSpace(item.TranslatedSymbolKey)
                 && item.CanSave
                 && string.Equals(item.ValidationStatus, "통과", StringComparison.Ordinal))
-            .GroupBy(item => (item.SymbolNamespace, item.OriginalSymbolKey))
+            .GroupBy(item => (
+                item.SymbolNamespace,
+                !string.IsNullOrWhiteSpace(item.ReferenceOriginalSymbolKey)
+                    ? item.ReferenceOriginalSymbolKey
+                    : item.OriginalSymbolKey))
             .Select(group =>
             {
                 var ordered = group
@@ -154,11 +169,27 @@ public sealed class SymbolRewritePlanner
                     item => item.SegmentId,
                     item => item.TranslatedText,
                     StringComparer.Ordinal);
+                var inputKeys = ordered
+                    .SelectMany(item => item.GetReferenceLookupKeys())
+                    .Concat(ordered.Select(item => item.TranslatedText))
+                    .Concat(requestedKeysBySegmentId.Values)
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var numericKey = ordered
+                    .Select(item => item.SourceKey)
+                    .FirstOrDefault(sourceKey => !string.IsNullOrWhiteSpace(sourceKey)
+                        && int.TryParse(sourceKey, out _))
+                    ?? string.Empty;
                 return new SymbolRenameEntry(
                     preferred,
                     preferred.SymbolNamespace,
-                    preferred.OriginalSymbolKey,
+                    !string.IsNullOrWhiteSpace(preferred.ReferenceOriginalSymbolKey)
+                        ? preferred.ReferenceOriginalSymbolKey
+                        : preferred.OriginalSymbolKey,
                     preferred.TranslatedSymbolKey,
+                    numericKey,
+                    inputKeys,
                     requestedKeysBySegmentId,
                     originalTranslatedTextsBySegmentId);
             })
@@ -226,11 +257,82 @@ public sealed class SymbolRewritePlanner
             ? int.MaxValue
             : value.Count(static character => character == '_') / 2;
     }
+
+    private static IReadOnlyList<string> GetNamespaceAliases(string symbolNamespace)
+    {
+        return symbolNamespace switch
+        {
+            "BASE" => ["BASE", "MAXBASE"],
+            "ITEM" => ["ITEM", "ITEMPRICE"],
+            "PALAM" => ["PALAM", "JUEL"],
+            "JUEL" => ["JUEL", "PALAM"],
+            _ => [symbolNamespace],
+        };
+    }
+
+    private static string GetReferenceReplacement(SymbolRenameEntry entry)
+    {
+        return ShouldUseNumericReference(entry.NewKey) && !string.IsNullOrWhiteSpace(entry.NumericKey)
+            ? entry.NumericKey
+            : entry.NewKey;
+    }
+
+    private static bool ShouldUseNumericReference(string key)
+    {
+        return key.Any(static ch => char.IsWhiteSpace(ch)
+            || ch is ':' or '(' or ')' or '{' or '}' or '[' or ']' or ',' or '"' or '\'' or '+' or '-' or '*' or '/' or '<' or '>' or '=' or '!' or '&' or '|' or '%');
+    }
+
+    private static bool IsStringLookupReference(string content, ErbSymbolReference reference)
+    {
+        var searchStart = Math.Max(0, reference.AbsoluteStart - 64);
+        var prefix = content[searchStart..reference.AbsoluteStart];
+        var getNumIndex = prefix.LastIndexOf("GETNUM", StringComparison.OrdinalIgnoreCase);
+        if (getNumIndex < 0)
+        {
+            return false;
+        }
+
+        var between = prefix[(getNumIndex + "GETNUM".Length)..];
+        return between.Contains('(') && between.Contains(',') && !between.Contains('\n');
+    }
+}
+
+internal static class PlannedTextReplacementExtensions
+{
+    public static IEnumerable<PlannedTextReplacement> ResolveOverlaps(this IEnumerable<PlannedTextReplacement> replacements)
+    {
+        var accepted = new List<PlannedTextReplacement>();
+        foreach (var replacement in replacements
+                     .GroupBy(replacement => (replacement.Start, replacement.Length))
+                     .Select(group => group.Last())
+                     .OrderBy(replacement => replacement.Start)
+                     .ThenByDescending(replacement => replacement.Length))
+        {
+            if (accepted.Any(existing => RangesOverlap(existing.Start, existing.Length, replacement.Start, replacement.Length)))
+            {
+                continue;
+            }
+
+            accepted.Add(replacement);
+        }
+
+        return accepted;
+    }
+
+    private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)
+    {
+        var leftEnd = leftStart + leftLength;
+        var rightEnd = rightStart + rightLength;
+        return leftStart < rightEnd && rightStart < leftEnd;
+    }
 }
 
 public sealed class SymbolRewritePlan
 {
     public Dictionary<(string Namespace, string OriginalKey), string> RenameMap { get; } = new();
+
+    public Dictionary<(string Namespace, string OriginalKey), string> StringLookupRenameMap { get; } = new();
 
     public Dictionary<string, List<PlannedTextReplacement>> DocumentReplacements { get; } = [];
 
@@ -265,7 +367,8 @@ public sealed class SymbolRewritePlan
         if (item.IsExcluded)
         {
             return canSave
-                && string.Equals(validationStatus, "언어 제외", StringComparison.Ordinal)
+                && (string.Equals(validationStatus, "언어 제외", StringComparison.Ordinal)
+                    || string.Equals(validationStatus, "수동 제외", StringComparison.Ordinal))
                 && !string.IsNullOrWhiteSpace(item.OriginalText);
         }
 
@@ -283,6 +386,8 @@ public sealed class SymbolRenameEntry
         string symbolNamespace,
         string originalKey,
         string newKey,
+        string numericKey,
+        IReadOnlyList<string> inputKeys,
         IReadOnlyDictionary<string, string> requestedKeysBySegmentId,
         IReadOnlyDictionary<string, string> originalTranslatedTextsBySegmentId)
     {
@@ -295,6 +400,8 @@ public sealed class SymbolRenameEntry
         OriginalKey = originalKey;
         RequestedKey = newKey;
         NewKey = newKey;
+        NumericKey = numericKey;
+        InputKeys = inputKeys;
         RequestedKeysBySegmentId = requestedKeysBySegmentId;
         OriginalTranslatedTextsBySegmentId = originalTranslatedTextsBySegmentId;
     }
@@ -316,6 +423,10 @@ public sealed class SymbolRenameEntry
     public string RequestedKey { get; }
 
     public string NewKey { get; set; }
+
+    public string NumericKey { get; }
+
+    public IReadOnlyList<string> InputKeys { get; }
 
     public IReadOnlyDictionary<string, string> RequestedKeysBySegmentId { get; }
 

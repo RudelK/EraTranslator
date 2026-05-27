@@ -45,6 +45,9 @@ public sealed class TranslationProgressStateService
             }
 
             item.ApplyPersistedState(state);
+            item.ReferenceOriginalSymbolKey = string.IsNullOrWhiteSpace(state.ReferenceOriginalSymbolKey)
+                ? item.OriginalSymbolKey
+                : state.ReferenceOriginalSymbolKey;
             item.ReferenceImpactCount = state.ReferenceImpactCount;
             item.RequiresReferenceRewrite = state.RequiresReferenceRewrite;
             item.ReferenceResolutionStatus = state.ReferenceResolutionStatus;
@@ -100,6 +103,9 @@ public sealed class TranslationProgressStateService
                     TranslationError = item.TranslationError,
                     TranslatedText = item.TranslatedText,
                     CanSave = item.CanSave,
+                    ReferenceOriginalSymbolKey = string.IsNullOrWhiteSpace(item.ReferenceOriginalSymbolKey)
+                        ? item.OriginalSymbolKey
+                        : item.ReferenceOriginalSymbolKey,
                     ReferenceImpactCount = item.ReferenceImpactCount,
                     RequiresReferenceRewrite = item.RequiresReferenceRewrite,
                     ReferenceResolutionStatus = item.ReferenceResolutionStatus,

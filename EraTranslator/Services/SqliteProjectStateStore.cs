@@ -4,7 +4,7 @@ using EraTranslator.Models;
 
 namespace EraTranslator.Services;
 
-public sealed class SqliteProjectStateStore
+public class SqliteProjectStateStore
 {
     private const int SchemaVersion = 1;
 
@@ -116,19 +116,18 @@ public sealed class SqliteProjectStateStore
         }
     }
 
-    public void SaveTranslationProgress(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
+    public virtual void SaveTranslationProgressSnapshot(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
     {
         var snapshot = BuildProgressSnapshot(items);
-        SaveTranslationProgress(projectDataDirectory, snapshot);
+        SaveTranslationProgressSnapshot(projectDataDirectory, snapshot);
     }
 
-    public void SaveTranslationProgress(string projectDataDirectory, TranslationProgressState snapshot)
+    public void SaveTranslationProgressSnapshot(string projectDataDirectory, TranslationProgressState snapshot)
     {
         using var connection = OpenConnection(projectDataDirectory);
         EnsureSchema(connection);
         using var transaction = connection.BeginTransaction();
-        SetProjectMeta(connection, transaction, "saved_at_utc", DateTimeOffset.UtcNow.ToString("O"));
-        SetProjectMeta(connection, transaction, "last_progress_saved_at_utc", snapshot.SavedAtUtc.ToString("O"));
+        SetProgressSavedMeta(connection, transaction, snapshot.SavedAtUtc);
 
         var existingIds = ReadStringList(connection, "SELECT segment_id FROM translation_progress;");
         var targetIds = snapshot.Items
@@ -136,56 +135,7 @@ public sealed class SqliteProjectStateStore
             .Where(segmentId => !string.IsNullOrWhiteSpace(segmentId))
             .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var state in snapshot.Items)
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO translation_progress (
-                    segment_id,
-                    status,
-                    validation_status,
-                    translation_error,
-                    translated_text,
-                    can_save,
-                    reference_impact_count,
-                    requires_reference_rewrite,
-                    reference_resolution_status,
-                    updated_at_utc)
-                VALUES (
-                    $segment_id,
-                    $status,
-                    $validation_status,
-                    $translation_error,
-                    $translated_text,
-                    $can_save,
-                    $reference_impact_count,
-                    $requires_reference_rewrite,
-                    $reference_resolution_status,
-                    $updated_at_utc)
-                ON CONFLICT(segment_id) DO UPDATE SET
-                    status = excluded.status,
-                    validation_status = excluded.validation_status,
-                    translation_error = excluded.translation_error,
-                    translated_text = excluded.translated_text,
-                    can_save = excluded.can_save,
-                    reference_impact_count = excluded.reference_impact_count,
-                    requires_reference_rewrite = excluded.requires_reference_rewrite,
-                    reference_resolution_status = excluded.reference_resolution_status,
-                    updated_at_utc = excluded.updated_at_utc;
-                """;
-            command.Parameters.AddWithValue("$segment_id", state.SegmentId);
-            command.Parameters.AddWithValue("$status", state.Status);
-            command.Parameters.AddWithValue("$validation_status", state.ValidationStatus);
-            command.Parameters.AddWithValue("$translation_error", state.TranslationError);
-            command.Parameters.AddWithValue("$translated_text", state.TranslatedText);
-            command.Parameters.AddWithValue("$can_save", state.CanSave ? 1 : 0);
-            command.Parameters.AddWithValue("$reference_impact_count", state.ReferenceImpactCount);
-            command.Parameters.AddWithValue("$requires_reference_rewrite", state.RequiresReferenceRewrite ? 1 : 0);
-            command.Parameters.AddWithValue("$reference_resolution_status", state.ReferenceResolutionStatus);
-            command.Parameters.AddWithValue("$updated_at_utc", snapshot.SavedAtUtc.ToString("O"));
-            command.ExecuteNonQuery();
-        }
+        UpsertTranslationProgressItems(connection, transaction, snapshot.Items, snapshot.SavedAtUtc);
 
         foreach (var staleId in existingIds.Where(existingId => !targetIds.Contains(existingId)))
         {
@@ -193,6 +143,52 @@ public sealed class SqliteProjectStateStore
             deleteCommand.Transaction = transaction;
             deleteCommand.CommandText = "DELETE FROM translation_progress WHERE segment_id = $segment_id;";
             deleteCommand.Parameters.AddWithValue("$segment_id", staleId);
+            deleteCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public virtual void UpsertTranslationProgressItems(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
+    {
+        var progressItems = BuildProgressItemStates(items);
+        if (progressItems.Count == 0)
+        {
+            return;
+        }
+
+        var savedAtUtc = DateTimeOffset.UtcNow;
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var transaction = connection.BeginTransaction();
+        SetProgressSavedMeta(connection, transaction, savedAtUtc);
+        UpsertTranslationProgressItems(connection, transaction, progressItems, savedAtUtc);
+        transaction.Commit();
+    }
+
+    public virtual void DeleteTranslationProgressItems(string projectDataDirectory, IEnumerable<string> segmentIds)
+    {
+        var targetIds = segmentIds
+            .Where(segmentId => !string.IsNullOrWhiteSpace(segmentId))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (targetIds.Count == 0)
+        {
+            return;
+        }
+
+        var savedAtUtc = DateTimeOffset.UtcNow;
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var transaction = connection.BeginTransaction();
+        SetProgressSavedMeta(connection, transaction, savedAtUtc);
+
+        foreach (var segmentId in targetIds)
+        {
+            using var deleteCommand = connection.CreateCommand();
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM translation_progress WHERE segment_id = $segment_id;";
+            deleteCommand.Parameters.AddWithValue("$segment_id", segmentId);
             deleteCommand.ExecuteNonQuery();
         }
 
@@ -218,6 +214,9 @@ public sealed class SqliteProjectStateStore
             }
 
             item.ApplyPersistedState(state);
+            item.ReferenceOriginalSymbolKey = string.IsNullOrWhiteSpace(state.ReferenceOriginalSymbolKey)
+                ? item.OriginalSymbolKey
+                : state.ReferenceOriginalSymbolKey;
             item.ReferenceImpactCount = state.ReferenceImpactCount;
             item.RequiresReferenceRewrite = state.RequiresReferenceRewrite;
             item.ReferenceResolutionStatus = state.ReferenceResolutionStatus;
@@ -254,6 +253,7 @@ public sealed class SqliteProjectStateStore
                     translation_error,
                     translated_text,
                     can_save,
+                    reference_original_symbol_key,
                     reference_impact_count,
                     requires_reference_rewrite,
                     reference_resolution_status
@@ -271,9 +271,10 @@ public sealed class SqliteProjectStateStore
                     TranslationError = reader.GetString(3),
                     TranslatedText = reader.GetString(4),
                     CanSave = reader.GetInt64(5) != 0,
-                    ReferenceImpactCount = reader.GetInt32(6),
-                    RequiresReferenceRewrite = reader.GetInt64(7) != 0,
-                    ReferenceResolutionStatus = reader.GetString(8),
+                    ReferenceOriginalSymbolKey = reader.GetString(6),
+                    ReferenceImpactCount = reader.GetInt32(7),
+                    RequiresReferenceRewrite = reader.GetInt64(8) != 0,
+                    ReferenceResolutionStatus = reader.GetString(9),
                 });
             }
 
@@ -323,22 +324,92 @@ public sealed class SqliteProjectStateStore
         return new TranslationProgressState
         {
             SavedAtUtc = DateTimeOffset.UtcNow,
-            Items = items
-                .Where(item => item.HasPersistableState)
-                .Select(item => new TranslationProgressItemState
-                {
-                    SegmentId = item.SegmentId,
-                    Status = item.Status,
-                    ValidationStatus = item.ValidationStatus,
-                    TranslationError = item.TranslationError,
-                    TranslatedText = item.TranslatedText,
-                    CanSave = item.CanSave,
-                    ReferenceImpactCount = item.ReferenceImpactCount,
-                    RequiresReferenceRewrite = item.RequiresReferenceRewrite,
-                    ReferenceResolutionStatus = item.ReferenceResolutionStatus,
-                })
-                .ToList(),
+            Items = BuildProgressItemStates(items),
         };
+    }
+
+    private static List<TranslationProgressItemState> BuildProgressItemStates(IEnumerable<ExtractedTextItem> items)
+    {
+        return items
+            .Where(item => item.HasPersistableState)
+            .Select(item => new TranslationProgressItemState
+            {
+                SegmentId = item.SegmentId,
+                Status = item.Status,
+                ValidationStatus = item.ValidationStatus,
+                TranslationError = item.TranslationError,
+                TranslatedText = item.TranslatedText,
+                CanSave = item.CanSave,
+                ReferenceOriginalSymbolKey = string.IsNullOrWhiteSpace(item.ReferenceOriginalSymbolKey)
+                    ? item.OriginalSymbolKey
+                    : item.ReferenceOriginalSymbolKey,
+                ReferenceImpactCount = item.ReferenceImpactCount,
+                RequiresReferenceRewrite = item.RequiresReferenceRewrite,
+                ReferenceResolutionStatus = item.ReferenceResolutionStatus,
+            })
+            .ToList();
+    }
+
+    private static void UpsertTranslationProgressItems(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IEnumerable<TranslationProgressItemState> items,
+        DateTimeOffset savedAtUtc)
+    {
+        foreach (var state in items)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO translation_progress (
+                    segment_id,
+                    status,
+                    validation_status,
+                    translation_error,
+                    translated_text,
+                    can_save,
+                    reference_original_symbol_key,
+                    reference_impact_count,
+                    requires_reference_rewrite,
+                    reference_resolution_status,
+                    updated_at_utc)
+                VALUES (
+                    $segment_id,
+                    $status,
+                    $validation_status,
+                    $translation_error,
+                    $translated_text,
+                    $can_save,
+                    $reference_original_symbol_key,
+                    $reference_impact_count,
+                    $requires_reference_rewrite,
+                    $reference_resolution_status,
+                    $updated_at_utc)
+                ON CONFLICT(segment_id) DO UPDATE SET
+                    status = excluded.status,
+                    validation_status = excluded.validation_status,
+                    translation_error = excluded.translation_error,
+                    translated_text = excluded.translated_text,
+                    can_save = excluded.can_save,
+                    reference_original_symbol_key = excluded.reference_original_symbol_key,
+                    reference_impact_count = excluded.reference_impact_count,
+                    requires_reference_rewrite = excluded.requires_reference_rewrite,
+                    reference_resolution_status = excluded.reference_resolution_status,
+                    updated_at_utc = excluded.updated_at_utc;
+                """;
+            command.Parameters.AddWithValue("$segment_id", state.SegmentId);
+            command.Parameters.AddWithValue("$status", state.Status);
+            command.Parameters.AddWithValue("$validation_status", state.ValidationStatus);
+            command.Parameters.AddWithValue("$translation_error", state.TranslationError);
+            command.Parameters.AddWithValue("$translated_text", state.TranslatedText);
+            command.Parameters.AddWithValue("$can_save", state.CanSave ? 1 : 0);
+            command.Parameters.AddWithValue("$reference_original_symbol_key", state.ReferenceOriginalSymbolKey);
+            command.Parameters.AddWithValue("$reference_impact_count", state.ReferenceImpactCount);
+            command.Parameters.AddWithValue("$requires_reference_rewrite", state.RequiresReferenceRewrite ? 1 : 0);
+            command.Parameters.AddWithValue("$reference_resolution_status", state.ReferenceResolutionStatus);
+            command.Parameters.AddWithValue("$updated_at_utc", savedAtUtc.ToString("O"));
+            command.ExecuteNonQuery();
+        }
     }
 
     private SqliteConnection OpenConnection(string projectDataDirectory)
@@ -485,6 +556,7 @@ public sealed class SqliteProjectStateStore
                 translation_error TEXT NOT NULL,
                 translated_text TEXT NOT NULL,
                 can_save INTEGER NOT NULL,
+                reference_original_symbol_key TEXT NOT NULL DEFAULT '',
                 reference_impact_count INTEGER NOT NULL,
                 requires_reference_rewrite INTEGER NOT NULL,
                 reference_resolution_status TEXT NOT NULL,
@@ -498,6 +570,7 @@ public sealed class SqliteProjectStateStore
             CREATE INDEX IF NOT EXISTS idx_translation_progress_updated_at_utc ON translation_progress(updated_at_utc);
             """;
         command.ExecuteNonQuery();
+        EnsureColumnExists(connection, "translation_progress", "reference_original_symbol_key", "TEXT NOT NULL DEFAULT ''");
 
         using var countCommand = connection.CreateCommand();
         countCommand.CommandText = "SELECT COUNT(*) FROM schema_info;";
@@ -842,7 +915,10 @@ public sealed class SqliteProjectStateStore
                     OriginalText = reader.GetString(4),
                     EncodingInfo = new DetectedEncodingInfo
                     {
-                        Encoding = TryGetEncoding(reader.GetInt32(5)),
+                        Encoding = TryGetEncoding(
+                            reader.GetInt32(5),
+                            (DetectedEncodingKind)reader.GetInt32(7),
+                            reader.GetInt64(8) != 0),
                         Name = reader.GetString(6),
                         Kind = (DetectedEncodingKind)reader.GetInt32(7),
                         HasBom = reader.GetInt64(8) != 0,
@@ -1072,6 +1148,7 @@ public sealed class SqliteProjectStateStore
                     SymbolNamespace = segment.SymbolNamespace,
                     OriginalSymbolKey = segment.OriginalSymbolKey,
                     IsReferenceBearingKey = segment.IsReferenceBearingKey,
+                    ReferenceOriginalSymbolKey = segment.OriginalSymbolKey,
                     WarningText = warningText,
                 });
             }
@@ -1161,12 +1238,36 @@ public sealed class SqliteProjectStateStore
         command.ExecuteNonQuery();
     }
 
+    private static void SetProgressSavedMeta(SqliteConnection connection, SqliteTransaction transaction, DateTimeOffset savedAtUtc)
+    {
+        SetProjectMeta(connection, transaction, "saved_at_utc", DateTimeOffset.UtcNow.ToString("O"));
+        SetProjectMeta(connection, transaction, "last_progress_saved_at_utc", savedAtUtc.ToString("O"));
+    }
+
     private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string sql)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;
         command.ExecuteNonQuery();
+    }
+
+    private static void EnsureColumnExists(SqliteConnection connection, string tableName, string columnName, string columnDefinition)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+        alterCommand.ExecuteNonQuery();
     }
 
     private static List<string> ReadStringList(SqliteConnection connection, string sql)
@@ -1183,8 +1284,18 @@ public sealed class SqliteProjectStateStore
         return values;
     }
 
-    private static Encoding TryGetEncoding(int codePage)
+    private static Encoding TryGetEncoding(int codePage, DetectedEncodingKind kind, bool hasBom)
     {
+        if (kind is DetectedEncodingKind.Utf8 or DetectedEncodingKind.Utf8Bom)
+        {
+            return new UTF8Encoding(hasBom);
+        }
+
+        if (kind == DetectedEncodingKind.Unicode)
+        {
+            return new UnicodeEncoding(false, hasBom, true);
+        }
+
         try
         {
             return Encoding.GetEncoding(codePage);

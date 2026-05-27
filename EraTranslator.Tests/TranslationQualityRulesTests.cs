@@ -80,4 +80,44 @@ public sealed class TranslationQualityRulesTests
 
         Assert.Equal("메인 히로인、호출 명", normalized);
     }
+
+    [Fact]
+    public void NormalizeTranslatedText_RewritesFullWidthCommaInsideErbFunctionArguments()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText(
+            "ERB",
+            "GET_SP_TRAIN_MEETING_CHARA_NAME(SP_TRAIN_MEETING_CHARA、3)");
+
+        Assert.Equal("GET_SP_TRAIN_MEETING_CHARA_NAME(SP_TRAIN_MEETING_CHARA,3)", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_RewritesFullWidthCommaInsideErbBraceExpressions()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText(
+            "ERB",
+            "{needPoint、5、RIGHT}");
+
+        Assert.Equal("{needPoint,5,RIGHT}", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_DoesNotRewriteNaturalParentheticalComma()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText(
+            "ERB",
+            "상태(좋음、나쁨)");
+
+        Assert.Equal("상태(좋음、나쁨)", normalized);
+    }
+
+    [Fact]
+    public void NormalizeTranslatedText_DoesNotRewriteNaturalBraceComma()
+    {
+        var normalized = TranslationQualityRules.NormalizeTranslatedText(
+            "ERB",
+            "{좋음、나쁨}");
+
+        Assert.Equal("{좋음、나쁨}", normalized);
+    }
 }

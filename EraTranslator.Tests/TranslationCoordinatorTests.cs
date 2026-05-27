@@ -237,9 +237,10 @@ public sealed class TranslationCoordinatorTests
             null,
             CancellationToken.None);
 
-        Assert.Equal("번역 완료", items[0].Status);
+        Assert.Equal("통과", items[0].ValidationStatus);
         Assert.True(items[0].CanSave);
         Assert.Equal("「……그런 얼굴 하지 마.　도와달라고 할 생각은 없어.」", items[0].TranslatedText);
+        Assert.DoesNotContain("__PH", items[0].TranslatedText, StringComparison.Ordinal);
     }
 
     [Fact]

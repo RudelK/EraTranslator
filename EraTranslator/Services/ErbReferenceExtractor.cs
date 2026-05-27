@@ -16,6 +16,7 @@ public sealed partial class ErbReferenceExtractor
         "ITEM",
         "ITEMPRICE",
         "BASE",
+        "MAXBASE",
         "ABL",
         "PALAM",
         "EXP",
@@ -149,6 +150,8 @@ public sealed partial class ErbReferenceExtractor
                 continue;
             }
 
+            AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+
             for (var index = 0; index < normalizedLine.Length; index++)
             {
                 foreach (var symbolNamespace in SupportedNamespaces)
@@ -165,83 +168,22 @@ public sealed partial class ErbReferenceExtractor
                         continue;
                     }
 
-                    var firstComponent = ReadComponent(normalizedLine, cursor);
-                    if (firstComponent.Length == 0)
+                    var components = ReadReferenceComponents(normalizedLine, cursor);
+                    if (components.Count == 0)
                     {
                         continue;
                     }
 
-                    cursor = firstComponent.End;
-                    SkipWhitespace(normalizedLine, ref cursor);
-
-                    ComponentInfo target = firstComponent;
-                    if (!target.IsExpression && cursor < normalizedLine.Length && normalizedLine[cursor] == ':')
-                    {
-                        cursor++;
-                        SkipWhitespace(normalizedLine, ref cursor);
-                        var secondComponent = ReadComponent(normalizedLine, cursor);
-                        if (secondComponent.Length > 0)
-                        {
-                            target = secondComponent;
-                        }
-                    }
-
-                    if (target.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    if (target.IsExpression)
-                    {
-                        var variableName = ExtractVariableName(target.Value);
-                        var candidateKeys = variableName.Length > 0 && resolvedVariables.TryGetValue(variableName, out var values)
-                            ? values.OrderBy(value => value, StringComparer.Ordinal).ToList()
-                            : [];
-                        var resolution = candidateKeys.Count switch
-                        {
-                            0 => SymbolReferenceResolutionKind.Unresolved,
-                            1 => SymbolReferenceResolutionKind.Resolved,
-                            _ => SymbolReferenceResolutionKind.Ambiguous,
-                        };
-
-                        results.Add(new ErbSymbolReference
-                        {
-                            DocumentId = documentId,
-                            Namespace = symbolNamespace,
-                            Kind = ErbSymbolReferenceKind.IndirectVariable,
-                            ResolutionKind = resolution,
-                            VariableName = variableName,
-                            ExpressionText = target.Value,
-                            AbsoluteStart = absoluteOffset + target.Start,
-                            Length = target.Length,
-                            LineNumber = lineIndex + 1,
-                            CandidateKeys = candidateKeys,
-                        });
-
-                        index = target.End - 1;
-                        continue;
-                    }
-
-                    if (!ShouldTreatAsSymbolKey(target.Value))
-                    {
-                        index = target.End - 1;
-                        continue;
-                    }
-
-                    results.Add(new ErbSymbolReference
-                    {
-                        DocumentId = documentId,
-                        Namespace = symbolNamespace,
-                        Kind = ErbSymbolReferenceKind.DirectLiteral,
-                        ResolutionKind = SymbolReferenceResolutionKind.Direct,
-                        OriginalKey = target.Value,
-                        AbsoluteStart = absoluteOffset + target.Start,
-                        Length = target.Length,
-                        LineNumber = lineIndex + 1,
-                        CandidateKeys = [target.Value],
-                    });
-
-                    index = target.End - 1;
+                    AddComponentReferences(
+                        documentId,
+                        symbolNamespace,
+                        normalizedLine,
+                        components,
+                        resolvedVariables,
+                        absoluteOffset,
+                        lineIndex + 1,
+                        results);
+                    index = components[^1].End - 1;
                 }
             }
 
@@ -249,6 +191,243 @@ public sealed partial class ErbReferenceExtractor
         }
 
         return results;
+    }
+
+    private static List<ComponentInfo> ReadReferenceComponents(string line, int cursor)
+    {
+        var components = new List<ComponentInfo>();
+
+        while (cursor < line.Length)
+        {
+            SkipWhitespace(line, ref cursor);
+            var component = ReadComponent(line, cursor);
+            if (component.Length == 0)
+            {
+                break;
+            }
+
+            components.Add(component);
+            cursor = component.End;
+            SkipWhitespace(line, ref cursor);
+            if (cursor >= line.Length || line[cursor] != ':')
+            {
+                break;
+            }
+
+            cursor++;
+        }
+
+        return components;
+    }
+
+    private static void AddComponentReferences(
+        string documentId,
+        string symbolNamespace,
+        string line,
+        IReadOnlyList<ComponentInfo> components,
+        IReadOnlyDictionary<string, HashSet<string>> resolvedVariables,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        var addedDirectRanges = new HashSet<(int Start, int Length, string Key)>();
+
+        for (var startIndex = 0; startIndex < components.Count; startIndex++)
+        {
+            var first = components[startIndex];
+            if (startIndex == 0 && components.Count > 1 && LooksLikeIndexComponent(first))
+            {
+                continue;
+            }
+
+            var last = components[^1];
+            var rangeStart = first.Start;
+            var rangeEnd = last.Start + last.Length;
+            if (rangeEnd <= rangeStart)
+            {
+                continue;
+            }
+
+            var candidateComponents = components.Skip(startIndex).ToList();
+            var candidateKey = line[rangeStart..rangeEnd].Trim();
+            if (candidateComponents.Any(component => component.IsExpression)
+                && !LooksLikeLiteralSymbolWithDecorativePunctuation(candidateKey))
+            {
+                continue;
+            }
+
+            if (!ShouldTreatAsSymbolKey(candidateKey))
+            {
+                continue;
+            }
+
+            var valueStart = line.IndexOf(candidateKey, rangeStart, StringComparison.Ordinal);
+            if (valueStart < 0)
+            {
+                valueStart = rangeStart;
+            }
+
+            if (addedDirectRanges.Add((valueStart, candidateKey.Length, candidateKey)))
+            {
+                AddDirectReference(
+                    documentId,
+                    symbolNamespace,
+                    candidateKey,
+                    absoluteOffset + valueStart,
+                    candidateKey.Length,
+                    lineNumber,
+                    results);
+            }
+        }
+
+        var target = components[^1];
+        if (target.IsExpression && ShouldTreatAsIndirectKeyExpression(target))
+        {
+            AddIndirectReference(
+                documentId,
+                symbolNamespace,
+                target,
+                resolvedVariables,
+                absoluteOffset,
+                lineNumber,
+                results);
+        }
+    }
+
+    private static void AddDirectReference(
+        string documentId,
+        string symbolNamespace,
+        string originalKey,
+        int absoluteStart,
+        int length,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        results.Add(new ErbSymbolReference
+        {
+            DocumentId = documentId,
+            Namespace = symbolNamespace,
+            Kind = ErbSymbolReferenceKind.DirectLiteral,
+            ResolutionKind = SymbolReferenceResolutionKind.Direct,
+            OriginalKey = originalKey,
+            AbsoluteStart = absoluteStart,
+            Length = length,
+            LineNumber = lineNumber,
+            CandidateKeys = [originalKey],
+        });
+    }
+
+    private static void AddIndirectReference(
+        string documentId,
+        string symbolNamespace,
+        ComponentInfo target,
+        IReadOnlyDictionary<string, HashSet<string>> resolvedVariables,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        var variableName = ExtractVariableName(target.Value);
+        var candidateKeys = variableName.Length > 0 && resolvedVariables.TryGetValue(variableName, out var values)
+            ? values.OrderBy(value => value, StringComparer.Ordinal).ToList()
+            : [];
+        var resolution = candidateKeys.Count switch
+        {
+            0 => SymbolReferenceResolutionKind.Unresolved,
+            1 => SymbolReferenceResolutionKind.Resolved,
+            _ => SymbolReferenceResolutionKind.Ambiguous,
+        };
+
+        results.Add(new ErbSymbolReference
+        {
+            DocumentId = documentId,
+            Namespace = symbolNamespace,
+            Kind = ErbSymbolReferenceKind.IndirectVariable,
+            ResolutionKind = resolution,
+            VariableName = variableName,
+            ExpressionText = target.Value,
+            AbsoluteStart = absoluteOffset + target.Start,
+            Length = target.Length,
+            LineNumber = lineNumber,
+            CandidateKeys = candidateKeys,
+        });
+    }
+
+    private static void AddGetNumReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        var searchIndex = 0;
+        while (searchIndex < line.Length)
+        {
+            var functionIndex = line.IndexOf("GETNUM", searchIndex, StringComparison.OrdinalIgnoreCase);
+            if (functionIndex < 0)
+            {
+                break;
+            }
+
+            searchIndex = functionIndex + "GETNUM".Length;
+            if (!IsStandaloneIdentifier(line, functionIndex, "GETNUM".Length))
+            {
+                continue;
+            }
+
+            var cursor = searchIndex;
+            SkipWhitespace(line, ref cursor);
+            if (cursor >= line.Length || line[cursor] != '(')
+            {
+                continue;
+            }
+
+            cursor++;
+            SkipWhitespace(line, ref cursor);
+            var namespaceStart = cursor;
+            while (cursor < line.Length && (char.IsLetterOrDigit(line[cursor]) || line[cursor] == '_'))
+            {
+                cursor++;
+            }
+
+            var symbolNamespace = line[namespaceStart..cursor].Trim();
+            if (!SupportedNamespaces.Contains(symbolNamespace, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SkipWhitespace(line, ref cursor);
+            if (cursor >= line.Length || line[cursor] != ',')
+            {
+                continue;
+            }
+
+            cursor++;
+            SkipWhitespace(line, ref cursor);
+            if (cursor >= line.Length || line[cursor] != '"')
+            {
+                continue;
+            }
+
+            var keyStart = cursor + 1;
+            var keyEnd = line.IndexOf('"', keyStart);
+            if (keyEnd < 0)
+            {
+                continue;
+            }
+
+            var key = line[keyStart..keyEnd];
+            if (ShouldTreatAsSymbolKey(key))
+            {
+                AddDirectReference(
+                    documentId,
+                    symbolNamespace.ToUpperInvariant(),
+                    key,
+                    absoluteOffset + keyStart,
+                    key.Length,
+                    lineNumber,
+                    results);
+            }
+        }
     }
 
     private static ExpressionResolutionResult ResolveExpressionValues(
@@ -446,6 +625,24 @@ public sealed partial class ErbReferenceExtractor
         return line[index + symbolNamespace.Length] == ':';
     }
 
+    private static bool IsStandaloneIdentifier(string line, int index, int length)
+    {
+        var previous = index == 0 ? '\0' : line[index - 1];
+        if (char.IsLetterOrDigit(previous) || previous == '_')
+        {
+            return false;
+        }
+
+        var nextIndex = index + length;
+        if (nextIndex >= line.Length)
+        {
+            return true;
+        }
+
+        var next = line[nextIndex];
+        return !char.IsLetterOrDigit(next) && next != '_';
+    }
+
     private static void SkipWhitespace(string line, ref int cursor)
     {
         while (cursor < line.Length && char.IsWhiteSpace(line[cursor]))
@@ -463,7 +660,7 @@ public sealed partial class ErbReferenceExtractor
 
         if (line[start] == '{')
         {
-            var endBrace = line.IndexOf('}', start + 1);
+            var endBrace = FindMatchingDelimiter(line, start, '{', '}');
             if (endBrace < 0)
             {
                 return ComponentInfo.Empty;
@@ -478,11 +675,81 @@ public sealed partial class ErbReferenceExtractor
         }
 
         var end = start;
-        while (end < line.Length && !IsReferenceDelimiter(line[end]))
+        var parenDepth = 0;
+        var braceDepth = 0;
+        var bracketDepth = 0;
+        var quote = false;
+
+        while (end < line.Length)
         {
+            var ch = line[end];
+            if (ch == '"')
+            {
+                if (!quote && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && end > start)
+                {
+                    break;
+                }
+
+                quote = !quote;
+                end++;
+                continue;
+            }
+
+            if (!quote)
+            {
+                switch (ch)
+                {
+                    case '(':
+                        parenDepth++;
+                        end++;
+                        continue;
+                    case ')':
+                        if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+                        {
+                            goto Done;
+                        }
+
+                        parenDepth = Math.Max(parenDepth - 1, 0);
+                        end++;
+                        continue;
+                    case '{':
+                        braceDepth++;
+                        end++;
+                        continue;
+                    case '}':
+                        if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+                        {
+                            goto Done;
+                        }
+
+                        braceDepth = Math.Max(braceDepth - 1, 0);
+                        end++;
+                        continue;
+                    case '[':
+                        bracketDepth++;
+                        end++;
+                        continue;
+                    case ']':
+                        if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+                        {
+                            goto Done;
+                        }
+
+                        bracketDepth = Math.Max(bracketDepth - 1, 0);
+                        end++;
+                        continue;
+                }
+
+                if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && IsReferenceDelimiter(ch))
+                {
+                    break;
+                }
+            }
+
             end++;
         }
 
+Done:
         var rawValue = line[start..end].Trim();
         if (rawValue.Length == 0)
         {
@@ -490,13 +757,105 @@ public sealed partial class ErbReferenceExtractor
         }
 
         var valueStart = line.IndexOf(rawValue, start, StringComparison.Ordinal);
-        return new ComponentInfo(rawValue, valueStart, rawValue.Length, end, false);
+        var isExpression = IsExpressionComponent(rawValue);
+        return new ComponentInfo(rawValue, valueStart, rawValue.Length, end, isExpression);
     }
 
     private static bool IsReferenceDelimiter(char ch)
     {
         return char.IsWhiteSpace(ch)
-            || ch is ':' or ',' or ')' or '(' or ']' or '[' or '+' or '-' or '*' or '/' or '<' or '>' or '=' or '!' or '&' or '|' or '%' or '"' or '\'';
+            || ch is ':' or ',' or ';' or '+' or '-' or '*' or '/' or '<' or '>' or '=' or '!' or '&' or '|' or '%' or '"' or '\'';
+    }
+
+    private static int FindMatchingDelimiter(string text, int start, char open, char close)
+    {
+        var depth = 0;
+        var quote = false;
+        for (var index = start; index < text.Length; index++)
+        {
+            var ch = text[index];
+            if (ch == '"')
+            {
+                quote = !quote;
+                continue;
+            }
+
+            if (quote)
+            {
+                continue;
+            }
+
+            if (ch == open)
+            {
+                depth++;
+            }
+            else if (ch == close)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsExpressionComponent(string value)
+    {
+        return value.StartsWith('(')
+            || value.StartsWith('{')
+            || value.StartsWith('[')
+            || value.Contains('(')
+            || value.Contains('{')
+            || value.Contains('[')
+            || value.Contains('+')
+            || value.Contains('-')
+            || value.Contains('*')
+            || value.Contains('/')
+            || value.Contains(':');
+    }
+
+    private static bool LooksLikeIndexComponent(ComponentInfo component)
+    {
+        var value = component.Value.Trim();
+        if (string.IsNullOrWhiteSpace(value) || TextHeuristics.IsNumericLike(value))
+        {
+            return true;
+        }
+
+        if (component.IsExpression)
+        {
+            return true;
+        }
+
+        return VariableNamePattern().IsMatch(value);
+    }
+
+    private static bool LooksLikeLiteralSymbolWithDecorativePunctuation(string value)
+    {
+        var trimmed = value.Trim();
+        return !string.IsNullOrWhiteSpace(trimmed)
+            && !trimmed.StartsWith('{')
+            && !VariableNamePattern().IsMatch(trimmed)
+            && trimmed.Any(static ch => !char.IsAsciiLetterOrDigit(ch) && ch != '_' && !char.IsWhiteSpace(ch));
+    }
+
+    private static bool ShouldTreatAsIndirectKeyExpression(ComponentInfo component)
+    {
+        var value = component.Value.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (VariableNamePattern().IsMatch(value))
+        {
+            return true;
+        }
+
+        return value.StartsWith('{') || value.StartsWith('[');
     }
 
     private static bool ShouldTreatAsSymbolKey(string value)

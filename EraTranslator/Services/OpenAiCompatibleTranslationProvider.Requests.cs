@@ -75,6 +75,13 @@ public sealed partial class OpenAiCompatibleTranslationProvider
               + Environment.NewLine
               + "If a placeholder token would be broken, keep the source structure unchanged instead."
             : string.Empty;
+        var scriptSyntaxInstruction =
+            Environment.NewLine
+            + "Treat script syntax and code-like expressions as immutable."
+            + Environment.NewLine
+            + "Do not rewrite ERB-style expressions, function names, ASCII identifiers, delimiters, or punctuation inside code-like expressions."
+            + Environment.NewLine
+            + "Translate only the natural-language portion when script syntax and text appear together.";
         var termStyleInstruction =
             Environment.NewLine
             + "Choose exactly one final translation for each item."
@@ -89,6 +96,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         {
             var rendered = TranslationPromptTemplates.Render(
                 retryMode ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
+                settings.SourceLanguage,
                 settings.TargetLanguage,
                 settings.DisableThinking,
                 retryMode);
@@ -97,6 +105,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             {
                 return rendered
                     + placeholderInstruction
+                    + scriptSyntaxInstruction
                     + termStyleInstruction
                     + Environment.NewLine
                     + $"There is exactly one input item. In the output JSON, use id \"{requests[0].Id}\" for the single translation item.";
@@ -104,33 +113,37 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
             return rendered
                 + placeholderInstruction
+                + scriptSyntaxInstruction
                 + termStyleInstruction
                 + Environment.NewLine
                 + "The user message uses repeated |id| blocks. Read the text inside each block and return one JSON item per id.";
         }
 
+        var sourceLanguageLabel = LanguageDisplayService.ToInstructionLabel(settings.SourceLanguage);
         return
             $"""
             You are a translation engine for Emuera game scripts.
-            Translate each input segment from Japanese into {targetLanguageLabel}.
+            Translate each input segment from {sourceLanguageLabel} into {targetLanguageLabel}.
 
             Output rules:
             1. Do not return JSON.
             2. Do not return markdown, code fences, prose, comments, or extra explanations.
             3. Preserve placeholder tokens such as __PH0__ exactly.
-            4. Preserve line breaks and escape sequences exactly when they exist.
-            5. Keep each segment id unchanged.
-            6. If there is only one input segment, return only the translated text itself with no label, no separator, and no extra line.
-            7. If there are multiple input segments, return exactly one output block for every input block.
-            8. If a line is unsafe or ambiguous, copy the source text into the translated block instead of explaining.
-            9. For multiple input segments, use this exact format only:
+            4. Preserve line breaks, escape sequences, and meaningful surrounding whitespace exactly when they exist.
+            5. Treat script syntax and code-like expressions as immutable. Do not rewrite function names, identifiers, delimiters, or punctuation inside them.
+            6. Keep each segment id unchanged.
+            7. If there is only one input segment, return only the translated text itself with no label, no separator, and no extra line.
+            8. If there are multiple input segments, return exactly one output block for every input block.
+            9. If a line is unsafe or ambiguous, copy the source text into the translated block instead of explaining.
+            10. For multiple input segments, use this exact format only:
             |<id>|
             <translated text>
             |
-            10. Do not write any text before the first output or after the last output.
-            11. The translated text itself must be written in {targetLanguageLabel}. Do not answer in English unless the target language is English.
+            11. Do not write any text before the first output or after the last output.
+            12. The translated text itself must be written in {targetLanguageLabel}. Do not answer in English unless the target language is English.
             """ +
             placeholderInstruction +
+            scriptSyntaxInstruction +
             termStyleInstruction +
             Environment.NewLine + Environment.NewLine +
             TranslationPromptTemplates.BuildThinkingInstruction(settings.DisableThinking);
