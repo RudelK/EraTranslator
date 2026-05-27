@@ -10,6 +10,8 @@ TestResults/
 EraTranslator.config.json
 .era-translator/
 .era-translator-backup/
+.codex-tmp/
+release/
 TODO.md
 AUDIT_TODO.md
 HANDOFF.md

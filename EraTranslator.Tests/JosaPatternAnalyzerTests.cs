@@ -37,13 +37,13 @@ public sealed class JosaPatternAnalyzerTests
     [InlineData("%CALLNAME:娼婦キャラ番号%은/는", "%조사처리(CALLNAME:娼婦キャラ番号,\"는\")%")]
     [InlineData("%CALLNAME:娼婦キャラ番号%는(은)", "%조사처리(CALLNAME:娼婦キャラ番号,\"는\")%")]
     [InlineData("%CALLNAME:LCOUNT%는", "%조사처리(CALLNAME:LCOUNT,\"는\")%")]
-    [InlineData("%NAME:ARG%의", "%조사처리(NAME:ARG,\"의\")%")]
+    [InlineData("%NAME:ARG%의", "%NAME:ARG%의")]
     [InlineData("%플레이어는()%","%플레이어는%")]
     [InlineData("%NAME:TARGET%(을)를", "%조사처리(NAME:TARGET,\"을\")%")]
     [InlineData("%NAME:TARGET%을(를)", "%조사처리(NAME:TARGET,\"을\")%")]
     [InlineData("%~%(은)는", "%조사처리(~,\"는\")%")]
     [InlineData("%~%은(는)", "%조사처리(~,\"는\")%")]
-    [InlineData("%~%의", "%조사처리(~,\"의\")%")]
+    [InlineData("%~%의", "%~%의")]
     [InlineData("%조사처리(CALLNAME:MASTER,\"의\")%", "%플레이어의%")]
     [InlineData("%조사처리(CALLNAME:(LOCAL:11),\"과\")%", "%조사처리(CALLNAME:(LOCAL:11),\"과\")%")]
     public void RewriteText_RewritesToLatestMacroOrGenericForm(string source, string expected)
@@ -77,7 +77,7 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
     [InlineData("%NAME:(friendList:index)%", "은/는 이미 이쪽의 수중에 있다....", "%조사만처리(NAME:(friendList:index),\"는\")% 이미 이쪽의 수중에 있다....")]
     [InlineData("%NAME:(friendList:index)%", "은(는) 이미 이쪽의 수중에 있다....", "%조사만처리(NAME:(friendList:index),\"는\")% 이미 이쪽의 수중에 있다....")]
     [InlineData("%NAME:(friendList:index)%", "는(은) 이미 이쪽의 수중에 있다....", "%조사만처리(NAME:(friendList:index),\"는\")% 이미 이쪽의 수중에 있다....")]
-    [InlineData("%NAME:ARG%", "의 눈빛이다.", "%조사만처리(NAME:ARG,\"의\")% 눈빛이다.")]
+    [InlineData("%NAME:ARG%", "의 눈빛이다.", "의 눈빛이다.")]
     [InlineData("%CALLNAME:MASTER%", "에 가까이 갔다.", "에 가까이 갔다.")]
     public void RewriteLeadingSplitParticle_RewritesSupportedLeadingParticlesOnly(string previousText, string currentText, string expected)
     {

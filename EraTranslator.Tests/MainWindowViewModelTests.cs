@@ -18,6 +18,18 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_LeavesProjectDirectoriesEmptyByDefault()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            restoreLastSessionOnStartup: false);
+
+        Assert.Equal(string.Empty, viewModel.GameDirectory);
+        Assert.Equal(string.Empty, viewModel.OutputDirectory);
+    }
+
+    [Fact]
     public void ChangingProjectDataDirectory_ClearsStaleSessionWhenTargetHasNoSavedState()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");

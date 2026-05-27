@@ -176,6 +176,11 @@ public sealed partial class JosaPatternAnalyzer
             return currentText;
         }
 
+        if (IsPassThroughParticle(particle))
+        {
+            return currentText;
+        }
+
         var expression = NormalizeWhitespace(previousMatch.Groups["expr"].Value);
         var rewritten = $"%조사만처리({expression},\"{particle.functionParticle}\")%{trimmedCurrent[contentStart..]}";
         return leadingWhitespace + rewritten;
@@ -368,6 +373,11 @@ public sealed partial class JosaPatternAnalyzer
                 continue;
             }
 
+            if (IsPassThroughParticle(particle))
+            {
+                continue;
+            }
+
             var rewrittenExpression = _inlineSymbolReferenceRewriter.Rewrite(expression, renameMap);
             var replacement = BuildMacroOrGenericFromExpression(rewrittenExpression, particle);
             yield return new JosaOccurrence(
@@ -463,6 +473,11 @@ public sealed partial class JosaPatternAnalyzer
     private static bool TryNormalizeParticle(string text, out (string macroSuffix, string functionParticle) particle)
     {
         return ParticleMappings.TryGetValue(text.Trim(), out particle);
+    }
+
+    private static bool IsPassThroughParticle((string macroSuffix, string functionParticle) particle)
+    {
+        return particle.functionParticle is "의" or "에게";
     }
 
     private static bool TryMatchLeadingParticle(string text, out string particleText, out int contentStart)

@@ -817,6 +817,77 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
     }
 
     [Fact]
+    public void ExportCopy_DoesNotDuplicateJosaRewriteWhenTranslationWasPreprocessed()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+
+        var originalValue = "%CALLNAME:娼婦キャラ番号%은 시선을 피했다.";
+        var preprocessedValue = "%조사처리(CALLNAME:娼婦キャラ番号,\"는\")% 시선을 피했다.";
+        var erbText = $"PRINTFORMW {originalValue}\r\n";
+        var valueStart = erbText.IndexOf(originalValue, StringComparison.Ordinal);
+        var erbDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/JosaPreprocessed.ERB",
+            FullPath = Path.Combine(gameRoot, "ERB", "JosaPreprocessed.ERB"),
+            RelativePath = Path.Combine("ERB", "JosaPreprocessed.ERB"),
+            FileType = "ERB",
+            OriginalText = erbText,
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/JosaPreprocessed.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "print-tail",
+            AbsoluteStart = valueStart,
+            Length = originalValue.Length,
+            LineNumber = 1,
+            OriginalText = originalValue,
+        });
+
+        var session = new ScanSession
+        {
+            GameRoot = gameRoot,
+            JosaPackageInfo = new JosaSupportPackageService().InspectProject(gameRoot),
+        };
+        session.Documents[erbDocument.DocumentId] = erbDocument;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/JosaPreprocessed.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            FileType = "ERB",
+            RelativePath = erbDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "print-tail",
+            LineNumber = 1,
+            OriginalText = originalValue,
+            TranslatedText = preprocessedValue,
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "JosaPreprocessed.ERB"), Encoding.UTF8);
+        Assert.Contains($"PRINTFORMW {preprocessedValue}", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("조사처리(조사처리", writtenErb, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(writtenErb, "%조사처리("));
+    }
+
+    [Fact]
     public void Save_ManuallyExcludedItemWritesOriginalText()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -1733,5 +1804,18 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
         Assert.Contains("GETNUM(EXP,\"분유경험\")", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("관심:학업", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("귀갑묶기", writtenErb, StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 }

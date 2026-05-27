@@ -89,7 +89,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         TranslationProgressStateService? translationProgressStateService = null,
         EzTransXpInstallationService? ezTransXpInstallationService = null,
         SqliteProjectStateStore? sqliteProjectStateStore = null,
-        bool detectSampleDirectory = true,
+        bool detectSampleDirectory = false,
         bool restoreLastSessionOnStartup = true)
     {
         _fileScanner = fileScanner ?? new FileScanner();
