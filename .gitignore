@@ -12,6 +12,7 @@ EraTranslator.config.json
 .era-translator-backup/
 .codex-tmp/
 release/
+sample/
 TODO.md
 AUDIT_TODO.md
 HANDOFF.md
