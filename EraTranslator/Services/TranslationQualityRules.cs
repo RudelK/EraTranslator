@@ -207,7 +207,7 @@ public static partial class TranslationQualityRules
             return false;
         }
 
-        return token is "조사처리" or "조사만처리" or "조사선택"
+        return token is "조사처리" or "조사만처리" or "조사선택" or "조사만선택"
             || token.Any(static character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_');
     }
 

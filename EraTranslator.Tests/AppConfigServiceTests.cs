@@ -49,6 +49,7 @@ public sealed class AppConfigServiceTests : IDisposable
             EnableResultStateLogging = true,
             ExcludeNonSourceText = true,
             RefreshGridDuringTranslatedTextEdit = true,
+            ProtectedFullWidthCharacters = "（）",
             SystemPromptTemplate = "system",
             RetryPromptTemplate = "retry",
             PapagoClientId = "papago-id",
@@ -83,6 +84,7 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.EnableResultStateLogging, actual.EnableResultStateLogging);
         Assert.Equal(expected.ExcludeNonSourceText, actual.ExcludeNonSourceText);
         Assert.Equal(expected.RefreshGridDuringTranslatedTextEdit, actual.RefreshGridDuringTranslatedTextEdit);
+        Assert.Equal(expected.ProtectedFullWidthCharacters, actual.ProtectedFullWidthCharacters);
         Assert.Equal(expected.SystemPromptTemplate, actual.SystemPromptTemplate);
         Assert.Equal(expected.RetryPromptTemplate, actual.RetryPromptTemplate);
         Assert.Equal(expected.PapagoClientId, actual.PapagoClientId);

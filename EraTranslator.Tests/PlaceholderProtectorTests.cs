@@ -23,11 +23,16 @@ public sealed class PlaceholderProtectorTests
     public void ProtectAndRestore_RoundTripsFullWidthSpecialCharacters()
     {
         var protector = new PlaceholderProtector();
-        var original = "／【테스트】＜값＞「문장」％";
+        var original = "／【테스트】＜값＞「문장」（괄호）『겹문장』％";
 
         var protectedText = protector.Protect(original);
 
-        Assert.True(protectedText.Placeholders.Count >= 7);
+        Assert.Contains("＜", protectedText.Placeholders);
+        Assert.Contains("＞", protectedText.Placeholders);
+        Assert.Contains("（", protectedText.Placeholders);
+        Assert.Contains("）", protectedText.Placeholders);
+        Assert.Contains("『", protectedText.Placeholders);
+        Assert.Contains("』", protectedText.Placeholders);
         Assert.True(protector.HasAllTokens(protectedText.Text, protectedText.Placeholders, out _));
 
         var restored = protector.Restore(protectedText.Text, protectedText.Placeholders);
@@ -35,14 +40,41 @@ public sealed class PlaceholderProtectorTests
     }
 
     [Fact]
-    public void ProtectAndRestore_RoundTripsFullWidthSpaces()
+    public void Protect_UsesCustomFullWidthSpecialCharacters()
+    {
+        var protector = new PlaceholderProtector("（）");
+        var original = "「문장」（괄호）";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.DoesNotContain("「", protectedText.Placeholders);
+        Assert.DoesNotContain("」", protectedText.Placeholders);
+        Assert.Contains("（", protectedText.Placeholders);
+        Assert.Contains("）", protectedText.Placeholders);
+    }
+
+    [Fact]
+    public void Protect_AllowsEmptyFullWidthSpecialCharacterList()
+    {
+        var protector = new PlaceholderProtector(string.Empty);
+        var original = "「문장」（괄호）";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.Equal(original, protectedText.Text);
+        Assert.Empty(protectedText.Placeholders);
+    }
+
+    [Fact]
+    public void Protect_DoesNotTokenizeFullWidthSpaces()
     {
         var protector = new PlaceholderProtector();
         var original = "앞　　중간　끝";
 
         var protectedText = protector.Protect(original);
 
-        Assert.True(protectedText.Placeholders.Any(static placeholder => placeholder.Contains('　')));
+        Assert.Equal(original, protectedText.Text);
+        Assert.Empty(protectedText.Placeholders);
         Assert.True(protector.HasAllTokens(protectedText.Text, protectedText.Placeholders, out _));
 
         var restored = protector.Restore(protectedText.Text, protectedText.Placeholders);

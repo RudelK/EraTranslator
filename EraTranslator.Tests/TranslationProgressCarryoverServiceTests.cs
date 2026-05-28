@@ -55,6 +55,51 @@ public sealed class TranslationProgressCarryoverServiceTests
     }
 
     [Fact]
+    public void Apply_PropagatesTranslationToNewDuplicateItemsWithSameOriginalText()
+    {
+        var previousSession = BuildSession(
+            BuildItem("ERB/Test.ERB:0", "ERB/Test.ERB", 1, "안녕"));
+        var previousProgress = BuildProgressState(
+            BuildState("ERB/Test.ERB:0", "번역 완료", "hello"));
+        var currentItems = new List<ExtractedTextItem>
+        {
+            BuildItem("ERB/Test.ERB:0", "ERB/Test.ERB", 1, "안녕"),
+            BuildItem("ERB/Test.ERB:1", "ERB/Test.ERB", 2, "안녕"),
+        };
+
+        var result = _service.Apply(previousSession, previousProgress, currentItems);
+
+        Assert.Equal(1, result.ExactRestoredCount);
+        Assert.Equal(1, result.HeuristicRestoredCount);
+        Assert.Equal("hello", currentItems[0].TranslatedText);
+        Assert.Equal("hello", currentItems[1].TranslatedText);
+        Assert.Equal("번역 완료", currentItems[0].Status);
+        Assert.Equal("검수 필요", currentItems[1].Status);
+    }
+
+    [Fact]
+    public void Apply_DoesNotPropagateWhenSameOriginalTextHasConflictingTranslations()
+    {
+        var previousSession = BuildSession(
+            BuildItem("ERB/Test.ERB:0", "ERB/Test.ERB", 1, "안녕"),
+            BuildItem("ERB/Test.ERB:1", "ERB/Test.ERB", 2, "안녕"));
+        var previousProgress = BuildProgressState(
+            BuildState("ERB/Test.ERB:0", "번역 완료", "hello"),
+            BuildState("ERB/Test.ERB:1", "번역 완료", "hi"));
+        var currentItems = new List<ExtractedTextItem>
+        {
+            BuildItem("ERB/Other.ERB:0", "ERB/Other.ERB", 1, "안녕"),
+        };
+
+        var result = _service.Apply(previousSession, previousProgress, currentItems);
+
+        Assert.Equal(0, result.ExactRestoredCount);
+        Assert.Equal(0, result.HeuristicRestoredCount);
+        Assert.Equal("번역 대기", currentItems[0].Status);
+        Assert.Equal(string.Empty, currentItems[0].TranslatedText);
+    }
+
+    [Fact]
     public void Apply_RestoresCsvItemsBySourceKeyWhenRowsMove()
     {
         var previousSession = BuildSession(

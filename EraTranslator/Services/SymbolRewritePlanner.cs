@@ -39,7 +39,7 @@ public sealed class SymbolRewritePlanner
             }
         }
 
-        foreach (var document in session.Documents.Values.Where(document => string.Equals(document.FileType, "ERB", StringComparison.OrdinalIgnoreCase)))
+        foreach (var document in session.Documents.Values.Where(document => DocumentFileTypes.IsErbLike(document.FileType)))
         {
             var replacements = new List<PlannedTextReplacement>();
             var unresolvedNamespaces = document.SymbolReferences

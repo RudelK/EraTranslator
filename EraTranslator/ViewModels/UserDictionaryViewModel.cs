@@ -13,17 +13,20 @@ public sealed class UserDictionaryViewModel : BindableBase
     private readonly List<UserDictionaryEntry> _originalProjectEntries;
     private UserDictionaryEntry? _selectedGlobalEntry;
     private UserDictionaryEntry? _selectedProjectEntry;
+    private string _protectedFullWidthCharacters;
     private bool _isInitializing;
 
     public UserDictionaryViewModel(
         string gameDirectory,
         IEnumerable<UserDictionaryEntry> globalEntries,
         IEnumerable<UserDictionaryEntry> projectEntries,
-        UserDictionaryService? dictionaryService = null)
+        UserDictionaryService? dictionaryService = null,
+        string? protectedFullWidthCharacters = null)
     {
         _dictionaryService = dictionaryService ?? new UserDictionaryService();
         _isInitializing = true;
         GameDirectory = gameDirectory;
+        _protectedFullWidthCharacters = protectedFullWidthCharacters ?? PlaceholderProtector.DefaultFullWidthSpecialCharacters;
         _originalGlobalEntries = globalEntries.Select(entry => entry.Clone()).ToList();
         _originalProjectEntries = projectEntries.Select(entry => entry.Clone()).ToList();
         GlobalEntries = new ObservableCollection<UserDictionaryEntry>(globalEntries.Select(entry => entry.Clone()));
@@ -60,6 +63,12 @@ public sealed class UserDictionaryViewModel : BindableBase
     public string ProjectScopeText => CanEditProjectDictionary
         ? "현재 프로젝트에만 적용됩니다. 같은 원문이 있으면 프로젝트 사전이 전역 사전을 덮어씁니다."
         : "프로젝트 사전을 사용하려면 메인 화면에서 게임 폴더를 먼저 지정하세요.";
+
+    public string ProtectedFullWidthCharacters
+    {
+        get => _protectedFullWidthCharacters;
+        set => SetProperty(ref _protectedFullWidthCharacters, value);
+    }
 
     public string SummaryText => $"전역 {GlobalEntries.Count}개 / 프로젝트 {ProjectEntries.Count}개";
 

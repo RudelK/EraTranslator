@@ -3,122 +3,53 @@ using EraTranslator.Models;
 
 namespace EraTranslator.Services;
 
-public sealed partial class JosaPatternAnalyzer
+public sealed class JosaPatternAnalyzer
 {
-    private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
+    private static readonly string[] MacroBases = ["플레이어", "마스터", "MASTER", "타겟", "TARGET", "조교자", "조수", "ARG"];
+    private static readonly string[] GenericFunctionNames = ["조사처리", "조사만처리", "조사선택", "조사만선택"];
+    private static readonly IReadOnlyList<JosaRule> Rules = CreateRules();
+    private static readonly IReadOnlyDictionary<string, JosaRule> RuleLookup = CreateRuleLookup(Rules);
+    private static readonly string[] SortedParticleInputs = RuleLookup.Keys
+        .OrderByDescending(static key => key.Length)
+        .ToArray();
+    private static readonly string[] SortedCompositeParticleInputs = SortedParticleInputs
+        .Where(static key => key.Contains('/') || key.Contains('(') || key.Contains(')'))
+        .ToArray();
+    private static readonly string[] SortedPlainParticleInputs = SortedParticleInputs
+        .Where(static key => !key.Contains('/') && !key.Contains('(') && !key.Contains(')'))
+        .ToArray();
+    private static readonly string[] SortedMacroMatchParticles = Rules
+        .SelectMany(static rule => rule.MacroMatchParticles)
+        .Distinct(StringComparer.Ordinal)
+        .OrderByDescending(static particle => particle.Length)
+        .ToArray();
+    private static readonly Regex GenericFunctionRegex = new(
+        $@"%(?<func>{BuildAlternation(GenericFunctionNames)})\((?<expr>.+?)," + "\"(?<particle>[^\"]+)\"" + @"\)%",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex LegacyShorthandRegex = new(
+        $@"%(?<base>{BuildAlternation(MacroBases)})(?<particle>{BuildAlternation(SortedMacroMatchParticles)})\((?<arg>[^)]*)\)%",
+        RegexOptions.Compiled);
+    private static readonly Regex MacroRegex = new(
+        $@"%(?<base>{BuildAlternation(MacroBases)})(?<particle>{BuildAlternation(SortedMacroMatchParticles)})%",
+        RegexOptions.Compiled);
+    private static readonly Regex PostfixPairRegex = new(
+        $@"%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%(?<particle>{BuildAlternation(SortedParticleInputs)})",
+        RegexOptions.Compiled);
+    private static readonly Regex TrailingJosaExpressionRegex = new(
+        """%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%\s*$""",
+        RegexOptions.Compiled);
+    private static readonly Regex CompositeLiteralParticleRegex = new(
+        $@"(?<![\p{{L}}\p{{Nd}}_])(?<token>[가-힣0-9]+)(?<particle>{BuildAlternation(SortedCompositeParticleInputs)})(?=$|[\s\.,!?\;:\)\]\}}>""'…。、」』）])",
+        RegexOptions.Compiled);
+    private static readonly Regex PlainLiteralWordRegex = new(
+        @"(?<![\p{L}\p{Nd}_])(?<word>[가-힣0-9]+)(?=$|[\s\.,!?\;:\)\]\}}>""'…。、」』）])",
+        RegexOptions.Compiled);
+    private static readonly Regex TrailingLiteralTokenRegex = new(
+        @"(?<![\p{L}\p{Nd}_])(?<token>[가-힣0-9]+)\s*$",
+        RegexOptions.Compiled);
 
-    private static readonly IReadOnlyDictionary<string, (string macroSuffix, string functionParticle)> ParticleMappings =
-        new Dictionary<string, (string macroSuffix, string functionParticle)>(StringComparer.Ordinal)
-        {
-            ["는"] = ("는", "는"),
-            ["은"] = ("는", "는"),
-            ["은/는"] = ("는", "는"),
-            ["는/은"] = ("는", "는"),
-            ["(은)는"] = ("는", "는"),
-            ["은(는)"] = ("는", "는"),
-            ["는(은)"] = ("는", "는"),
-            ["가"] = ("가", "이"),
-            ["이"] = ("가", "이"),
-            ["이/가"] = ("가", "이"),
-            ["가/이"] = ("가", "이"),
-            ["(이)가"] = ("가", "이"),
-            ["이(가)"] = ("가", "이"),
-            ["가(이)"] = ("가", "이"),
-            ["를"] = ("를", "을"),
-            ["을"] = ("를", "을"),
-            ["을/를"] = ("를", "을"),
-            ["를/을"] = ("를", "을"),
-            ["(을)를"] = ("를", "을"),
-            ["을(를)"] = ("를", "을"),
-            ["를(을)"] = ("를", "을"),
-            ["와"] = ("와", "과"),
-            ["과"] = ("와", "과"),
-            ["와/과"] = ("와", "과"),
-            ["과/와"] = ("와", "과"),
-            ["(와)과"] = ("와", "과"),
-            ["와(과)"] = ("와", "과"),
-            ["과(와)"] = ("와", "과"),
-            ["로"] = ("로", "로"),
-            ["으로"] = ("로", "으로"),
-            ["으로/로"] = ("로", "으로"),
-            ["로/으로"] = ("로", "으로"),
-            ["(로)으로"] = ("로", "으로"),
-            ["로(으로)"] = ("로", "으로"),
-            ["으로(로)"] = ("로", "으로"),
-            ["랑"] = ("랑", "랑"),
-            ["이랑"] = ("랑", "랑"),
-            ["이랑/랑"] = ("랑", "랑"),
-            ["랑/이랑"] = ("랑", "랑"),
-            ["(랑)이랑"] = ("랑", "랑"),
-            ["랑(이랑)"] = ("랑", "랑"),
-            ["이랑(랑)"] = ("랑", "랑"),
-            ["며"] = ("며", "며"),
-            ["이며"] = ("며", "며"),
-            ["이며/며"] = ("며", "며"),
-            ["며/이며"] = ("며", "며"),
-            ["(며)이며"] = ("며", "며"),
-            ["며(이며)"] = ("며", "며"),
-            ["이며(며)"] = ("며", "며"),
-            ["고"] = ("고", "고"),
-            ["이고"] = ("고", "고"),
-            ["이고/고"] = ("고", "고"),
-            ["고/이고"] = ("고", "고"),
-            ["(고)이고"] = ("고", "고"),
-            ["고(이고)"] = ("고", "고"),
-            ["이고(고)"] = ("고", "고"),
-            ["라"] = ("라", "라"),
-            ["이라"] = ("라", "라"),
-            ["이라/라"] = ("라", "라"),
-            ["라/이라"] = ("라", "라"),
-            ["(라)이라"] = ("라", "라"),
-            ["라(이라)"] = ("라", "라"),
-            ["이라(라)"] = ("라", "라"),
-            ["다"] = ("다", "다"),
-            ["이다"] = ("다", "다"),
-            ["이다/다"] = ("다", "다"),
-            ["다/이다"] = ("다", "다"),
-            ["(다)이다"] = ("다", "다"),
-            ["다(이다)"] = ("다", "다"),
-            ["이다(다)"] = ("다", "다"),
-            ["였"] = ("였", "였"),
-            ["이였"] = ("였", "였"),
-            ["이었"] = ("였", "였"),
-            ["이었/였"] = ("였", "였"),
-            ["였/이었"] = ("였", "였"),
-            ["(였)이었"] = ("였", "였"),
-            ["였(이었)"] = ("였", "였"),
-            ["이었(였)"] = ("였", "였"),
-            ["여"] = ("여", "여"),
-            ["이여"] = ("여", "여"),
-            ["이여/여"] = ("여", "여"),
-            ["여/이여"] = ("여", "여"),
-            ["(여)이여"] = ("여", "여"),
-            ["여(이여)"] = ("여", "여"),
-            ["이여(여)"] = ("여", "여"),
-            ["야"] = ("야", "야"),
-            ["이야"] = ("야", "야"),
-            ["이야/야"] = ("야", "야"),
-            ["야/이야"] = ("야", "야"),
-            ["(야)이야"] = ("야", "야"),
-            ["야(이야)"] = ("야", "야"),
-            ["이야(야)"] = ("야", "야"),
-            ["나"] = ("나", "이나"),
-            ["이나"] = ("나", "이나"),
-            ["이나/나"] = ("나", "이나"),
-            ["나/이나"] = ("나", "이나"),
-            ["(나)이나"] = ("나", "이나"),
-            ["나(이나)"] = ("나", "이나"),
-            ["이나(나)"] = ("나", "이나"),
-            ["면"] = ("면", "이면"),
-            ["이면"] = ("면", "이면"),
-            ["이면/면"] = ("면", "이면"),
-            ["면/이면"] = ("면", "이면"),
-            ["(면)이면"] = ("면", "이면"),
-            ["면(이면)"] = ("면", "이면"),
-            ["이면(면)"] = ("면", "이면"),
-            ["의"] = ("의", "의"),
-            ["에게"] = ("에게", "에게"),
-        };
+    private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
+    private readonly PlaceholderProtector _placeholderProtector = new();
 
     public JosaDocumentAnalysis AnalyzeDocument(string content, JosaSupportPackageInfo packageInfo)
     {
@@ -132,22 +63,10 @@ public sealed partial class JosaPatternAnalyzer
         JosaSupportPackageInfo packageInfo)
     {
         var occurrences = CollectOccurrences(text, renameMap);
-        if (occurrences.Count == 0)
-        {
-            return new JosaRewriteTextResult(text, BuildAnalysis([], packageInfo), false);
-        }
-
-        var buffer = text;
-        foreach (var occurrence in occurrences
-                     .Where(occurrence => !string.Equals(occurrence.Replacement, occurrence.OriginalText, StringComparison.Ordinal))
-                     .OrderByDescending(occurrence => occurrence.Start))
-        {
-            buffer = buffer.Remove(occurrence.Start, occurrence.Length)
-                .Insert(occurrence.Start, occurrence.Replacement);
-        }
-
+        var normalized = ApplyJosaOccurrences(text, occurrences);
+        normalized = RewriteLiteralParticles(normalized);
         var analysis = BuildAnalysis(occurrences, packageInfo);
-        return new JosaRewriteTextResult(buffer, analysis, occurrences.Any(occurrence => occurrence.RequiresErh));
+        return new JosaRewriteTextResult(normalized, analysis, occurrences.Any(static occurrence => occurrence.RequiresErh));
     }
 
     public string RewriteLeadingSplitParticle(string previousText, string currentText)
@@ -157,33 +76,34 @@ public sealed partial class JosaPatternAnalyzer
             return currentText;
         }
 
-        var previousMatch = TrailingJosaExpressionPattern().Match(previousText);
-        if (!previousMatch.Success)
-        {
-            return currentText;
-        }
-
         var leadingWhitespaceLength = currentText.Length - currentText.TrimStart().Length;
         var leadingWhitespace = currentText[..leadingWhitespaceLength];
         var trimmedCurrent = currentText[leadingWhitespaceLength..];
-        if (!TryMatchLeadingParticle(trimmedCurrent, out var particleText, out var contentStart))
+        if (!TryMatchLeadingParticle(trimmedCurrent, out var inputParticle, out var contentStart))
         {
             return currentText;
         }
 
-        if (!TryNormalizeParticle(particleText, out var particle))
+        if (!TryNormalizeParticle(inputParticle, out var rule) || rule.PassThrough)
         {
             return currentText;
         }
 
-        if (IsPassThroughParticle(particle))
+        var previousExpressionMatch = TrailingJosaExpressionRegex.Match(previousText);
+        if (previousExpressionMatch.Success)
+        {
+            var expression = NormalizeWhitespace(previousExpressionMatch.Groups["expr"].Value);
+            var rewritten = $"%조사만처리({expression},\"{rule.FunctionParticle}\")%{trimmedCurrent[contentStart..]}";
+            return leadingWhitespace + rewritten;
+        }
+
+        if (!TryGetTrailingLiteralToken(previousText, out var trailingToken))
         {
             return currentText;
         }
 
-        var expression = NormalizeWhitespace(previousMatch.Groups["expr"].Value);
-        var rewritten = $"%조사만처리({expression},\"{particle.functionParticle}\")%{trimmedCurrent[contentStart..]}";
-        return leadingWhitespace + rewritten;
+        var surface = rule.GetLiteralSurface(KoreanParticleClassifier.ClassifyToken(trailingToken));
+        return leadingWhitespace + surface + trimmedCurrent[contentStart..];
     }
 
     public IReadOnlyList<PlannedTextReplacement> CreateDocumentReplacements(
@@ -193,9 +113,9 @@ public sealed partial class JosaPatternAnalyzer
     {
         var occurrences = CollectOccurrences(document.OriginalText, renameMap);
         return occurrences
-            .Where(occurrence => !string.Equals(occurrence.Replacement, occurrence.OriginalText, StringComparison.Ordinal))
-            .Select(occurrence => new PlannedTextReplacement(occurrence.Start, occurrence.Length, occurrence.Replacement))
-            .OrderByDescending(replacement => replacement.Start)
+            .Where(static occurrence => !string.Equals(occurrence.Replacement, occurrence.OriginalText, StringComparison.Ordinal))
+            .Select(static occurrence => new PlannedTextReplacement(occurrence.Start, occurrence.Length, occurrence.Replacement))
+            .OrderByDescending(static replacement => replacement.Start)
             .ToList();
     }
 
@@ -203,9 +123,9 @@ public sealed partial class JosaPatternAnalyzer
         IReadOnlyCollection<JosaOccurrence> occurrences,
         JosaSupportPackageInfo packageInfo)
     {
-        var macroCount = occurrences.Count(occurrence => occurrence.OutputKind == JosaOutputKind.Macro);
-        var genericCount = occurrences.Count(occurrence => occurrence.OutputKind == JosaOutputKind.GenericFunction);
-        var legacyCount = occurrences.Count(occurrence => occurrence.InputKind == JosaInputKind.LegacyShorthand);
+        var macroCount = occurrences.Count(static occurrence => occurrence.OutputKind == JosaOutputKind.Macro);
+        var genericCount = occurrences.Count(static occurrence => occurrence.OutputKind == JosaOutputKind.GenericFunction);
+        var legacyCount = occurrences.Count(static occurrence => occurrence.InputKind == JosaInputKind.LegacyShorthand);
         var requiresErh = macroCount > 0;
 
         var syntaxKinds = new List<string>();
@@ -234,7 +154,7 @@ public sealed partial class JosaPatternAnalyzer
         return new JosaDocumentAnalysis
         {
             PatternCount = occurrences.Count,
-            AutoConvertibleCount = occurrences.Count(occurrence => occurrence.AutoConvertible),
+            AutoConvertibleCount = occurrences.Count(static occurrence => occurrence.AutoConvertible),
             GenericFunctionCount = genericCount,
             MacroPatternCount = macroCount,
             LegacyShorthandCount = legacyCount,
@@ -259,36 +179,38 @@ public sealed partial class JosaPatternAnalyzer
         raw.AddRange(CollectMacroForms(text, renameMap));
 
         return raw
-            .OrderBy(occurrence => occurrence.Start)
-            .ThenByDescending(occurrence => occurrence.Length)
-            .Aggregate(new List<JosaOccurrence>(), (accepted, occurrence) =>
-            {
-                if (accepted.Any(existing => RangesOverlap(existing.Start, existing.Length, occurrence.Start, occurrence.Length)))
+            .OrderBy(static occurrence => occurrence.Start)
+            .ThenByDescending(static occurrence => occurrence.Length)
+            .Aggregate(
+                new List<JosaOccurrence>(),
+                static (accepted, occurrence) =>
                 {
-                    return accepted;
-                }
+                    if (accepted.Any(existing => RangesOverlap(existing.Start, existing.Length, occurrence.Start, occurrence.Length)))
+                    {
+                        return accepted;
+                    }
 
-                accepted.Add(occurrence);
-                return accepted;
-            });
+                    accepted.Add(occurrence);
+                    return accepted;
+                });
     }
 
     private IEnumerable<JosaOccurrence> CollectGenericFunctions(
         string text,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap)
     {
-        foreach (Match match in GenericFunctionPattern().Matches(text))
+        foreach (Match match in GenericFunctionRegex.Matches(text))
         {
             var functionName = match.Groups["func"].Value;
             var expression = NormalizeWhitespace(match.Groups["expr"].Value);
             var particleText = match.Groups["particle"].Value;
-            if (!TryNormalizeParticle(particleText, out var particle))
+            if (!TryNormalizeParticle(particleText, out var rule))
             {
                 continue;
             }
 
             var rewrittenExpression = _inlineSymbolReferenceRewriter.Rewrite(expression, renameMap);
-            var replacement = BuildReplacement(functionName, rewrittenExpression, particle);
+            var replacement = BuildReplacement(functionName, rewrittenExpression, rule);
             yield return new JosaOccurrence(
                 match.Index,
                 match.Length,
@@ -305,17 +227,17 @@ public sealed partial class JosaPatternAnalyzer
         string text,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap)
     {
-        foreach (Match match in LegacyShorthandPattern().Matches(text))
+        foreach (Match match in LegacyShorthandRegex.Matches(text))
         {
             var helperBase = match.Groups["base"].Value;
             var particleText = match.Groups["particle"].Value;
             var argText = match.Groups["arg"].Value.Trim();
-            if (!TryNormalizeParticle(particleText, out var particle))
+            if (!TryNormalizeParticle(particleText, out var rule))
             {
                 continue;
             }
 
-            var replacement = BuildLegacyReplacement(helperBase, particle, argText, renameMap);
+            var replacement = BuildLegacyReplacement(helperBase, rule, argText, renameMap);
             if (replacement.Length == 0)
             {
                 continue;
@@ -337,26 +259,25 @@ public sealed partial class JosaPatternAnalyzer
         string text,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap)
     {
-        foreach (Match match in MacroPattern().Matches(text))
+        foreach (Match match in MacroRegex.Matches(text))
         {
             var macroBase = match.Groups["base"].Value;
             var particleText = match.Groups["particle"].Value;
-            if (!TryNormalizeParticle(particleText, out var particle))
+            if (!TryNormalizeParticle(particleText, out var rule))
             {
                 continue;
             }
 
-            var canonicalBase = NormalizeMacroBase(macroBase);
-            var replacement = $"%{canonicalBase}{particle.macroSuffix}%";
+            var replacement = BuildMacroReplacement(macroBase, rule);
             yield return new JosaOccurrence(
                 match.Index,
                 match.Length,
                 match.Value,
                 replacement,
                 JosaInputKind.Macro,
-                JosaOutputKind.Macro,
+                replacement.StartsWith("%조사", StringComparison.Ordinal) ? JosaOutputKind.GenericFunction : JosaOutputKind.Macro,
                 !string.Equals(match.Value, replacement, StringComparison.Ordinal),
-                true);
+                replacement.StartsWith("%조사", StringComparison.Ordinal) is false);
         }
     }
 
@@ -364,22 +285,17 @@ public sealed partial class JosaPatternAnalyzer
         string text,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap)
     {
-        foreach (Match match in PostfixPairPattern().Matches(text))
+        foreach (Match match in PostfixPairRegex.Matches(text))
         {
             var expression = NormalizeWhitespace(match.Groups["expr"].Value);
             var particleText = match.Groups["particle"].Value;
-            if (!TryNormalizeParticle(particleText, out var particle))
-            {
-                continue;
-            }
-
-            if (IsPassThroughParticle(particle))
+            if (!TryNormalizeParticle(particleText, out var rule) || rule.PassThrough)
             {
                 continue;
             }
 
             var rewrittenExpression = _inlineSymbolReferenceRewriter.Rewrite(expression, renameMap);
-            var replacement = BuildMacroOrGenericFromExpression(rewrittenExpression, particle);
+            var replacement = BuildMacroOrGenericFromExpression(rewrittenExpression, rule);
             yield return new JosaOccurrence(
                 match.Index,
                 match.Length,
@@ -392,58 +308,217 @@ public sealed partial class JosaPatternAnalyzer
         }
     }
 
-    private string BuildReplacement(string functionName, string expression, (string macroSuffix, string functionParticle) particle)
+    private string BuildReplacement(string functionName, string expression, JosaRule rule)
     {
-        if (string.Equals(functionName, "조사만처리", StringComparison.Ordinal))
+        if (string.Equals(functionName, "조사만처리", StringComparison.Ordinal)
+            || string.Equals(functionName, "조사만선택", StringComparison.Ordinal))
         {
-            return $"%조사만처리({expression},\"{particle.functionParticle}\")%";
+            return $"%조사만처리({expression},\"{rule.FunctionParticle}\")%";
         }
 
-        return BuildMacroOrGenericFromExpression(expression, particle);
+        return BuildMacroOrGenericFromExpression(expression, rule);
     }
 
     private string BuildLegacyReplacement(
         string helperBase,
-        (string macroSuffix, string functionParticle) particle,
+        JosaRule rule,
         string argText,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap)
     {
         var canonicalBase = NormalizeMacroBase(helperBase);
-        if (string.IsNullOrWhiteSpace(argText))
+        var hasExplicitArg = !string.IsNullOrWhiteSpace(argText);
+        if (!hasExplicitArg && rule.SupportsMacroShorthand)
         {
-            return $"%{canonicalBase}{particle.macroSuffix}%";
+            return $"%{canonicalBase}{rule.MacroSuffix}%";
         }
 
-        var expression = canonicalBase switch
-        {
-            "플레이어" => "NAME:MASTER",
-            "타겟" => "NAME:TARGET",
-            "조교자" => "NAME:PLAYER",
-            "조수" => "NAME:ASSI",
-            "ARG" => "NAME:ARG",
-            _ => string.Empty,
-        };
-
+        var expression = BuildLegacyExpression(canonicalBase, useNameExpression: hasExplicitArg);
         if (expression.Length == 0)
         {
             return string.Empty;
         }
 
         expression = _inlineSymbolReferenceRewriter.Rewrite(expression, renameMap);
-        return $"%조사처리({expression},\"{particle.functionParticle}\")%";
+        return $"%조사처리({expression},\"{rule.FunctionParticle}\")%";
     }
 
-    private string BuildMacroOrGenericFromExpression(string expression, (string macroSuffix, string functionParticle) particle)
+    private string BuildMacroReplacement(string macroBase, JosaRule rule)
+    {
+        var canonicalBase = NormalizeMacroBase(macroBase);
+        if (rule.SupportsMacroShorthand)
+        {
+            return $"%{canonicalBase}{rule.MacroSuffix}%";
+        }
+
+        var expression = BuildLegacyExpression(canonicalBase, useNameExpression: false);
+        return expression.Length == 0
+            ? $"%{canonicalBase}{rule.MacroSuffix}%"
+            : $"%조사처리({expression},\"{rule.FunctionParticle}\")%";
+    }
+
+    private string BuildMacroOrGenericFromExpression(string expression, JosaRule rule)
     {
         var canonicalExpression = NormalizeExpression(expression);
+        if (!rule.SupportsMacroShorthand)
+        {
+            return $"%조사처리({expression},\"{rule.FunctionParticle}\")%";
+        }
+
         return canonicalExpression switch
         {
-            "CALLNAME" or "CALLNAME:TARGET" => $"%타겟{particle.macroSuffix}%",
-            "CALLNAME:MASTER" => $"%플레이어{particle.macroSuffix}%",
-            "CALLNAME:PLAYER" => $"%조교자{particle.macroSuffix}%",
-            "CALLNAME:ARG" => $"%ARG{particle.macroSuffix}%",
-            "CALLNAME:ASSI" => $"%조수{particle.macroSuffix}%",
-            _ => $"%조사처리({expression},\"{particle.functionParticle}\")%",
+            "CALLNAME" or "CALLNAME:TARGET" => $"%타겟{rule.MacroSuffix}%",
+            "CALLNAME:MASTER" => $"%플레이어{rule.MacroSuffix}%",
+            "CALLNAME:PLAYER" => $"%조교자{rule.MacroSuffix}%",
+            "CALLNAME:ARG" => $"%ARG{rule.MacroSuffix}%",
+            "CALLNAME:ASSI" => $"%조수{rule.MacroSuffix}%",
+            _ => $"%조사처리({expression},\"{rule.FunctionParticle}\")%",
+        };
+    }
+
+    private static string ApplyJosaOccurrences(string text, IReadOnlyCollection<JosaOccurrence> occurrences)
+    {
+        if (occurrences.Count == 0)
+        {
+            return text;
+        }
+
+        var buffer = text;
+        foreach (var occurrence in occurrences
+                     .Where(static occurrence => !string.Equals(occurrence.Replacement, occurrence.OriginalText, StringComparison.Ordinal))
+                     .OrderByDescending(static occurrence => occurrence.Start))
+        {
+            buffer = buffer.Remove(occurrence.Start, occurrence.Length)
+                .Insert(occurrence.Start, occurrence.Replacement);
+        }
+
+        return buffer;
+    }
+
+    private string RewriteLiteralParticles(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var protectedText = _placeholderProtector.Protect(text);
+        var replacements = new List<PlannedTextReplacement>();
+
+        foreach (Match match in CompositeLiteralParticleRegex.Matches(protectedText.Text))
+        {
+            var token = match.Groups["token"].Value;
+            if (!IsSupportedLiteralToken(token))
+            {
+                continue;
+            }
+
+            var particleText = match.Groups["particle"].Value;
+            if (!TryNormalizeParticle(particleText, out var rule))
+            {
+                continue;
+            }
+
+            if (!rule.ShouldRewriteLiteral(token, particleText))
+            {
+                continue;
+            }
+
+            var replacement = token + rule.GetLiteralSurface(KoreanParticleClassifier.ClassifyToken(token));
+            if (string.Equals(match.Value, replacement, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            replacements.Add(new PlannedTextReplacement(match.Index, match.Length, replacement));
+        }
+
+        foreach (Match match in PlainLiteralWordRegex.Matches(protectedText.Text))
+        {
+            if (replacements.Any(existing => RangesOverlap(existing.Start, existing.Length, match.Index, match.Length)))
+            {
+                continue;
+            }
+
+            var word = match.Groups["word"].Value;
+            foreach (var particleText in SortedPlainParticleInputs)
+            {
+                if (!word.EndsWith(particleText, StringComparison.Ordinal) || word.Length <= particleText.Length)
+                {
+                    continue;
+                }
+
+                var token = word[..^particleText.Length];
+                if (!IsSupportedLiteralToken(token))
+                {
+                    continue;
+                }
+
+                if (!TryNormalizeParticle(particleText, out var rule) || !rule.ShouldRewriteLiteral(token, particleText))
+                {
+                    continue;
+                }
+
+                var replacement = token + rule.GetLiteralSurface(KoreanParticleClassifier.ClassifyToken(token));
+                if (string.Equals(word, replacement, StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                replacements.Add(new PlannedTextReplacement(match.Index, match.Length, replacement));
+                break;
+            }
+        }
+
+        if (replacements.Count == 0)
+        {
+            return text;
+        }
+
+        var rewritten = protectedText.Text;
+        foreach (var replacement in replacements.OrderByDescending(static replacement => replacement.Start))
+        {
+            rewritten = rewritten.Remove(replacement.Start, replacement.Length)
+                .Insert(replacement.Start, replacement.Value);
+        }
+
+        return _placeholderProtector.Restore(rewritten, protectedText.Placeholders);
+    }
+
+    private static bool IsSupportedLiteralToken(string token)
+    {
+        return token.Length > 0
+            && token.All(KoreanParticleClassifier.IsLiteralTokenCharacter)
+            && token.Any(static character => character is >= '\uAC00' and <= '\uD7A3' or >= '0' and <= '9');
+    }
+
+    private static bool TryGetTrailingLiteralToken(string text, out string token)
+    {
+        var match = TrailingLiteralTokenRegex.Match(text);
+        if (match.Success)
+        {
+            token = match.Groups["token"].Value;
+            return true;
+        }
+
+        token = string.Empty;
+        return false;
+    }
+
+    private static string BuildLegacyExpression(string canonicalBase, bool useNameExpression)
+    {
+        return (canonicalBase, useNameExpression) switch
+        {
+            ("플레이어", false) => "CALLNAME:MASTER",
+            ("플레이어", true) => "NAME:MASTER",
+            ("타겟", false) => "CALLNAME:TARGET",
+            ("타겟", true) => "NAME:TARGET",
+            ("조교자", false) => "CALLNAME:PLAYER",
+            ("조교자", true) => "NAME:PLAYER",
+            ("조수", false) => "CALLNAME:ASSI",
+            ("조수", true) => "NAME:ASSI",
+            ("ARG", false) => "CALLNAME:ARG",
+            ("ARG", true) => "NAME:ARG",
+            _ => string.Empty,
         };
     }
 
@@ -470,14 +545,9 @@ public sealed partial class JosaPatternAnalyzer
         };
     }
 
-    private static bool TryNormalizeParticle(string text, out (string macroSuffix, string functionParticle) particle)
+    private static bool TryNormalizeParticle(string text, out JosaRule rule)
     {
-        return ParticleMappings.TryGetValue(text.Trim(), out particle);
-    }
-
-    private static bool IsPassThroughParticle((string macroSuffix, string functionParticle) particle)
-    {
-        return particle.functionParticle is "의" or "에게";
+        return RuleLookup.TryGetValue(text.Trim(), out rule!);
     }
 
     private static bool TryMatchLeadingParticle(string text, out string particleText, out int contentStart)
@@ -485,20 +555,20 @@ public sealed partial class JosaPatternAnalyzer
         particleText = string.Empty;
         contentStart = 0;
 
-        foreach (var key in ParticleMappings.Keys.OrderByDescending(key => key.Length))
+        foreach (var input in SortedParticleInputs)
         {
-            if (!text.StartsWith(key, StringComparison.Ordinal))
+            if (!text.StartsWith(input, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var nextIndex = key.Length;
+            var nextIndex = input.Length;
             if (nextIndex < text.Length && !char.IsWhiteSpace(text[nextIndex]) && !IsJosaBoundary(text[nextIndex]))
             {
                 continue;
             }
 
-            particleText = key;
+            particleText = input;
             contentStart = nextIndex;
             return true;
         }
@@ -508,7 +578,7 @@ public sealed partial class JosaPatternAnalyzer
 
     private static bool IsJosaBoundary(char character)
     {
-        return character is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '>' or '"' or '\'' or '…' or '。' or '、';
+        return character is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '>' or '"' or '\'' or '…' or '。' or '、' or '」' or '』' or '）';
     }
 
     private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)
@@ -518,20 +588,52 @@ public sealed partial class JosaPatternAnalyzer
         return leftStart < rightEnd && rightStart < leftEnd;
     }
 
-    [GeneratedRegex("""%(?<func>조사처리|조사만처리)\((?<expr>.+?),"(?<particle>[^"]+)"\)%""", RegexOptions.Compiled | RegexOptions.Singleline)]
-    private static partial Regex GenericFunctionPattern();
+    private static string BuildAlternation(IEnumerable<string> values)
+    {
+        return string.Join("|", values.Select(Regex.Escape));
+    }
 
-    [GeneratedRegex("""%(?<base>플레이어|마스터|MASTER|타겟|TARGET|조교자|조수|ARG)(?<particle>으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)\((?<arg>[^)]*)\)%""", RegexOptions.Compiled)]
-    private static partial Regex LegacyShorthandPattern();
+    private static IReadOnlyDictionary<string, JosaRule> CreateRuleLookup(IEnumerable<JosaRule> rules)
+    {
+        var lookup = new Dictionary<string, JosaRule>(StringComparer.Ordinal);
+        foreach (var rule in rules)
+        {
+            foreach (var input in rule.AllAcceptedInputs)
+            {
+                lookup[input] = rule;
+            }
+        }
 
-    [GeneratedRegex("""%(?<base>플레이어|마스터|MASTER|타겟|TARGET|조교자|조수|ARG)(?<particle>으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)%""", RegexOptions.Compiled)]
-    private static partial Regex MacroPattern();
+        return lookup;
+    }
 
-    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%(?<particle>은/는|는/은|\(은\)는|은\(는\)|는\(은\)|이/가|가/이|\(이\)가|이\(가\)|가\(이\)|을/를|를/을|\(을\)를|을\(를\)|를\(을\)|와/과|과/와|\(와\)과|와\(과\)|과\(와\)|으로/로|로/으로|\(로\)으로|로\(으로\)|으로\(로\)|이랑/랑|랑/이랑|\(랑\)이랑|랑\(이랑\)|이랑\(랑\)|이며/며|며/이며|\(며\)이며|며\(이며\)|이며\(며\)|이고/고|고/이고|\(고\)이고|고\(이고\)|이고\(고\)|이라/라|라/이라|\(라\)이라|라\(이라\)|이라\(라\)|이다/다|다/이다|\(다\)이다|다\(이다\)|이다\(다\)|이었/였|였/이었|\(였\)이었|였\(이었\)|이었\(였\)|이여/여|여/이여|\(여\)이여|여\(이여\)|이여\(여\)|이야/야|야/이야|\(야\)이야|야\(이야\)|이야\(야\)|이나/나|나/이나|\(나\)이나|나\(이나\)|이나\(나\)|이면/면|면/이면|\(면\)이면|면\(이면\)|이면\(면\)|으로|에게|이랑|이며|이고|이라|이다|이었|이였|이여|이야|이나|이면|은|는|이|가|을|를|와|과|로|랑|며|고|라|다|였|여|야|나|면|의)""", RegexOptions.Compiled)]
-    private static partial Regex PostfixPairPattern();
-
-    [GeneratedRegex("""%(?<expr>CALLNAME(?:\s*:\s*[^%]+)?|NAME\s*:\s*[^%]+|~)%\s*$""", RegexOptions.Compiled)]
-    private static partial Regex TrailingJosaExpressionPattern();
+    private static IReadOnlyList<JosaRule> CreateRules()
+    {
+        return
+        [
+            new JosaRule("topic", "는", "은", "는", "는", supportsMacroShorthand: true),
+            new JosaRule("subject", "가", "이", "가", "이", supportsMacroShorthand: true),
+            new JosaRule("object", "를", "을", "를", "을", supportsMacroShorthand: true),
+            new JosaRule("comitative", "와", "과", "와", "과", supportsMacroShorthand: true),
+            new JosaRule("direction", "로", "으로", "로", "으로", supportsMacroShorthand: true, rieulSurface: "로"),
+            new JosaRule("companion", "랑", "이랑", "랑", "랑", supportsMacroShorthand: true),
+            new JosaRule("connective", "며", "이며", "며", "며", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("conjunctive", "고", "이고", "고", "고", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("predicative", "라", "이라", "라", "라", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("copula", "다", "이다", "다", "다", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("pastCopula", "였", "이었", "였", "였", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly, batchimInputs: ["이었", "이였"]),
+            new JosaRule("endingYeo", "여", "이여", "여", "여", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("endingYa", "야", "이야", "야", "야", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("orChoice", "나", "이나", "나", "이나", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("conditional", "면", "이면", "면", "이면", supportsMacroShorthand: true, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("future", "겠", "이겠", "겠", "겠", supportsMacroShorthand: false, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("honorificPast", "셨", "이셨", "셨", "셨", supportsMacroShorthand: false, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("emphatic", "잖", "이잖", "잖", "잖", supportsMacroShorthand: false, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("interrogative", "니", "이니", "니", "니", supportsMacroShorthand: false, literalRewriteMode: LiteralRewriteMode.LongOrCompositeOnly),
+            new JosaRule("genitive", "의", "의", "의", "의", passThrough: true, supportsMacroShorthand: true),
+            new JosaRule("dative", "에게", "에게", "에게", "에게", passThrough: true, supportsMacroShorthand: true),
+        ];
+    }
 
     private enum JosaInputKind
     {
@@ -556,6 +658,129 @@ public sealed partial class JosaPatternAnalyzer
         JosaOutputKind OutputKind,
         bool AutoConvertible,
         bool RequiresErh);
+
+    private sealed class JosaRule
+    {
+        private readonly string[] _noBatchimInputs;
+        private readonly string[] _batchimInputs;
+
+        public JosaRule(
+            string key,
+            string noBatchimSurface,
+            string batchimSurface,
+            string macroSuffix,
+            string functionParticle,
+            bool supportsMacroShorthand,
+            bool passThrough = false,
+            string? rieulSurface = null,
+            LiteralRewriteMode literalRewriteMode = LiteralRewriteMode.SafeDirect,
+            IReadOnlyList<string>? noBatchimInputs = null,
+            IReadOnlyList<string>? batchimInputs = null)
+        {
+            Key = key;
+            NoBatchimSurface = noBatchimSurface;
+            BatchimSurface = batchimSurface;
+            RieulSurface = rieulSurface;
+            MacroSuffix = macroSuffix;
+            FunctionParticle = functionParticle;
+            SupportsMacroShorthand = supportsMacroShorthand;
+            PassThrough = passThrough;
+            LiteralRewriteMode = literalRewriteMode;
+            _noBatchimInputs = (noBatchimInputs ?? [noBatchimSurface]).Distinct(StringComparer.Ordinal).ToArray();
+            _batchimInputs = (batchimInputs ?? [batchimSurface]).Distinct(StringComparer.Ordinal).ToArray();
+            AllAcceptedInputs = BuildAcceptedInputs().ToArray();
+            MacroMatchParticles = _noBatchimInputs.Concat(_batchimInputs).Distinct(StringComparer.Ordinal).ToArray();
+        }
+
+        public string Key { get; }
+
+        public string NoBatchimSurface { get; }
+
+        public string BatchimSurface { get; }
+
+        public string? RieulSurface { get; }
+
+        public string MacroSuffix { get; }
+
+        public string FunctionParticle { get; }
+
+        public bool SupportsMacroShorthand { get; }
+
+        public bool PassThrough { get; }
+
+        public LiteralRewriteMode LiteralRewriteMode { get; }
+
+        public IReadOnlyList<string> AllAcceptedInputs { get; }
+
+        public IReadOnlyList<string> MacroMatchParticles { get; }
+
+        public string GetLiteralSurface(TokenBatchimKind batchimKind)
+        {
+            return batchimKind switch
+            {
+                TokenBatchimKind.None => NoBatchimSurface,
+                TokenBatchimKind.RieulBatchim when !string.IsNullOrEmpty(RieulSurface) => RieulSurface!,
+                _ => BatchimSurface,
+            };
+        }
+
+        public bool ShouldRewriteLiteral(string token, string particleText)
+        {
+            var isComposite = particleText.IndexOfAny(['/', '(', ')']) >= 0;
+            var isLongBatchimForm = _batchimInputs.Any(input =>
+                input.Length > NoBatchimSurface.Length
+                && string.Equals(input, particleText, StringComparison.Ordinal));
+
+            if (token.Length == 1 && !isComposite && particleText.Length == 1)
+            {
+                return false;
+            }
+
+            return LiteralRewriteMode switch
+            {
+                LiteralRewriteMode.SafeDirect => true,
+                LiteralRewriteMode.LongOrCompositeOnly => isComposite || isLongBatchimForm,
+                _ => false,
+            };
+        }
+
+        private IEnumerable<string> BuildAcceptedInputs()
+        {
+            foreach (var value in _noBatchimInputs.Concat(_batchimInputs).Distinct(StringComparer.Ordinal))
+            {
+                yield return value;
+            }
+
+            if (PassThrough)
+            {
+                yield break;
+            }
+
+            foreach (var batchimInput in _batchimInputs)
+            {
+                foreach (var noBatchimInput in _noBatchimInputs)
+                {
+                    if (string.Equals(batchimInput, noBatchimInput, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    yield return $"{batchimInput}/{noBatchimInput}";
+                    yield return $"{noBatchimInput}/{batchimInput}";
+                    yield return $"{batchimInput}({noBatchimInput})";
+                    yield return $"{noBatchimInput}({batchimInput})";
+                    yield return $"({batchimInput}){noBatchimInput}";
+                    yield return $"({noBatchimInput}){batchimInput}";
+                }
+            }
+        }
+    }
+
+    private enum LiteralRewriteMode
+    {
+        SafeDirect,
+        LongOrCompositeOnly,
+    }
 }
 
 public readonly record struct JosaRewriteTextResult(

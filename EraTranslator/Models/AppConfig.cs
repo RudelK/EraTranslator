@@ -38,6 +38,8 @@ public sealed class AppConfig
 
     public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 
+    public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％";
+
     public string PapagoClientId { get; init; } = string.Empty;
 
     public string PapagoClientSecret { get; init; } = string.Empty;

@@ -62,6 +62,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _excludeNonSourceText;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
+    private string _protectedFullWidthCharacters = PlaceholderProtector.DefaultFullWidthSpecialCharacters;
     private string _papagoClientId = string.Empty;
     private string _papagoClientSecret = string.Empty;
     private string _ezTransInstallationPath = string.Empty;
@@ -109,7 +110,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
         SearchFieldFilters = ["전체", "파일", "원문", "번역문", "참조 상태", "함수/표현식"];
-        FileTypeFilters = ["전체", "ERB", "CSV"];
+        FileTypeFilters = ["전체", "ERB", "ERH", "CSV"];
         StatusFilters = ["전체", "번역 대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
         SaveModeOptions = [SaveMode.ExportCopy, SaveMode.InPlaceWithBackup];
         ItemsView = CollectionViewSource.GetDefaultView(Items);
@@ -362,6 +363,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
+    public string ProtectedFullWidthCharacters
+    {
+        get => _protectedFullWidthCharacters;
+        set
+        {
+            if (SetProperty(ref _protectedFullWidthCharacters, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
     public string PapagoClientId
     {
         get => _papagoClientId;
@@ -531,7 +544,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             }
 
             if (selectedDocument is not null
-                && string.Equals(selectedDocument.FileType, "ERB", StringComparison.OrdinalIgnoreCase)
+                && DocumentFileTypes.IsErbLike(selectedDocument.FileType)
                 && selectedDocument.JosaAnalysis.PatternCount > 0)
             {
                 lines.Add($"조사 문법 유형: {selectedDocument.JosaAnalysis.SyntaxType}");
@@ -723,21 +736,19 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
-    public async Task ScanAsync()
+    public async Task<bool> ScanAsync()
     {
         if (!Directory.Exists(GameDirectory))
         {
             StatusText = "유효한 게임 디렉토리를 선택하세요.";
-            return;
+            return false;
         }
 
-        await RunBusyAsync(
+        return await RunBusyAsync(
             "ERB/CSV 파일을 스캔 중입니다...",
             async cancellationToken =>
             {
                 var projectDataDirectory = GetProjectDataDirectory();
-                var previousSession = _projectStatePersistenceService.LoadScanSession(projectDataDirectory);
-                var previousProgress = _projectStatePersistenceService.LoadTranslationProgress(projectDataDirectory);
                 ProgressValue = 0.1;
                 CurrentOperationDetail = "스캔 준비 중";
                 var scanProgress = new Progress<(double value, string detail)>(tuple =>
@@ -745,23 +756,36 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                     ProgressValue = tuple.value;
                     CurrentOperationDetail = tuple.detail;
                 });
-                var session = await Task.Run(() => _fileScanner.Scan(GameDirectory, scanProgress, cancellationToken), cancellationToken);
-                var restoreResult = ApplySession(session, restoreProgress: false, previousSession, previousProgress);
-                _projectStatePersistenceService.SaveScanSession(session, projectDataDirectory);
+
+                var scanResult = await Task.Run(() =>
+                {
+                    var previousSession = _projectStatePersistenceService.LoadScanSession(projectDataDirectory);
+                    var previousProgress = _projectStatePersistenceService.LoadTranslationProgress(projectDataDirectory);
+                    var session = _fileScanner.Scan(GameDirectory, scanProgress, cancellationToken);
+                    return new ScanExecutionResult(session, previousSession, previousProgress);
+                }, cancellationToken);
+
+                ProgressValue = Math.Max(ProgressValue, 0.94);
+                CurrentOperationDetail = "결과 적용 중";
+                var restoreResult = ApplySession(scanResult.Session, restoreProgress: false, scanResult.PreviousSession, scanResult.PreviousProgress);
+
+                ProgressValue = Math.Max(ProgressValue, 0.97);
+                CurrentOperationDetail = "캐시 저장 중";
+                await Task.Run(() => _projectStatePersistenceService.SaveScanSession(scanResult.Session, projectDataDirectory), cancellationToken);
                 SaveTranslationProgressSnapshot("ScanAsync completed");
 
                 SummaryText =
-                    $"문서 {session.Metrics.GetValueOrDefault("Documents")}개, " +
-                    $"항목 {session.Metrics.GetValueOrDefault("Items")}개, " +
-                    $"ERB {session.Metrics.GetValueOrDefault("ErbItems")}개, " +
-                    $"CSV {session.Metrics.GetValueOrDefault("CsvItems")}개, " +
-                    $"경고 {session.Metrics.GetValueOrDefault("Warnings")}건, " +
-                    $"조사 패턴 {session.Metrics.GetValueOrDefault("JosaPatterns")}건";
+                    $"문서 {scanResult.Session.Metrics.GetValueOrDefault("Documents")}개, " +
+                    $"항목 {scanResult.Session.Metrics.GetValueOrDefault("Items")}개, " +
+                    $"ERB {scanResult.Session.Metrics.GetValueOrDefault("ErbItems")}개, " +
+                    $"CSV {scanResult.Session.Metrics.GetValueOrDefault("CsvItems")}개, " +
+                    $"경고 {scanResult.Session.Metrics.GetValueOrDefault("Warnings")}건, " +
+                    $"조사 패턴 {scanResult.Session.Metrics.GetValueOrDefault("JosaPatterns")}건";
 
                 StatusText = restoreResult.RestoredCount > 0
                     ? $"스캔이 완료되었습니다. 이전 번역 상태 {restoreResult.ExactRestoredCount}개 정확 복원, {restoreResult.HeuristicRestoredCount}개 업데이트 승계, {restoreResult.UnmatchedCount}개 신규/변경 항목입니다."
                     : "스캔이 완료되었습니다.";
-                CurrentOperationDetail = $"스캔 완료: {session.Metrics.GetValueOrDefault("Documents")}개 문서";
+                CurrentOperationDetail = $"스캔 완료: {scanResult.Session.Metrics.GetValueOrDefault("Documents")}개 문서";
                 ProgressValue = 1.0;
                 RefreshItemsView();
             });
@@ -794,24 +818,24 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             });
     }
 
-    public async Task TranslatePendingAsync()
+    public async Task<bool> TranslatePendingAsync()
     {
         if (_session is null)
         {
             StatusText = "먼저 텍스트를 추출하세요.";
-            return;
+            return false;
         }
 
         if (SelectedProviderOption is null)
         {
             StatusText = "번역 공급자를 선택하세요.";
-            return;
+            return false;
         }
 
         if (!SelectedProviderOption.IsAvailable)
         {
             StatusText = $"{SelectedProviderOption.DisplayName}는 아직 준비 중입니다.";
-            return;
+            return false;
         }
 
         var translationScope = GetCurrentTranslationScope();
@@ -820,10 +844,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             StatusText = "미번역 또는 번역 실패 항목이 없습니다.";
             CurrentOperationDetail = "자동 번역 대상 항목이 없습니다.";
-            return;
+            return false;
         }
 
-        await RunBusyAsync(
+        return await RunBusyAsync(
             "번역을 준비 중입니다...",
             async cancellationToken =>
             {
@@ -843,6 +867,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 {
                     await _translationCoordinator.TranslateAsync(
                         translationScope,
+                        Items.ToList(),
                         BuildSettings(),
                         _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
                         progress,
@@ -1254,12 +1279,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         var scope = GetCurrentTranslationScope()
-            .Where(item => string.Equals(item.FileType, "ERB", StringComparison.OrdinalIgnoreCase))
+            .Where(item => DocumentFileTypes.IsErbLike(item.FileType))
             .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText))
             .ToList();
         if (scope.Count == 0)
         {
-            StatusText = "현재 필터 범위에 조사처리할 ERB 번역문이 없습니다.";
+            StatusText = "현재 필터 범위에 조사처리할 ERB/ERH 번역문이 없습니다.";
             CurrentOperationDetail = "조사처리 대상 0개";
             return;
         }
@@ -1308,12 +1333,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         var scope = GetCurrentTranslationScope()
-            .Where(item => string.Equals(item.FileType, "ERB", StringComparison.OrdinalIgnoreCase))
+            .Where(item => DocumentFileTypes.IsErbLike(item.FileType))
             .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText))
             .ToList();
         if (scope.Count == 0)
         {
-            StatusText = "현재 필터 범위에 함수 교정할 ERB 번역문이 없습니다.";
+            StatusText = "현재 필터 범위에 함수 교정할 ERB/ERH 번역문이 없습니다.";
             CurrentOperationDetail = "함수 교정 대상 0개";
             return;
         }
@@ -1359,7 +1384,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public UserDictionaryViewModel CreateUserDictionaryViewModel()
     {
-        return new UserDictionaryViewModel(GetProjectDataDirectory(), _globalUserDictionary, _projectUserDictionary, _userDictionaryService);
+        return new UserDictionaryViewModel(
+            GetProjectDataDirectory(),
+            _globalUserDictionary,
+            _projectUserDictionary,
+            _userDictionaryService,
+            ProtectedFullWidthCharacters);
     }
 
     public void ApplyTranslationSettings(TranslationSettingsViewModel settingsViewModel)
@@ -1397,6 +1427,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         _globalUserDictionary = dictionaryViewModel.GetGlobalEntries().ToList();
         _projectUserDictionary = dictionaryViewModel.GetProjectEntries().ToList();
+        ProtectedFullWidthCharacters = dictionaryViewModel.ProtectedFullWidthCharacters;
         _userDictionaryService.SaveGlobal(_globalUserDictionary);
         _userDictionaryService.SaveProject(GetProjectDataDirectory(), _projectUserDictionary);
         RaisePropertyChanged(nameof(UserDictionarySummary));
@@ -1420,6 +1451,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             ExcludeNonSourceText = ExcludeNonSourceText,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
+            ProtectedFullWidthCharacters = ProtectedFullWidthCharacters,
             PapagoClientId = PapagoClientId,
             PapagoClientSecret = PapagoClientSecret,
             EzTransInstallationPath = EzTransInstallationPath,
@@ -1565,6 +1597,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 RetryPromptTemplate = config.RetryPromptTemplate;
             }
 
+            ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters;
             PapagoClientId = config.PapagoClientId;
             PapagoClientSecret = config.PapagoClientSecret;
             EzTransInstallationPath = config.EzTransInstallationPath;
@@ -1609,6 +1642,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             RefreshGridDuringTranslatedTextEdit = RefreshGridDuringTranslatedTextEdit,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
+            ProtectedFullWidthCharacters = ProtectedFullWidthCharacters,
             PapagoClientId = PapagoClientId,
             PapagoClientSecret = PapagoClientSecret,
             EzTransInstallationPath = EzTransInstallationPath,
@@ -1790,7 +1824,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 restoreResult = _translationProgressCarryoverService.Apply(previousSession, previousProgress, Items);
             }
 
-            new SymbolReferenceAnalyzer().Analyze(session);
+            if (restoreProgress)
+            {
+                new SymbolReferenceAnalyzer().Analyze(session);
+            }
+
             _sourceLanguageFilterService.Apply(Items, SourceLanguage, ExcludeNonSourceText);
         }
         finally
@@ -1802,6 +1840,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         RefreshItemsView();
         return restoreResult;
     }
+
+    private sealed record ScanExecutionResult(
+        ScanSession Session,
+        ScanSession? PreviousSession,
+        TranslationProgressState PreviousProgress);
 
     private void AttachItemStateHandlers(IEnumerable<ExtractedTextItem> items)
     {
@@ -1846,7 +1889,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
-    private async Task RunBusyAsync(
+    private async Task<bool> RunBusyAsync(
         string startingMessage,
         Func<CancellationToken, Task> action,
         string cancelStatusText = "작업이 취소되었습니다.",
@@ -1857,7 +1900,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         if (IsBusy)
         {
-            return;
+            return false;
         }
 
         using var cancellationTokenSource = new CancellationTokenSource();
@@ -1869,6 +1912,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         try
         {
             await action(cancellationTokenSource.Token);
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -1876,12 +1920,14 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             SaveTranslationProgressSnapshot(force: true, reason: "RunBusyAsync canceled");
             StatusText = cancelStatusText;
             CurrentOperationDetail = cancelDetailFactory?.Invoke() ?? cancelDetailText;
+            return false;
         }
         catch (Exception ex)
         {
             onFailed?.Invoke(ex);
             StatusText = $"작업 실패: {ex.Message}";
             CurrentOperationDetail = "오류가 발생해 작업을 중단했습니다.";
+            return false;
         }
         finally
         {
@@ -1966,7 +2012,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private static bool IsFunctionOrExpressionTranslation(ExtractedTextItem textItem, SourceFileDocument? document)
     {
-        if (!string.Equals(textItem.FileType, "ERB", StringComparison.OrdinalIgnoreCase))
+        if (!DocumentFileTypes.IsErbLike(textItem.FileType))
         {
             return false;
         }

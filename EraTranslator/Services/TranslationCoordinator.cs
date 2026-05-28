@@ -4,7 +4,6 @@ namespace EraTranslator.Services;
 
 public sealed class TranslationCoordinator : IDisposable
 {
-    private readonly PlaceholderProtector _protector = new();
     private readonly UserDictionaryApplier _dictionaryApplier = new();
     private readonly ITranslationProviderFactory _providerFactory;
 
@@ -21,17 +20,59 @@ public sealed class TranslationCoordinator : IDisposable
         Action? persistState,
         CancellationToken cancellationToken)
     {
-        var groupedByOriginal = items
+        await TranslateAsync(
+            items,
+            items,
+            settings,
+            dictionaryEntries,
+            progress,
+            persistState,
+            cancellationToken);
+    }
+
+    public async Task TranslateAsync(
+        IReadOnlyList<ExtractedTextItem> items,
+        IReadOnlyList<ExtractedTextItem> propagationItems,
+        ProviderSettings settings,
+        IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
+        IProgress<(double value, string status, string detail)> progress,
+        Action? persistState,
+        CancellationToken cancellationToken)
+    {
+        var activeItems = items.ToList();
+        var activeSegmentIds = activeItems
+            .Select(item => item.SegmentId)
+            .ToHashSet(StringComparer.Ordinal);
+        var allItems = activeItems
+            .Concat(propagationItems)
+            .GroupBy(item => item.SegmentId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+        var activeGroupedByOriginal = activeItems
             .GroupBy(item => item.OriginalText, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+        var propagationGroupedByOriginal = allItems
+            .GroupBy(item => item.OriginalText, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+        var targetOriginals = activeItems
+            .Where(item => item.NeedsTranslation)
+            .Select(item => item.OriginalText)
+            .ToHashSet(StringComparer.Ordinal);
+        var initiallyPendingSegmentIds = allItems
+            .Where(item => item.NeedsTranslation && targetOriginals.Contains(item.OriginalText))
+            .Select(item => item.SegmentId)
+            .ToHashSet(StringComparer.Ordinal);
+        var totalCount = initiallyPendingSegmentIds.Count;
+        var processedSegmentIds = new HashSet<string>(StringComparer.Ordinal);
 
-        var seededCount = ApplyExistingSharedTranslations(groupedByOriginal);
+        var seededItems = ApplyExistingSharedTranslations(propagationGroupedByOriginal, targetOriginals);
+        var seededCount = MarkProcessed(seededItems);
         if (seededCount > 0)
         {
             persistState?.Invoke();
         }
 
-        var representatives = items
+        var representatives = activeItems
             .Where(item => item.NeedsTranslation)
             .GroupBy(item => item.OriginalText, StringComparer.Ordinal)
             .Select(group => group.First())
@@ -39,10 +80,16 @@ public sealed class TranslationCoordinator : IDisposable
 
         if (representatives.Count == 0)
         {
+            if (totalCount > 0 && seededCount > 0)
+            {
+                progress.Report((1.0, $"번역 진행 중... {seededCount}/{totalCount}", string.Empty));
+            }
+
             return;
         }
 
         var provider = _providerFactory.Create(settings);
+        var protector = new PlaceholderProtector(settings.ProtectedFullWidthCharacters);
         var batchSize = Math.Clamp(
             settings.ProviderType == TranslationProviderType.EzTransXp
                 ? Math.Max(settings.BatchSize, settings.EzTransProcessCount)
@@ -51,8 +98,22 @@ public sealed class TranslationCoordinator : IDisposable
             100);
         var retryCount = Math.Clamp(settings.RetryCount, 0, 10);
         var queue = new Queue<ExtractedTextItem>(representatives);
-        var totalCount = representatives.Count;
-        var processedCount = 0;
+        var processedCount = seededCount;
+
+        int MarkProcessed(IEnumerable<ExtractedTextItem> affectedItems)
+        {
+            var count = 0;
+            foreach (var item in affectedItems)
+            {
+                if (initiallyPendingSegmentIds.Contains(item.SegmentId)
+                    && processedSegmentIds.Add(item.SegmentId))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
 
         while (queue.Count > 0)
         {
@@ -81,7 +142,7 @@ public sealed class TranslationCoordinator : IDisposable
 
             foreach (var item in batch)
             {
-                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkTranslating());
+                ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkTranslating());
             }
             persistState?.Invoke();
 
@@ -93,7 +154,7 @@ public sealed class TranslationCoordinator : IDisposable
                 var protectedBatch = currentBatch
                     .Select(item =>
                     {
-                        var protectedText = _protector.Protect(item.OriginalText);
+                        var protectedText = protector.Protect(item.OriginalText);
                         var dictionaryApplied = _dictionaryApplier.Apply(
                             protectedText.Text,
                             protectedText.Placeholders,
@@ -117,17 +178,17 @@ public sealed class TranslationCoordinator : IDisposable
                         {
                             if (attempt < retryCount)
                             {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
                                 nextRemaining[item.SegmentId] = item;
                             }
                             else
                             {
-                                ApplyFailureToGroup(
-                                    groupedByOriginal,
+                                processedCount += MarkProcessed(ApplyFailureToGroup(
+                                    activeGroupedByOriginal,
                                     item.OriginalText,
                                     "번역 실패",
                                     MapErrorKind(providerError.Kind, providerError.HttpStatusCode),
-                                    providerError.Message);
+                                    providerError.Message));
                             }
 
                             continue;
@@ -138,24 +199,24 @@ public sealed class TranslationCoordinator : IDisposable
                         {
                             if (attempt < retryCount)
                             {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
                                 nextRemaining[item.SegmentId] = item;
                             }
                             else
                             {
-                                ApplyFailureToGroup(
-                                    groupedByOriginal,
+                                processedCount += MarkProcessed(ApplyFailureToGroup(
+                                    activeGroupedByOriginal,
                                     item.OriginalText,
                                     "번역 실패",
                                     "응답 누락",
-                                    "번역 결과가 반환되지 않았습니다.");
+                                    "번역 결과가 반환되지 않았습니다."));
                             }
 
                             continue;
                         }
 
-                        var normalizedTranslated = _protector.NormalizeTokenCandidates(translated, protectedSegment.Placeholders);
-                        if (!_protector.HasAllTokens(normalizedTranslated, protectedSegment.Placeholders, out var tokenError))
+                        var normalizedTranslated = protector.NormalizeTokenCandidates(translated, protectedSegment.Placeholders);
+                        if (!protector.HasAllTokens(normalizedTranslated, protectedSegment.Placeholders, out var tokenError))
                         {
                             var validationLabel = HasPercentInsertionPlaceholder(protectedSegment.Placeholders)
                                 ? "변수 삽입 손상"
@@ -163,36 +224,41 @@ public sealed class TranslationCoordinator : IDisposable
 
                             if (attempt < retryCount)
                             {
-                                ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
+                                ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkRetrying());
                                 nextRemaining[item.SegmentId] = item;
                             }
                             else
                             {
                                 if (IsPlaceholderCountMismatch(tokenError))
                                 {
-                                    ApplyReviewToGroup(
-                                        groupedByOriginal,
+                                    processedCount += MarkProcessed(ApplyReviewToGroup(
+                                        activeGroupedByOriginal,
                                         item.OriginalText,
                                         normalizedTranslated,
                                         "토큰 검토 필요",
-                                        tokenError);
+                                        tokenError));
                                 }
                                 else
                                 {
-                                    ApplyReviewToGroup(
-                                        groupedByOriginal,
+                                    processedCount += MarkProcessed(ApplyReviewToGroup(
+                                        activeGroupedByOriginal,
                                         item.OriginalText,
                                         normalizedTranslated,
                                         validationLabel,
-                                        tokenError);
+                                        tokenError));
                                 }
                             }
 
                             continue;
                         }
 
-                        var restoredTranslation = _protector.Restore(normalizedTranslated, protectedSegment.Placeholders);
-                        ApplySuccessToGroup(groupedByOriginal, item.OriginalText, restoredTranslation);
+                        var restoredTranslation = protector.Restore(normalizedTranslated, protectedSegment.Placeholders);
+                        processedCount += MarkProcessed(ApplySuccessToGroup(
+                            activeGroupedByOriginal,
+                            propagationGroupedByOriginal,
+                            activeSegmentIds,
+                            item.OriginalText,
+                            restoredTranslation));
                     }
 
                     remaining = nextRemaining;
@@ -202,7 +268,7 @@ public sealed class TranslationCoordinator : IDisposable
                 {
                     foreach (var item in currentBatch)
                     {
-                        ApplyToGroup(groupedByOriginal, item.OriginalText, static groupItem =>
+                        ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem =>
                         {
                             if (groupItem.NeedsTranslation)
                             {
@@ -223,12 +289,12 @@ public sealed class TranslationCoordinator : IDisposable
 
                     foreach (var item in currentBatch)
                     {
-                        ApplyFailureToGroup(
-                            groupedByOriginal,
+                        processedCount += MarkProcessed(ApplyFailureToGroup(
+                            activeGroupedByOriginal,
                             item.OriginalText,
                             "번역 실패",
                             MapErrorKind(ex.Kind, ex.StatusCode is null ? null : (int)ex.StatusCode.Value),
-                            ex.Message);
+                            ex.Message));
                     }
                     persistState?.Invoke();
                 }
@@ -241,18 +307,17 @@ public sealed class TranslationCoordinator : IDisposable
 
                     foreach (var item in currentBatch)
                     {
-                        ApplyFailureToGroup(
-                            groupedByOriginal,
+                        processedCount += MarkProcessed(ApplyFailureToGroup(
+                            activeGroupedByOriginal,
                             item.OriginalText,
                             "번역 실패",
                             "배치 실패",
-                            ex.Message);
+                            ex.Message));
                     }
                     persistState?.Invoke();
                 }
             }
 
-            processedCount += batch.Count;
             progress.Report((processedCount / (double)totalCount, $"번역 진행 중... {processedCount}/{totalCount}", currentFiles));
             await Task.Yield();
         }
@@ -266,12 +331,19 @@ public sealed class TranslationCoordinator : IDisposable
         }
     }
 
-    private static int ApplyExistingSharedTranslations(IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal)
+    private static IReadOnlyList<ExtractedTextItem> ApplyExistingSharedTranslations(
+        IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
+        IReadOnlySet<string> targetOriginals)
     {
-        var appliedCount = 0;
+        var affectedItems = new List<ExtractedTextItem>();
 
-        foreach (var group in groupedByOriginal.Values)
+        foreach (var originalText in targetOriginals)
         {
+            if (!groupedByOriginal.TryGetValue(originalText, out var group))
+            {
+                continue;
+            }
+
             var existing = group.FirstOrDefault(item => item.IsTranslatedSuccessfully);
             if (existing is null || string.IsNullOrWhiteSpace(existing.TranslatedText))
             {
@@ -286,20 +358,22 @@ public sealed class TranslationCoordinator : IDisposable
                     string.Empty,
                     true,
                     existing.TranslatedText);
-                appliedCount++;
+                affectedItems.Add(item);
             }
         }
 
-        return appliedCount;
+        return affectedItems;
     }
 
-    private static void ApplySuccessToGroup(
-        IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
+    private static IReadOnlyList<ExtractedTextItem> ApplySuccessToGroup(
+        IReadOnlyDictionary<string, List<ExtractedTextItem>> activeGroupedByOriginal,
+        IReadOnlyDictionary<string, List<ExtractedTextItem>> propagationGroupedByOriginal,
+        IReadOnlySet<string> activeSegmentIds,
         string originalText,
         string translatedText)
     {
-        ApplyToGroup(
-            groupedByOriginal,
+        var affectedItems = ApplyToGroup(
+            activeGroupedByOriginal,
             originalText,
             item =>
             {
@@ -312,16 +386,36 @@ public sealed class TranslationCoordinator : IDisposable
                     true,
                     normalizedTranslation);
             });
+
+        if (!propagationGroupedByOriginal.TryGetValue(originalText, out var propagationGroup))
+        {
+            return affectedItems;
+        }
+
+        foreach (var item in propagationGroup.Where(item => !activeSegmentIds.Contains(item.SegmentId) && item.NeedsTranslation))
+        {
+            var normalizedTranslation = TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
+            var reviewReason = TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation);
+            item.ApplyTranslationState(
+                reviewReason is null ? "번역 완료" : "검수 필요",
+                "통과",
+                reviewReason ?? string.Empty,
+                true,
+                normalizedTranslation);
+            affectedItems.Add(item);
+        }
+
+        return affectedItems;
     }
 
-    private static void ApplyFailureToGroup(
+    private static IReadOnlyList<ExtractedTextItem> ApplyFailureToGroup(
         IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
         string originalText,
         string status,
         string validationStatus,
         string error)
     {
-        ApplyToGroup(
+        return ApplyToGroup(
             groupedByOriginal,
             originalText,
             item => item.ApplyTranslationState(
@@ -331,14 +425,14 @@ public sealed class TranslationCoordinator : IDisposable
                 false));
     }
 
-    private static void ApplyReviewToGroup(
+    private static IReadOnlyList<ExtractedTextItem> ApplyReviewToGroup(
         IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
         string originalText,
         string translatedText,
         string validationStatus,
         string reviewReason)
     {
-        ApplyToGroup(
+        return ApplyToGroup(
             groupedByOriginal,
             originalText,
             item => item.ApplyTranslationState(
@@ -349,20 +443,24 @@ public sealed class TranslationCoordinator : IDisposable
                 translatedText));
     }
 
-    private static void ApplyToGroup(
+    private static List<ExtractedTextItem> ApplyToGroup(
         IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
         string originalText,
         Action<ExtractedTextItem> apply)
     {
         if (!groupedByOriginal.TryGetValue(originalText, out var group))
         {
-            return;
+            return [];
         }
 
+        var affectedItems = new List<ExtractedTextItem>(group.Count);
         foreach (var item in group)
         {
             apply(item);
+            affectedItems.Add(item);
         }
+
+        return affectedItems;
     }
 
     private static string MapErrorKind(TranslationErrorKind kind, int? httpStatusCode)

@@ -46,23 +46,16 @@ public class SqliteProjectStateStore
             ExecuteNonQuery(connection, transaction, "DELETE FROM josa_package_info;");
 
             SaveJosaPackageInfo(connection, transaction, session.JosaPackageInfo);
+            using var commandSet = new ScanSessionSaveCommandSet(connection, transaction);
 
             foreach (var document in session.Documents.Values)
             {
-                SaveDocument(connection, transaction, document);
+                commandSet.SaveDocument(document);
             }
 
             foreach (var metric in session.Metrics)
             {
-                using var metricCommand = connection.CreateCommand();
-                metricCommand.Transaction = transaction;
-                metricCommand.CommandText = """
-                    INSERT INTO session_metrics (metric_key, metric_value)
-                    VALUES ($metric_key, $metric_value);
-                    """;
-                metricCommand.Parameters.AddWithValue("$metric_key", metric.Key);
-                metricCommand.Parameters.AddWithValue("$metric_value", metric.Value);
-                metricCommand.ExecuteNonQuery();
+                commandSet.SaveMetric(metric.Key, metric.Value);
             }
 
             transaction.Commit();
@@ -645,233 +638,6 @@ public class SqliteProjectStateStore
         }
     }
 
-    private static void SaveDocument(SqliteConnection connection, SqliteTransaction transaction, SourceFileDocument document)
-    {
-        using var documentCommand = connection.CreateCommand();
-        documentCommand.Transaction = transaction;
-        documentCommand.CommandText = """
-            INSERT INTO documents (
-                document_id,
-                full_path,
-                relative_path,
-                file_type,
-                original_text,
-                encoding_code_page,
-                encoding_name,
-                encoding_kind,
-                has_bom,
-                newline_sequence,
-                csv_kind,
-                josa_pattern_count,
-                josa_auto_convertible_count,
-                josa_generic_function_count,
-                josa_macro_pattern_count,
-                josa_legacy_shorthand_count,
-                josa_requires_erh,
-                josa_erh_linked,
-                josa_syntax_type,
-                josa_erh_link_status,
-                josa_package_compatibility_status)
-            VALUES (
-                $document_id,
-                $full_path,
-                $relative_path,
-                $file_type,
-                $original_text,
-                $encoding_code_page,
-                $encoding_name,
-                $encoding_kind,
-                $has_bom,
-                $newline_sequence,
-                $csv_kind,
-                $josa_pattern_count,
-                $josa_auto_convertible_count,
-                $josa_generic_function_count,
-                $josa_macro_pattern_count,
-                $josa_legacy_shorthand_count,
-                $josa_requires_erh,
-                $josa_erh_linked,
-                $josa_syntax_type,
-                $josa_erh_link_status,
-                $josa_package_compatibility_status);
-            """;
-        documentCommand.Parameters.AddWithValue("$document_id", document.DocumentId);
-        documentCommand.Parameters.AddWithValue("$full_path", document.FullPath);
-        documentCommand.Parameters.AddWithValue("$relative_path", document.RelativePath);
-        documentCommand.Parameters.AddWithValue("$file_type", document.FileType);
-        documentCommand.Parameters.AddWithValue("$original_text", document.OriginalText);
-        documentCommand.Parameters.AddWithValue("$encoding_code_page", document.EncodingInfo.Encoding.CodePage);
-        documentCommand.Parameters.AddWithValue("$encoding_name", document.EncodingInfo.Name);
-        documentCommand.Parameters.AddWithValue("$encoding_kind", (int)document.EncodingInfo.Kind);
-        documentCommand.Parameters.AddWithValue("$has_bom", document.EncodingInfo.HasBom ? 1 : 0);
-        documentCommand.Parameters.AddWithValue("$newline_sequence", document.NewLineSequence);
-        documentCommand.Parameters.AddWithValue("$csv_kind", (int)document.CsvKind);
-        documentCommand.Parameters.AddWithValue("$josa_pattern_count", document.JosaAnalysis.PatternCount);
-        documentCommand.Parameters.AddWithValue("$josa_auto_convertible_count", document.JosaAnalysis.AutoConvertibleCount);
-        documentCommand.Parameters.AddWithValue("$josa_generic_function_count", document.JosaAnalysis.GenericFunctionCount);
-        documentCommand.Parameters.AddWithValue("$josa_macro_pattern_count", document.JosaAnalysis.MacroPatternCount);
-        documentCommand.Parameters.AddWithValue("$josa_legacy_shorthand_count", document.JosaAnalysis.LegacyShorthandCount);
-        documentCommand.Parameters.AddWithValue("$josa_requires_erh", document.JosaAnalysis.RequiresErh ? 1 : 0);
-        documentCommand.Parameters.AddWithValue("$josa_erh_linked", document.JosaAnalysis.ErhLinked ? 1 : 0);
-        documentCommand.Parameters.AddWithValue("$josa_syntax_type", document.JosaAnalysis.SyntaxType);
-        documentCommand.Parameters.AddWithValue("$josa_erh_link_status", document.JosaAnalysis.ErhLinkStatus);
-        documentCommand.Parameters.AddWithValue("$josa_package_compatibility_status", document.JosaAnalysis.PackageCompatibilityStatus);
-        documentCommand.ExecuteNonQuery();
-
-        foreach (var segment in document.Segments)
-        {
-            using var segmentCommand = connection.CreateCommand();
-            segmentCommand.Transaction = transaction;
-            segmentCommand.CommandText = """
-                INSERT INTO segments (
-                    segment_id,
-                    document_id,
-                    segment_type,
-                    absolute_start,
-                    length,
-                    line_number,
-                    original_text,
-                    field_index,
-                    source_key,
-                    csv_field_role,
-                    preserve_whitespace,
-                    symbol_namespace,
-                    original_symbol_key,
-                    is_reference_bearing_key)
-                VALUES (
-                    $segment_id,
-                    $document_id,
-                    $segment_type,
-                    $absolute_start,
-                    $length,
-                    $line_number,
-                    $original_text,
-                    $field_index,
-                    $source_key,
-                    $csv_field_role,
-                    $preserve_whitespace,
-                    $symbol_namespace,
-                    $original_symbol_key,
-                    $is_reference_bearing_key);
-                """;
-            segmentCommand.Parameters.AddWithValue("$segment_id", segment.SegmentId);
-            segmentCommand.Parameters.AddWithValue("$document_id", segment.DocumentId);
-            segmentCommand.Parameters.AddWithValue("$segment_type", segment.SegmentType);
-            segmentCommand.Parameters.AddWithValue("$absolute_start", segment.AbsoluteStart);
-            segmentCommand.Parameters.AddWithValue("$length", segment.Length);
-            segmentCommand.Parameters.AddWithValue("$line_number", segment.LineNumber);
-            segmentCommand.Parameters.AddWithValue("$original_text", segment.OriginalText);
-            segmentCommand.Parameters.AddWithValue("$field_index", segment.FieldIndex is null ? DBNull.Value : segment.FieldIndex.Value);
-            segmentCommand.Parameters.AddWithValue("$source_key", segment.SourceKey is null ? DBNull.Value : segment.SourceKey);
-            segmentCommand.Parameters.AddWithValue("$csv_field_role", (int)segment.CsvFieldRole);
-            segmentCommand.Parameters.AddWithValue("$preserve_whitespace", segment.PreserveWhitespace ? 1 : 0);
-            segmentCommand.Parameters.AddWithValue("$symbol_namespace", segment.SymbolNamespace);
-            segmentCommand.Parameters.AddWithValue("$original_symbol_key", segment.OriginalSymbolKey);
-            segmentCommand.Parameters.AddWithValue("$is_reference_bearing_key", segment.IsReferenceBearingKey ? 1 : 0);
-            segmentCommand.ExecuteNonQuery();
-        }
-
-        foreach (var reference in document.SymbolReferences)
-        {
-            using var referenceCommand = connection.CreateCommand();
-            referenceCommand.Transaction = transaction;
-            referenceCommand.CommandText = """
-                INSERT INTO symbol_references (
-                    document_id,
-                    namespace,
-                    kind,
-                    resolution_kind,
-                    original_key,
-                    variable_name,
-                    expression_text,
-                    absolute_start,
-                    length,
-                    line_number)
-                VALUES (
-                    $document_id,
-                    $namespace,
-                    $kind,
-                    $resolution_kind,
-                    $original_key,
-                    $variable_name,
-                    $expression_text,
-                    $absolute_start,
-                    $length,
-                    $line_number);
-                SELECT last_insert_rowid();
-                """;
-            referenceCommand.Parameters.AddWithValue("$document_id", reference.DocumentId);
-            referenceCommand.Parameters.AddWithValue("$namespace", reference.Namespace);
-            referenceCommand.Parameters.AddWithValue("$kind", (int)reference.Kind);
-            referenceCommand.Parameters.AddWithValue("$resolution_kind", (int)reference.ResolutionKind);
-            referenceCommand.Parameters.AddWithValue("$original_key", reference.OriginalKey);
-            referenceCommand.Parameters.AddWithValue("$variable_name", reference.VariableName);
-            referenceCommand.Parameters.AddWithValue("$expression_text", reference.ExpressionText);
-            referenceCommand.Parameters.AddWithValue("$absolute_start", reference.AbsoluteStart);
-            referenceCommand.Parameters.AddWithValue("$length", reference.Length);
-            referenceCommand.Parameters.AddWithValue("$line_number", reference.LineNumber);
-            var referenceId = Convert.ToInt64(referenceCommand.ExecuteScalar());
-
-            foreach (var candidateKey in reference.CandidateKeys)
-            {
-                using var candidateCommand = connection.CreateCommand();
-                candidateCommand.Transaction = transaction;
-                candidateCommand.CommandText = """
-                    INSERT INTO symbol_reference_candidates (reference_id, candidate_key)
-                    VALUES ($reference_id, $candidate_key);
-                    """;
-                candidateCommand.Parameters.AddWithValue("$reference_id", referenceId);
-                candidateCommand.Parameters.AddWithValue("$candidate_key", candidateKey);
-                candidateCommand.ExecuteNonQuery();
-            }
-        }
-
-        foreach (var occurrence in document.VariableLiteralOccurrences)
-        {
-            using var occurrenceCommand = connection.CreateCommand();
-            occurrenceCommand.Transaction = transaction;
-            occurrenceCommand.CommandText = """
-                INSERT INTO variable_literal_occurrences (
-                    document_id,
-                    variable_name,
-                    literal_value,
-                    absolute_start,
-                    length,
-                    line_number,
-                    is_exact_value)
-                VALUES (
-                    $document_id,
-                    $variable_name,
-                    $literal_value,
-                    $absolute_start,
-                    $length,
-                    $line_number,
-                    $is_exact_value);
-                """;
-            occurrenceCommand.Parameters.AddWithValue("$document_id", occurrence.DocumentId);
-            occurrenceCommand.Parameters.AddWithValue("$variable_name", occurrence.VariableName);
-            occurrenceCommand.Parameters.AddWithValue("$literal_value", occurrence.LiteralValue);
-            occurrenceCommand.Parameters.AddWithValue("$absolute_start", occurrence.AbsoluteStart);
-            occurrenceCommand.Parameters.AddWithValue("$length", occurrence.Length);
-            occurrenceCommand.Parameters.AddWithValue("$line_number", occurrence.LineNumber);
-            occurrenceCommand.Parameters.AddWithValue("$is_exact_value", occurrence.IsExactValue ? 1 : 0);
-            occurrenceCommand.ExecuteNonQuery();
-        }
-
-        foreach (var warning in document.ScanWarnings)
-        {
-            using var warningCommand = connection.CreateCommand();
-            warningCommand.Transaction = transaction;
-            warningCommand.CommandText = """
-                INSERT INTO scan_warnings (document_id, warning_text)
-                VALUES ($document_id, $warning_text);
-                """;
-            warningCommand.Parameters.AddWithValue("$document_id", document.DocumentId);
-            warningCommand.Parameters.AddWithValue("$warning_text", warning);
-            warningCommand.ExecuteNonQuery();
-        }
-    }
-
     private static Dictionary<string, SourceFileDocument> LoadDocuments(SqliteConnection connection)
     {
         var documents = new Dictionary<string, SourceFileDocument>(StringComparer.Ordinal);
@@ -1303,6 +1069,273 @@ public class SqliteProjectStateStore
         catch
         {
             return new UTF8Encoding(true);
+        }
+    }
+
+    private sealed class ScanSessionSaveCommandSet : IDisposable
+    {
+        private readonly SqliteCommand _candidateCommand;
+        private readonly SqliteCommand _documentCommand;
+        private readonly SqliteCommand _metricCommand;
+        private readonly SqliteCommand _occurrenceCommand;
+        private readonly SqliteCommand _referenceCommand;
+        private readonly SqliteCommand _segmentCommand;
+        private readonly SqliteCommand _warningCommand;
+
+        public ScanSessionSaveCommandSet(SqliteConnection connection, SqliteTransaction transaction)
+        {
+            _documentCommand = CreateCommand(connection, transaction, """
+                INSERT INTO documents (
+                    document_id,
+                    full_path,
+                    relative_path,
+                    file_type,
+                    original_text,
+                    encoding_code_page,
+                    encoding_name,
+                    encoding_kind,
+                    has_bom,
+                    newline_sequence,
+                    csv_kind,
+                    josa_pattern_count,
+                    josa_auto_convertible_count,
+                    josa_generic_function_count,
+                    josa_macro_pattern_count,
+                    josa_legacy_shorthand_count,
+                    josa_requires_erh,
+                    josa_erh_linked,
+                    josa_syntax_type,
+                    josa_erh_link_status,
+                    josa_package_compatibility_status)
+                VALUES (
+                    $document_id,
+                    $full_path,
+                    $relative_path,
+                    $file_type,
+                    $original_text,
+                    $encoding_code_page,
+                    $encoding_name,
+                    $encoding_kind,
+                    $has_bom,
+                    $newline_sequence,
+                    $csv_kind,
+                    $josa_pattern_count,
+                    $josa_auto_convertible_count,
+                    $josa_generic_function_count,
+                    $josa_macro_pattern_count,
+                    $josa_legacy_shorthand_count,
+                    $josa_requires_erh,
+                    $josa_erh_linked,
+                    $josa_syntax_type,
+                    $josa_erh_link_status,
+                    $josa_package_compatibility_status);
+                """);
+            _segmentCommand = CreateCommand(connection, transaction, """
+                INSERT INTO segments (
+                    segment_id,
+                    document_id,
+                    segment_type,
+                    absolute_start,
+                    length,
+                    line_number,
+                    original_text,
+                    field_index,
+                    source_key,
+                    csv_field_role,
+                    preserve_whitespace,
+                    symbol_namespace,
+                    original_symbol_key,
+                    is_reference_bearing_key)
+                VALUES (
+                    $segment_id,
+                    $document_id,
+                    $segment_type,
+                    $absolute_start,
+                    $length,
+                    $line_number,
+                    $original_text,
+                    $field_index,
+                    $source_key,
+                    $csv_field_role,
+                    $preserve_whitespace,
+                    $symbol_namespace,
+                    $original_symbol_key,
+                    $is_reference_bearing_key);
+                """);
+            _referenceCommand = CreateCommand(connection, transaction, """
+                INSERT INTO symbol_references (
+                    document_id,
+                    namespace,
+                    kind,
+                    resolution_kind,
+                    original_key,
+                    variable_name,
+                    expression_text,
+                    absolute_start,
+                    length,
+                    line_number)
+                VALUES (
+                    $document_id,
+                    $namespace,
+                    $kind,
+                    $resolution_kind,
+                    $original_key,
+                    $variable_name,
+                    $expression_text,
+                    $absolute_start,
+                    $length,
+                    $line_number);
+                SELECT last_insert_rowid();
+                """);
+            _candidateCommand = CreateCommand(connection, transaction, """
+                INSERT INTO symbol_reference_candidates (reference_id, candidate_key)
+                VALUES ($reference_id, $candidate_key);
+                """);
+            _occurrenceCommand = CreateCommand(connection, transaction, """
+                INSERT INTO variable_literal_occurrences (
+                    document_id,
+                    variable_name,
+                    literal_value,
+                    absolute_start,
+                    length,
+                    line_number,
+                    is_exact_value)
+                VALUES (
+                    $document_id,
+                    $variable_name,
+                    $literal_value,
+                    $absolute_start,
+                    $length,
+                    $line_number,
+                    $is_exact_value);
+                """);
+            _warningCommand = CreateCommand(connection, transaction, """
+                INSERT INTO scan_warnings (document_id, warning_text)
+                VALUES ($document_id, $warning_text);
+                """);
+            _metricCommand = CreateCommand(connection, transaction, """
+                INSERT INTO session_metrics (metric_key, metric_value)
+                VALUES ($metric_key, $metric_value);
+                """);
+        }
+
+        public void SaveDocument(SourceFileDocument document)
+        {
+            _documentCommand.Parameters.Clear();
+            _documentCommand.Parameters.AddWithValue("$document_id", document.DocumentId);
+            _documentCommand.Parameters.AddWithValue("$full_path", document.FullPath);
+            _documentCommand.Parameters.AddWithValue("$relative_path", document.RelativePath);
+            _documentCommand.Parameters.AddWithValue("$file_type", document.FileType);
+            _documentCommand.Parameters.AddWithValue("$original_text", document.OriginalText);
+            _documentCommand.Parameters.AddWithValue("$encoding_code_page", document.EncodingInfo.Encoding.CodePage);
+            _documentCommand.Parameters.AddWithValue("$encoding_name", document.EncodingInfo.Name);
+            _documentCommand.Parameters.AddWithValue("$encoding_kind", (int)document.EncodingInfo.Kind);
+            _documentCommand.Parameters.AddWithValue("$has_bom", document.EncodingInfo.HasBom ? 1 : 0);
+            _documentCommand.Parameters.AddWithValue("$newline_sequence", document.NewLineSequence);
+            _documentCommand.Parameters.AddWithValue("$csv_kind", (int)document.CsvKind);
+            _documentCommand.Parameters.AddWithValue("$josa_pattern_count", document.JosaAnalysis.PatternCount);
+            _documentCommand.Parameters.AddWithValue("$josa_auto_convertible_count", document.JosaAnalysis.AutoConvertibleCount);
+            _documentCommand.Parameters.AddWithValue("$josa_generic_function_count", document.JosaAnalysis.GenericFunctionCount);
+            _documentCommand.Parameters.AddWithValue("$josa_macro_pattern_count", document.JosaAnalysis.MacroPatternCount);
+            _documentCommand.Parameters.AddWithValue("$josa_legacy_shorthand_count", document.JosaAnalysis.LegacyShorthandCount);
+            _documentCommand.Parameters.AddWithValue("$josa_requires_erh", document.JosaAnalysis.RequiresErh ? 1 : 0);
+            _documentCommand.Parameters.AddWithValue("$josa_erh_linked", document.JosaAnalysis.ErhLinked ? 1 : 0);
+            _documentCommand.Parameters.AddWithValue("$josa_syntax_type", document.JosaAnalysis.SyntaxType);
+            _documentCommand.Parameters.AddWithValue("$josa_erh_link_status", document.JosaAnalysis.ErhLinkStatus);
+            _documentCommand.Parameters.AddWithValue("$josa_package_compatibility_status", document.JosaAnalysis.PackageCompatibilityStatus);
+            _documentCommand.ExecuteNonQuery();
+
+            foreach (var segment in document.Segments)
+            {
+                _segmentCommand.Parameters.Clear();
+                _segmentCommand.Parameters.AddWithValue("$segment_id", segment.SegmentId);
+                _segmentCommand.Parameters.AddWithValue("$document_id", segment.DocumentId);
+                _segmentCommand.Parameters.AddWithValue("$segment_type", segment.SegmentType);
+                _segmentCommand.Parameters.AddWithValue("$absolute_start", segment.AbsoluteStart);
+                _segmentCommand.Parameters.AddWithValue("$length", segment.Length);
+                _segmentCommand.Parameters.AddWithValue("$line_number", segment.LineNumber);
+                _segmentCommand.Parameters.AddWithValue("$original_text", segment.OriginalText);
+                _segmentCommand.Parameters.AddWithValue("$field_index", segment.FieldIndex is null ? DBNull.Value : segment.FieldIndex.Value);
+                _segmentCommand.Parameters.AddWithValue("$source_key", segment.SourceKey is null ? DBNull.Value : segment.SourceKey);
+                _segmentCommand.Parameters.AddWithValue("$csv_field_role", (int)segment.CsvFieldRole);
+                _segmentCommand.Parameters.AddWithValue("$preserve_whitespace", segment.PreserveWhitespace ? 1 : 0);
+                _segmentCommand.Parameters.AddWithValue("$symbol_namespace", segment.SymbolNamespace);
+                _segmentCommand.Parameters.AddWithValue("$original_symbol_key", segment.OriginalSymbolKey);
+                _segmentCommand.Parameters.AddWithValue("$is_reference_bearing_key", segment.IsReferenceBearingKey ? 1 : 0);
+                _segmentCommand.ExecuteNonQuery();
+            }
+
+            foreach (var reference in document.SymbolReferences)
+            {
+                _referenceCommand.Parameters.Clear();
+                _referenceCommand.Parameters.AddWithValue("$document_id", reference.DocumentId);
+                _referenceCommand.Parameters.AddWithValue("$namespace", reference.Namespace);
+                _referenceCommand.Parameters.AddWithValue("$kind", (int)reference.Kind);
+                _referenceCommand.Parameters.AddWithValue("$resolution_kind", (int)reference.ResolutionKind);
+                _referenceCommand.Parameters.AddWithValue("$original_key", reference.OriginalKey);
+                _referenceCommand.Parameters.AddWithValue("$variable_name", reference.VariableName);
+                _referenceCommand.Parameters.AddWithValue("$expression_text", reference.ExpressionText);
+                _referenceCommand.Parameters.AddWithValue("$absolute_start", reference.AbsoluteStart);
+                _referenceCommand.Parameters.AddWithValue("$length", reference.Length);
+                _referenceCommand.Parameters.AddWithValue("$line_number", reference.LineNumber);
+                var referenceId = Convert.ToInt64(_referenceCommand.ExecuteScalar());
+
+                foreach (var candidateKey in reference.CandidateKeys)
+                {
+                    _candidateCommand.Parameters.Clear();
+                    _candidateCommand.Parameters.AddWithValue("$reference_id", referenceId);
+                    _candidateCommand.Parameters.AddWithValue("$candidate_key", candidateKey);
+                    _candidateCommand.ExecuteNonQuery();
+                }
+            }
+
+            foreach (var occurrence in document.VariableLiteralOccurrences)
+            {
+                _occurrenceCommand.Parameters.Clear();
+                _occurrenceCommand.Parameters.AddWithValue("$document_id", occurrence.DocumentId);
+                _occurrenceCommand.Parameters.AddWithValue("$variable_name", occurrence.VariableName);
+                _occurrenceCommand.Parameters.AddWithValue("$literal_value", occurrence.LiteralValue);
+                _occurrenceCommand.Parameters.AddWithValue("$absolute_start", occurrence.AbsoluteStart);
+                _occurrenceCommand.Parameters.AddWithValue("$length", occurrence.Length);
+                _occurrenceCommand.Parameters.AddWithValue("$line_number", occurrence.LineNumber);
+                _occurrenceCommand.Parameters.AddWithValue("$is_exact_value", occurrence.IsExactValue ? 1 : 0);
+                _occurrenceCommand.ExecuteNonQuery();
+            }
+
+            foreach (var warning in document.ScanWarnings)
+            {
+                _warningCommand.Parameters.Clear();
+                _warningCommand.Parameters.AddWithValue("$document_id", document.DocumentId);
+                _warningCommand.Parameters.AddWithValue("$warning_text", warning);
+                _warningCommand.ExecuteNonQuery();
+            }
+        }
+
+        public void SaveMetric(string key, int value)
+        {
+            _metricCommand.Parameters.Clear();
+            _metricCommand.Parameters.AddWithValue("$metric_key", key);
+            _metricCommand.Parameters.AddWithValue("$metric_value", value);
+            _metricCommand.ExecuteNonQuery();
+        }
+
+        public void Dispose()
+        {
+            _documentCommand.Dispose();
+            _segmentCommand.Dispose();
+            _referenceCommand.Dispose();
+            _candidateCommand.Dispose();
+            _occurrenceCommand.Dispose();
+            _warningCommand.Dispose();
+            _metricCommand.Dispose();
+        }
+
+        private static SqliteCommand CreateCommand(SqliteConnection connection, SqliteTransaction transaction, string commandText)
+        {
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = commandText;
+            return command;
         }
     }
 

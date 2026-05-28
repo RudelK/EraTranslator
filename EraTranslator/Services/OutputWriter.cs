@@ -53,7 +53,7 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
-            var josaDocumentReplacements = document.FileType == "ERB"
+            var josaDocumentReplacements = DocumentFileTypes.IsErbLike(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
             if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
@@ -119,7 +119,7 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
-            var josaDocumentReplacements = document.FileType == "ERB"
+            var josaDocumentReplacements = DocumentFileTypes.IsErbLike(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
             if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
@@ -292,7 +292,7 @@ public sealed class OutputWriter
             renameMap,
             rewritePlan.StringLookupRenameMap);
         var josaRewritten = _josaPatternAnalyzer.RewriteText(symbolRewritten, renameMap, packageInfo);
-        return string.Equals(item.FileType, "ERB", StringComparison.OrdinalIgnoreCase)
+        return DocumentFileTypes.IsErbLike(item.FileType)
             ? TranslationQualityRules.NormalizeErbFunctionArgumentSeparators(josaRewritten.Text)
             : josaRewritten.Text;
     }

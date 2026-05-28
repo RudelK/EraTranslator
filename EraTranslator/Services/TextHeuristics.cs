@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace EraTranslator.Services;
@@ -48,7 +49,7 @@ public static partial class TextHeuristics
     public static bool LooksLikeCodeOnly(string value)
     {
         var sanitized = PlaceholderOnlyPattern().Replace(value, string.Empty);
-        sanitized = Regex.Replace(sanitized, @"[\s\[\]\(\)\-+*/\\,.;:!?<>='""@#&|]", string.Empty);
+        sanitized = RemoveNonLexicalCharacters(sanitized);
         return string.IsNullOrWhiteSpace(sanitized);
     }
 
@@ -67,7 +68,7 @@ public static partial class TextHeuristics
 
         sanitized = PlaceholderOnlyPattern().Replace(sanitized, string.Empty);
         sanitized = Regex.Replace(sanitized, @"[A-Za-z_][A-Za-z0-9_]*", string.Empty, RegexOptions.CultureInvariant);
-        sanitized = Regex.Replace(sanitized, @"[\s\[\]\(\)\{\}\-+*/\\,.;:!?<>='""@#&|%×÷0-9０-９]", string.Empty);
+        sanitized = RemoveNonLexicalCharacters(sanitized);
         return string.IsNullOrWhiteSpace(sanitized);
     }
 
@@ -111,6 +112,25 @@ public static partial class TextHeuristics
             or >= 0x4E00 and <= 0x9FFF
             or >= 0xFF01 and <= 0xFF60
             or >= 0xFFE0 and <= 0xFFE6;
+    }
+
+    private static string RemoveNonLexicalCharacters(string value)
+    {
+        return new string(value.Where(static ch => !IsNonLexicalCharacter(ch)).ToArray());
+    }
+
+    private static bool IsNonLexicalCharacter(char ch)
+    {
+        if (char.IsWhiteSpace(ch) || char.IsDigit(ch) || char.IsPunctuation(ch))
+        {
+            return true;
+        }
+
+        var category = char.GetUnicodeCategory(ch);
+        return category is UnicodeCategory.MathSymbol
+            or UnicodeCategory.CurrencySymbol
+            or UnicodeCategory.ModifierSymbol
+            or UnicodeCategory.OtherSymbol;
     }
 
     [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", RegexOptions.Compiled)]

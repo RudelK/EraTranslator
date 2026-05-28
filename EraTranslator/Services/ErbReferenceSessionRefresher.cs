@@ -8,7 +8,7 @@ public static class ErbReferenceSessionRefresher
     {
         var extractor = new ErbReferenceExtractor();
         foreach (var document in session.Documents.Values.Where(document =>
-                     string.Equals(document.FileType, "ERB", StringComparison.OrdinalIgnoreCase)))
+                     DocumentFileTypes.IsErbLike(document.FileType)))
         {
             var extracted = extractor.Extract(document.DocumentId, document.OriginalText);
             document.SymbolReferences.Clear();

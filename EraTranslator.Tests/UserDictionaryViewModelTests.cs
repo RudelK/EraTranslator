@@ -90,4 +90,20 @@ public sealed class UserDictionaryViewModelTests : IDisposable
         Assert.Equal("魔界", restoredProject[0].Source);
         Assert.Equal("마계", restoredProject[0].Target);
     }
+
+    [Fact]
+    public void ProtectedFullWidthCharacters_RoundTripsThroughViewModel()
+    {
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(
+            Path.Combine(_rootPath, "Game"),
+            [],
+            [],
+            service,
+            "（）");
+
+        viewModel.ProtectedFullWidthCharacters = "『』";
+
+        Assert.Equal("『』", viewModel.ProtectedFullWidthCharacters);
+    }
 }

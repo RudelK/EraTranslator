@@ -17,8 +17,20 @@ public sealed partial class ErbExtractor
             var line = lines[lineIndex];
             var normalizedLine = line.TrimEnd('\r');
             var trimmed = normalizedLine.TrimStart();
-            if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
+            if (trimmed.StartsWith(';'))
             {
+                absoluteOffset += line.Length + 1;
+                continue;
+            }
+
+            if (trimmed.StartsWith('#'))
+            {
+                if (TryExtractDirectiveStringLine(normalizedLine))
+                {
+                    absoluteOffset += line.Length + 1;
+                    continue;
+                }
+
                 absoluteOffset += line.Length + 1;
                 continue;
             }
@@ -67,6 +79,13 @@ public sealed partial class ErbExtractor
                     continue;
                 }
 
+                if (ContainsScriptSyntaxToken(value)
+                    && !ShouldKeepWholeCodeMixedText(value)
+                    && TryAddCodeMixedTextSpans("quoted-string-fragment", value, match.Groups["content"].Index))
+                {
+                    continue;
+                }
+
                 AddSegment("quoted-string", match.Groups["content"].Index, value);
             }
 
@@ -85,6 +104,29 @@ public sealed partial class ErbExtractor
             }
 
             absoluteOffset += line.Length + 1;
+
+            bool TryExtractDirectiveStringLine(string sourceLine)
+            {
+                if (!DimDirectivePattern().IsMatch(sourceLine))
+                {
+                    return false;
+                }
+
+                var extracted = false;
+                foreach (Match match in QuotedStringPattern().Matches(sourceLine))
+                {
+                    var value = match.Groups["content"].Value;
+                    if (!TextHeuristics.ContainsTranslatableText(value))
+                    {
+                        continue;
+                    }
+
+                    AddSegment("directive-string", match.Groups["content"].Index, value);
+                    extracted = true;
+                }
+
+                return extracted;
+            }
 
             bool TryExtractDataLine(string sourceLine)
             {
@@ -111,6 +153,13 @@ public sealed partial class ErbExtractor
                     if (LooksLikeHtml(quotedValue))
                     {
                         ExtractHtmlSegments($"data-{command}-markup", quotedValue, tailOffset + match.Groups["content"].Index);
+                        continue;
+                    }
+
+                    if (ContainsScriptSyntaxToken(quotedValue)
+                        && !ShouldKeepWholeCodeMixedText(quotedValue)
+                        && TryAddCodeMixedTextSpans($"data-{command}-fragment", quotedValue, tailOffset + match.Groups["content"].Index))
+                    {
                         continue;
                     }
 
@@ -205,16 +254,36 @@ public sealed partial class ErbExtractor
                     return;
                 }
 
+                var absoluteStart = absoluteOffset + relativeStart;
+                if (segments.Any(segment =>
+                        segment.AbsoluteStart == absoluteStart
+                        && segment.Length == value.Length
+                        && string.Equals(segment.OriginalText, value, StringComparison.Ordinal)))
+                {
+                    return;
+                }
+
                 segments.Add(new TextSegment
                 {
                     SegmentId = $"{documentId}:{segmentIndex++}",
                     DocumentId = documentId,
                     SegmentType = type,
-                    AbsoluteStart = absoluteOffset + relativeStart,
+                    AbsoluteStart = absoluteStart,
                     Length = value.Length,
                     LineNumber = lineIndex + 1,
                     OriginalText = value,
                 });
+            }
+
+            bool TryAddCodeMixedTextSpans(string type, string value, int relativeStart)
+            {
+                var spans = ExtractCodeMixedTextSpans(value, relativeStart).ToList();
+                foreach (var span in spans)
+                {
+                    AddSegment(type, span.relativeStart, span.value);
+                }
+
+                return spans.Count > 0;
             }
 
             void ExtractPrintTailSegments(string tailValue, int lineOffset)
@@ -242,19 +311,38 @@ public sealed partial class ErbExtractor
                         var left = leftRaw.Trim();
                         var right = rightRaw.Trim();
 
-                        if (TextHeuristics.ContainsTranslatableText(left))
+                        if (ContainsScriptSyntaxToken(left)
+                            && !ShouldKeepWholeCodeMixedText(left)
+                            && TryAddCodeMixedTextSpans("inline-conditional-left-fragment", left, lineOffset + ternary.Groups["inner"].Index + questionIndex + 1 + leftRaw.IndexOf(left, StringComparison.Ordinal)))
+                        {
+                            // Code-mixed condition branches should share stable label translations.
+                        }
+                        else if (TextHeuristics.ContainsTranslatableText(left))
                         {
                             var relative = ternary.Groups["inner"].Index + questionIndex + 1 + leftRaw.IndexOf(left, StringComparison.Ordinal);
                             AddSegment("inline-conditional-left", lineOffset + relative, left);
                         }
 
-                        if (TextHeuristics.ContainsTranslatableText(right))
+                        if (ContainsScriptSyntaxToken(right)
+                            && !ShouldKeepWholeCodeMixedText(right)
+                            && TryAddCodeMixedTextSpans("inline-conditional-right-fragment", right, lineOffset + ternary.Groups["inner"].Index + hashIndex + 1 + rightRaw.IndexOf(right, StringComparison.Ordinal)))
+                        {
+                            // Code-mixed condition branches should share stable label translations.
+                        }
+                        else if (TextHeuristics.ContainsTranslatableText(right))
                         {
                             var relative = ternary.Groups["inner"].Index + hashIndex + 1 + rightRaw.IndexOf(right, StringComparison.Ordinal);
                             AddSegment("inline-conditional-right", lineOffset + relative, right);
                         }
                     }
 
+                    return;
+                }
+
+                if (ContainsScriptSyntaxToken(tailValue)
+                    && !ShouldKeepWholeCodeMixedText(tailValue)
+                    && TryAddCodeMixedTextSpans("print-tail-fragment", tailValue, lineOffset))
+                {
                     return;
                 }
 
@@ -386,7 +474,194 @@ public sealed partial class ErbExtractor
             {
                 CollectAssignmentFragments(part.text, trimmedStart + part.offset, fragments);
             }
+
+            return;
         }
+
+        if (ContainsScriptSyntaxToken(trimmed) && ShouldKeepWholeCodeMixedText(trimmed))
+        {
+            fragments.Add((trimmedStart, trimmed));
+            return;
+        }
+
+        foreach (var span in ExtractCodeMixedTextSpans(trimmed, trimmedStart))
+        {
+            fragments.Add(span);
+        }
+    }
+
+    private static IEnumerable<(int relativeStart, string value)> ExtractCodeMixedTextSpans(string value, int relativeStart)
+    {
+        var protectedRanges = CollectScriptSyntaxRanges(value);
+        var spans = new List<(int relativeStart, string value)>();
+        var index = 0;
+
+        while (index < value.Length)
+        {
+            if (IsInsideRange(index, protectedRanges) || !IsTextSpanCharacter(value[index]))
+            {
+                index++;
+                continue;
+            }
+
+            var start = index;
+            while (index < value.Length && !IsInsideRange(index, protectedRanges) && IsTextSpanCharacter(value[index]))
+            {
+                index++;
+            }
+
+            AddMeaningfulSpan(value, relativeStart, start, index, spans);
+        }
+
+        return spans
+            .Distinct()
+            .ToList();
+    }
+
+    private static void AddMeaningfulSpan(
+        string source,
+        int relativeStart,
+        int start,
+        int end,
+        ICollection<(int relativeStart, string value)> spans)
+    {
+        var spanStart = start;
+        var spanEnd = end;
+        while (spanStart < spanEnd && IsTrimmableSpanEdge(source[spanStart]))
+        {
+            spanStart++;
+        }
+
+        while (spanEnd > spanStart && IsTrimmableSpanEdge(source[spanEnd - 1]))
+        {
+            spanEnd--;
+        }
+
+        if (spanEnd <= spanStart)
+        {
+            return;
+        }
+
+        if (CanTrimLeadingJapaneseParticle(source, spanStart, spanEnd))
+        {
+            spanStart++;
+        }
+
+        var span = source[spanStart..spanEnd];
+        if (!IsMeaningfulTextSpan(span))
+        {
+            return;
+        }
+
+        spans.Add((relativeStart + spanStart, span));
+    }
+
+    private static bool ContainsScriptSyntaxToken(string value)
+    {
+        return ScriptSyntaxTokenPattern().IsMatch(value);
+    }
+
+    private static bool ShouldKeepWholeCodeMixedText(string value)
+    {
+        if (!ContainsScriptSyntaxToken(value))
+        {
+            return false;
+        }
+
+        var visibleText = ScriptSyntaxTokenPattern().Replace(value, string.Empty).Trim();
+        if (!TextHeuristics.ContainsTranslatableText(visibleText))
+        {
+            return false;
+        }
+
+        return CodeMixedSentenceMarkerPattern().IsMatch(visibleText)
+            || CodeMixedPredicateEndingPattern().IsMatch(visibleText);
+    }
+
+    private static List<(int start, int end)> CollectScriptSyntaxRanges(string value)
+    {
+        var ranges = new List<(int start, int end)>();
+        foreach (Match match in ScriptSyntaxTokenPattern().Matches(value))
+        {
+            if (match.Length == 0)
+            {
+                continue;
+            }
+
+            var range = (match.Index, match.Index + match.Length);
+            if (ranges.Any(existing => RangesOverlap(existing.start, existing.end - existing.start, range.Item1, range.Item2 - range.Item1)))
+            {
+                continue;
+            }
+
+            ranges.Add(range);
+        }
+
+        return ranges
+            .OrderBy(static range => range.start)
+            .ToList();
+    }
+
+    private static bool IsInsideRange(int index, IReadOnlyList<(int start, int end)> ranges)
+    {
+        return ranges.Any(range => index >= range.start && index < range.end);
+    }
+
+    private static bool IsTextSpanCharacter(char ch)
+    {
+        return IsJapaneseTextCharacter(ch)
+            || ch is >= 'A' and <= 'Z'
+            || ch is >= 'a' and <= 'z'
+            || ch is >= '0' and <= '9'
+            || ch is >= '\uAC00' and <= '\uD7A3'
+            || ch is 'ー' or '々' or '〆' or 'ヶ';
+    }
+
+    private static bool IsJapaneseTextCharacter(char ch)
+    {
+        return ch is >= '\u3040' and <= '\u30FF'
+            or >= '\u31F0' and <= '\u31FF'
+            or >= '\u4E00' and <= '\u9FFF';
+    }
+
+    private static bool IsMeaningfulTextSpan(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed.Length > 0
+            && trimmed.Any(IsJapaneseTextCharacter)
+            && !IsStandaloneJapaneseParticle(trimmed)
+            && !TextHeuristics.LooksLikeCodeOnly(trimmed)
+            && !TextHeuristics.LooksLikeErbSymbolExpression(trimmed)
+            && !TextHeuristics.IsNumericLike(trimmed);
+    }
+
+    private static bool IsTrimmableSpanEdge(char ch)
+    {
+        return char.IsWhiteSpace(ch) || char.IsPunctuation(ch) || char.IsSymbol(ch);
+    }
+
+    private static bool CanTrimLeadingJapaneseParticle(string source, int start, int end)
+    {
+        return end - start > 1
+            && IsStandaloneJapaneseParticle(source[start].ToString())
+            && !IsHiragana(source[start + 1]);
+    }
+
+    private static bool IsStandaloneJapaneseParticle(string value)
+    {
+        return value is "の" or "は" or "を" or "が" or "に" or "へ" or "と" or "で" or "も" or "や" or "から" or "まで";
+    }
+
+    private static bool IsHiragana(char ch)
+    {
+        return ch is >= '\u3040' and <= '\u309F';
+    }
+
+    private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)
+    {
+        var leftEnd = leftStart + leftLength;
+        var rightEnd = rightStart + rightLength;
+        return leftStart < rightEnd && rightStart < leftEnd;
     }
 
     private static bool TryUnwrapOuterParentheses(string value, out string inner, out int innerOffset)
@@ -686,4 +961,16 @@ public sealed partial class ErbExtractor
 
     [GeneratedRegex(@"[(){}\[\]=<>!&|+\-*/%:,\\@#?]", RegexOptions.Compiled)]
     private static partial Regex BareAssignmentCodeSyntaxPattern();
+
+    [GeneratedRegex(@"^\s*#DIMS?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex DimDirectivePattern();
+
+    [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>|(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|BASE|ABL|PALAM|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|SAVESTR|LOCAL|LOCALS|ARG|ARGS|RESULT|RESULTS):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)|(?<![\p{L}\p{N}_])[A-Za-z_][A-Za-z0-9_]*\s*\([^()\r\n]*\)|(?<![\p{L}\p{N}_])[A-Za-z_][A-Za-z0-9_]*(?::[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)+)", RegexOptions.Compiled)]
+    private static partial Regex ScriptSyntaxTokenPattern();
+
+    [GeneratedRegex(@"[「」『』（）()、。！？!?…‥]", RegexOptions.Compiled)]
+    private static partial Regex CodeMixedSentenceMarkerPattern();
+
+    [GeneratedRegex(@"[\u3040-\u309F].*(?:した|している|してる|だった|です|ます|ない|いる|ある|った|いた|えた|れた|た)$", RegexOptions.Compiled)]
+    private static partial Regex CodeMixedPredicateEndingPattern();
 }

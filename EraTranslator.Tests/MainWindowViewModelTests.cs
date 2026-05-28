@@ -41,6 +41,17 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_ExposesErhInFileTypeFilters()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            restoreLastSessionOnStartup: false);
+
+        Assert.Contains("ERH", viewModel.FileTypeFilters);
+    }
+
+    [Fact]
     public void ChangingProjectDataDirectory_ClearsStaleSessionWhenTargetHasNoSavedState()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");
@@ -99,6 +110,45 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal("번역 완료", item.Status);
         Assert.Equal("통과", item.ValidationStatus);
         Assert.True(item.CanSave);
+    }
+
+    [Fact]
+    public async Task TranslatePendingAsync_PropagatesFilteredTranslationToSameOriginalOutsideFilter()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithSameOriginalInDifferentFiles(gameDirectory), gameDirectory);
+        var provider = new RecordingProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["ERB/Visible.ERB:0"] = "안녕하세요";
+            return result;
+        });
+
+        var viewModel = new MainWindowViewModel(
+            translationCoordinator: new TranslationCoordinator(new FakeTranslationProviderFactory(provider)),
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        viewModel.FilterText = "Visible.ERB";
+
+        var completed = await viewModel.TranslatePendingAsync();
+
+        var visible = viewModel.Items.Single(item => item.SegmentId == "ERB/Visible.ERB:0");
+        var hidden = viewModel.Items.Single(item => item.SegmentId == "ERB/Hidden.ERB:0");
+        Assert.True(completed);
+        Assert.Single(provider.RequestHistory);
+        Assert.Equal(["ERB/Visible.ERB:0"], provider.RequestHistory[0]);
+        Assert.Equal("안녕하세요", visible.TranslatedText);
+        Assert.Equal("안녕하세요", hidden.TranslatedText);
+        Assert.Equal("번역 완료", hidden.Status);
     }
 
     [Fact]
@@ -187,6 +237,50 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal("언어 제외", restoredItem.ValidationStatus);
         Assert.True(restoredItem.CanSave);
         Assert.False(restoredItem.NeedsTranslation);
+    }
+
+    [Fact]
+    public void RestoreLastSession_RecomputesReferenceAnalysisAfterApplyingPersistedProgress()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+        var sqliteStore = new SqliteProjectStateStore();
+        sqliteStore.SaveScanSession(BuildReferenceSession(gameDirectory), gameDirectory);
+        sqliteStore.SaveTranslationProgressSnapshot(
+            gameDirectory,
+            new TranslationProgressState
+            {
+                Items =
+                [
+                    new TranslationProgressItemState
+                    {
+                        SegmentId = "ERB/Test.ERB:0",
+                        Status = "번역 완료",
+                        ValidationStatus = "통과",
+                        TranslationError = string.Empty,
+                        TranslatedText = "見た目年齢",
+                        CanSave = true,
+                        ReferenceOriginalSymbolKey = "外見年齢",
+                        ReferenceImpactCount = 99,
+                        RequiresReferenceRewrite = false,
+                        ReferenceResolutionStatus = "이전 참조 상태",
+                    },
+                ],
+            });
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            sqliteProjectStateStore: sqliteStore,
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var restoredItem = Assert.Single(viewModel.Items);
+
+        Assert.Equal(1, restoredItem.ReferenceImpactCount);
+        Assert.True(restoredItem.RequiresReferenceRewrite);
+        Assert.Equal("직접 참조만", restoredItem.ReferenceResolutionStatus);
     }
 
     [Fact]
@@ -621,6 +715,42 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         Assert.Equal("%조사처리(CALLNAME:娼婦キャラ番号,\"는\")% 시선을 피했다.", first.TranslatedText);
         Assert.Equal("그냥 문장", second.TranslatedText);
+        Assert.Equal(1, recordingStore.SnapshotSaveCount);
+        Assert.Equal(0, recordingStore.UpsertItemsCallCount);
+        Assert.Equal(0, recordingStore.DeleteItemsCallCount);
+    }
+
+    [Fact]
+    public void ApplyJosaRewriteToCurrentScope_RewritesGeneralKoreanSentences()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithDuplicateOriginals(gameDirectory), gameDirectory);
+        var recordingStore = new RecordingSqliteProjectStateStore();
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            sqliteProjectStateStore: recordingStore,
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var first = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:0");
+        var second = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:1");
+        first.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "사과은 길으로 간다.");
+        second.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "영문ABC은 유지");
+        viewModel.FilterText = "사과은";
+        recordingStore.ResetCounts();
+
+        viewModel.ApplyJosaRewriteToCurrentScope();
+
+        Assert.Equal("사과는 길로 간다.", first.TranslatedText);
+        Assert.Equal("영문ABC은 유지", second.TranslatedText);
         Assert.Equal(1, recordingStore.SnapshotSaveCount);
         Assert.Equal(0, recordingStore.UpsertItemsCallCount);
         Assert.Equal(0, recordingStore.DeleteItemsCallCount);
@@ -1201,6 +1331,150 @@ public sealed class MainWindowViewModelTests : IDisposable
         return session;
     }
 
+    private static ScanSession BuildSessionWithSameOriginalInDifferentFiles(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+
+        AddDocument("ERB/Visible.ERB", Path.Combine("ERB", "Visible.ERB"));
+        AddDocument("ERB/Hidden.ERB", Path.Combine("ERB", "Hidden.ERB"));
+        session.Metrics["Documents"] = 2;
+        session.Metrics["Items"] = 2;
+        session.Metrics["ErbItems"] = 2;
+        session.Metrics["CsvItems"] = 0;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+
+        void AddDocument(string documentId, string relativePath)
+        {
+            var document = new SourceFileDocument
+            {
+                DocumentId = documentId,
+                FullPath = Path.Combine(gameDirectory, relativePath),
+                RelativePath = relativePath,
+                FileType = "ERB",
+                OriginalText = "PRINTFORMW \"こんにちは\"",
+                EncodingInfo = new DetectedEncodingInfo
+                {
+                    Encoding = new UTF8Encoding(true),
+                    Name = "UTF-8 BOM",
+                    Kind = DetectedEncodingKind.Utf8Bom,
+                    HasBom = true,
+                },
+                NewLineSequence = Environment.NewLine,
+                CsvKind = CsvDocumentKind.None,
+            };
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = $"{documentId}:0",
+                DocumentId = document.DocumentId,
+                SegmentType = "quoted-string",
+                AbsoluteStart = 12,
+                Length = 5,
+                LineNumber = 1,
+                OriginalText = "こんにちは",
+            });
+            session.Documents[document.DocumentId] = document;
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = $"{documentId}:0",
+                DocumentId = document.DocumentId,
+                FileType = "ERB",
+                RelativePath = document.RelativePath,
+                EncodingName = "UTF-8 BOM",
+                SegmentType = "quoted-string",
+                LineNumber = 1,
+                OriginalText = "こんにちは",
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+                WarningText = string.Empty,
+            });
+        }
+    }
+
+    private static ScanSession BuildReferenceSession(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+        var relativePath = Path.Combine("ERB", "Test.ERB");
+        var document = new SourceFileDocument
+        {
+            DocumentId = "ERB/Test.ERB",
+            FullPath = Path.Combine(gameDirectory, "ERB", "Test.ERB"),
+            RelativePath = relativePath,
+            FileType = "ERB",
+            OriginalText = "PRINTFORMW GETNUM(CFLAG,\"外見年齢\")",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = new UTF8Encoding(true),
+                Name = "UTF-8 BOM",
+                Kind = DetectedEncodingKind.Utf8Bom,
+                HasBom = true,
+            },
+            NewLineSequence = Environment.NewLine,
+            CsvKind = CsvDocumentKind.None,
+        };
+
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = document.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = 22,
+            Length = 4,
+            LineNumber = 1,
+            OriginalText = "外見年齢",
+            SymbolNamespace = "CFLAG",
+            OriginalSymbolKey = "外見年齢",
+            IsReferenceBearingKey = true,
+        });
+        document.SymbolReferences.Add(new ErbSymbolReference
+        {
+            DocumentId = document.DocumentId,
+            Namespace = "CFLAG",
+            Kind = ErbSymbolReferenceKind.DirectLiteral,
+            ResolutionKind = SymbolReferenceResolutionKind.Direct,
+            OriginalKey = "外見年齢",
+            AbsoluteStart = 22,
+            Length = 4,
+            LineNumber = 1,
+            CandidateKeys = ["外見年齢"],
+        });
+
+        session.Documents[document.DocumentId] = document;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = document.DocumentId,
+            FileType = "ERB",
+            RelativePath = relativePath,
+            EncodingName = "UTF-8 BOM",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "外見年齢",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            SymbolNamespace = "CFLAG",
+            OriginalSymbolKey = "外見年齢",
+            IsReferenceBearingKey = true,
+            ReferenceOriginalSymbolKey = "外見年齢",
+            ReferenceImpactCount = 1,
+            RequiresReferenceRewrite = true,
+            ReferenceResolutionStatus = "직접 참조만",
+            WarningText = string.Empty,
+        });
+        session.Metrics["Documents"] = 1;
+        session.Metrics["Items"] = 1;
+        session.Metrics["ErbItems"] = 1;
+        session.Metrics["CsvItems"] = 0;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+    }
+
     private static ScanSession BuildSessionWithFunctionExpressionSegments(string gameDirectory)
     {
         var session = new ScanSession
@@ -1304,6 +1578,25 @@ public sealed class MainWindowViewModelTests : IDisposable
             UpsertItemsCallCount = 0;
             DeleteItemsCallCount = 0;
             UpsertBatchSizes.Clear();
+        }
+    }
+
+    private sealed class FakeTranslationProviderFactory(ITranslationProvider provider) : ITranslationProviderFactory
+    {
+        public ITranslationProvider Create(ProviderSettings settings) => provider;
+    }
+
+    private sealed class RecordingProvider(Func<IReadOnlyList<ProtectedSegment>, TranslationProviderResult> handler) : ITranslationProvider
+    {
+        public List<IReadOnlyList<string>> RequestHistory { get; } = [];
+
+        public Task<TranslationProviderResult> TranslateAsync(
+            IReadOnlyList<ProtectedSegment> requests,
+            ProviderSettings settings,
+            CancellationToken cancellationToken)
+        {
+            RequestHistory.Add(requests.Select(request => request.Id).ToList());
+            return Task.FromResult(handler(requests));
         }
     }
 }

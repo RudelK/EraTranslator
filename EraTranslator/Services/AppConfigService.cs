@@ -49,6 +49,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 RetryPromptTemplate = NormalizePromptPlaceholders(loaded.RetryPromptTemplate),
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
                 RefreshGridDuringTranslatedTextEdit = loaded.RefreshGridDuringTranslatedTextEdit,
+                ProtectedFullWidthCharacters = loaded.ProtectedFullWidthCharacters ?? new AppConfig().ProtectedFullWidthCharacters,
                 PapagoClientId = loaded.PapagoClientId,
                 PapagoClientSecret = mergedSecrets.PapagoClientSecret,
                 EzTransInstallationPath = loaded.EzTransInstallationPath,
@@ -103,6 +104,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
+            ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
             EzTransInstallationPath = config.EzTransInstallationPath,
             EzTransProcessCount = config.EzTransProcessCount,
@@ -158,6 +160,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
+            ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
             PapagoClientSecret = secrets.PapagoClientSecret,
             EzTransInstallationPath = config.EzTransInstallationPath,
@@ -216,6 +219,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
         public bool ExcludeNonSourceText { get; init; }
 
         public bool RefreshGridDuringTranslatedTextEdit { get; init; }
+
+        public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％";
 
         public string PapagoClientId { get; init; } = string.Empty;
 

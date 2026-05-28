@@ -6,9 +6,7 @@ public sealed class SymbolReferenceAnalyzer
 {
     public void Analyze(ScanSession session)
     {
-        var references = session.Documents.Values
-            .SelectMany(document => document.SymbolReferences)
-            .ToList();
+        var referenceIndex = BuildReferenceIndex(session.Documents.Values.SelectMany(document => document.SymbolReferences));
 
         foreach (var item in session.Items)
         {
@@ -22,11 +20,27 @@ public sealed class SymbolReferenceAnalyzer
 
             var lookupKeys = item.GetReferenceLookupKeys().ToHashSet(StringComparer.Ordinal);
             var matchingNamespaces = GetNamespaceAliases(item.SymbolNamespace);
-            var matchingReferences = references
-                .Where(reference => matchingNamespaces.Contains(reference.Namespace, StringComparer.Ordinal)
-                    && (lookupKeys.Contains(reference.OriginalKey)
-                        || reference.CandidateKeys.Any(candidateKey => lookupKeys.Contains(candidateKey))))
-                .ToList();
+            var matchingReferences = new HashSet<ErbSymbolReference>();
+            foreach (var matchingNamespace in matchingNamespaces)
+            {
+                if (!referenceIndex.TryGetValue(matchingNamespace, out var namespaceIndex))
+                {
+                    continue;
+                }
+
+                foreach (var lookupKey in lookupKeys)
+                {
+                    if (!namespaceIndex.TryGetValue(lookupKey, out var referencesForKey))
+                    {
+                        continue;
+                    }
+
+                    foreach (var reference in referencesForKey)
+                    {
+                        matchingReferences.Add(reference);
+                    }
+                }
+            }
 
             item.ReferenceImpactCount = matchingReferences.Count;
             item.RequiresReferenceRewrite = matchingReferences.Count > 0;
@@ -69,5 +83,52 @@ public sealed class SymbolReferenceAnalyzer
             "JUEL" => ["JUEL", "PALAM"],
             _ => [symbolNamespace],
         };
+    }
+
+    private static Dictionary<string, Dictionary<string, List<ErbSymbolReference>>> BuildReferenceIndex(
+        IEnumerable<ErbSymbolReference> references)
+    {
+        var index = new Dictionary<string, Dictionary<string, List<ErbSymbolReference>>>(StringComparer.Ordinal);
+
+        foreach (var reference in references)
+        {
+            if (string.IsNullOrWhiteSpace(reference.Namespace))
+            {
+                continue;
+            }
+
+            if (!index.TryGetValue(reference.Namespace, out var namespaceIndex))
+            {
+                namespaceIndex = new Dictionary<string, List<ErbSymbolReference>>(StringComparer.Ordinal);
+                index[reference.Namespace] = namespaceIndex;
+            }
+
+            AddReferenceKey(namespaceIndex, reference.OriginalKey, reference);
+            foreach (var candidateKey in reference.CandidateKeys)
+            {
+                AddReferenceKey(namespaceIndex, candidateKey, reference);
+            }
+        }
+
+        return index;
+    }
+
+    private static void AddReferenceKey(
+        Dictionary<string, List<ErbSymbolReference>> namespaceIndex,
+        string key,
+        ErbSymbolReference reference)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        if (!namespaceIndex.TryGetValue(key, out var referencesForKey))
+        {
+            referencesForKey = [];
+            namespaceIndex[key] = referencesForKey;
+        }
+
+        referencesForKey.Add(reference);
     }
 }

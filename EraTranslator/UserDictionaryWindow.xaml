@@ -126,6 +126,29 @@
                     </DockPanel>
                 </Grid>
             </TabItem>
+
+            <TabItem Header="보호 문자">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="번역 요청 전에 보호 토큰으로 치환할 전각 특수문자 목록입니다. 텍스트박스에 있는 각 문자를 하나씩 보호합니다."
+                               TextWrapping="Wrap" />
+
+                    <TextBlock Grid.Row="1"
+                               Margin="0,12,0,6"
+                               Text="전각 특수문자" />
+
+                    <TextBox Grid.Row="2"
+                             MinHeight="28"
+                             VerticalContentAlignment="Center"
+                             Text="{Binding ProtectedFullWidthCharacters, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="1"

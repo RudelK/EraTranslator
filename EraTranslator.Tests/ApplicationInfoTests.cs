@@ -7,7 +7,7 @@ public sealed class ApplicationInfoTests
     [Fact]
     public void WindowTitle_IncludesInitialVersion()
     {
-        Assert.Equal("0.5", ApplicationInfo.Version);
-        Assert.Equal("EraTranslator 0.5", ApplicationInfo.WindowTitle);
+        Assert.Equal("0.6", ApplicationInfo.Version);
+        Assert.Equal("EraTranslator 0.6", ApplicationInfo.WindowTitle);
     }
 }

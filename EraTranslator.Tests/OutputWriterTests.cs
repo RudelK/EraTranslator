@@ -1629,6 +1629,195 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         Assert.Contains("PRINTFORMW %조사만처리(NAME:(friendList:index),\"는\")% 이미 이쪽의 수중에 있다....", writtenErb, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ExportCopy_RewritesLiteralKoreanParticlesInsideTranslatedSegments()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+
+        const string originalValue = "適当";
+        var erbText = $"PRINTFORMW {originalValue}\r\n";
+        var valueStart = erbText.IndexOf(originalValue, StringComparison.Ordinal);
+        var erbDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/LiteralJosa.ERB",
+            FullPath = Path.Combine(gameRoot, "ERB", "LiteralJosa.ERB"),
+            RelativePath = Path.Combine("ERB", "LiteralJosa.ERB"),
+            FileType = "ERB",
+            OriginalText = erbText,
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/LiteralJosa.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "print-tail",
+            AbsoluteStart = valueStart,
+            Length = originalValue.Length,
+            LineNumber = 1,
+            OriginalText = originalValue,
+        });
+
+        var session = new ScanSession
+        {
+            GameRoot = gameRoot,
+            JosaPackageInfo = new JosaSupportPackageService().InspectProject(gameRoot),
+        };
+        session.Documents[erbDocument.DocumentId] = erbDocument;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/LiteralJosa.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            FileType = "ERB",
+            RelativePath = erbDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "print-tail",
+            LineNumber = 1,
+            OriginalText = originalValue,
+            TranslatedText = "%CALLNAME:MASTER%는 사과은 좋아하고 길으로 간다.",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "LiteralJosa.ERB"), Encoding.UTF8);
+        Assert.Contains("%플레이어는% 사과는 좋아하고 길로 간다.", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesLeadingLiteralParticleOnFollowingSegment()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+
+        var firstLineValue = "사과";
+        var secondLineValue = "은 맛있다.";
+        var erbText = $"PRINTFORM {firstLineValue}\r\nPRINTFORM {secondLineValue}\r\n";
+        var firstStart = erbText.IndexOf(firstLineValue, StringComparison.Ordinal);
+        var secondStart = erbText.IndexOf(secondLineValue, StringComparison.Ordinal);
+        var erbDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/SplitLiteralJosa.ERB",
+            FullPath = Path.Combine(gameRoot, "ERB", "SplitLiteralJosa.ERB"),
+            RelativePath = Path.Combine("ERB", "SplitLiteralJosa.ERB"),
+            FileType = "ERB",
+            OriginalText = erbText,
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/SplitLiteralJosa.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "print-tail",
+            AbsoluteStart = firstStart,
+            Length = firstLineValue.Length,
+            LineNumber = 1,
+            OriginalText = firstLineValue,
+        });
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/SplitLiteralJosa.ERB:1",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "print-tail",
+            AbsoluteStart = secondStart,
+            Length = secondLineValue.Length,
+            LineNumber = 2,
+            OriginalText = secondLineValue,
+        });
+
+        var session = new ScanSession
+        {
+            GameRoot = gameRoot,
+            JosaPackageInfo = new JosaSupportPackageService().InspectProject(gameRoot),
+        };
+        session.Documents[erbDocument.DocumentId] = erbDocument;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/SplitLiteralJosa.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            FileType = "ERB",
+            RelativePath = erbDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "print-tail",
+            LineNumber = 1,
+            OriginalText = firstLineValue,
+            TranslatedText = firstLineValue,
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/SplitLiteralJosa.ERB:1",
+            DocumentId = erbDocument.DocumentId,
+            FileType = "ERB",
+            RelativePath = erbDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "print-tail",
+            LineNumber = 2,
+            OriginalText = secondLineValue,
+            TranslatedText = secondLineValue,
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "SplitLiteralJosa.ERB"), Encoding.UTF8);
+        Assert.Contains("PRINTFORM 사과", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("PRINTFORM 는 맛있다.", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_ReplacesOnlyExtractedCodeMixedTextSpan()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Mixed.ERB"),
+            "PRINTFORMW %CALLNAME:TARGET%の高校生\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var item = Assert.Single(session.Items, item => item.OriginalText == "高校生");
+        item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "고등학생");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Mixed.ERB"), Encoding.UTF8);
+        Assert.Contains("PRINTFORMW %CALLNAME:TARGET%の고등학생", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("PRINTFORMW 고등학생", writtenErb, StringComparison.Ordinal);
+    }
+
     private static ExtractedTextItem CreateReferenceBearingItem(
         string segmentId,
         string documentId,

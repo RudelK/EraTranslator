@@ -66,6 +66,11 @@ public sealed class TranslationProgressCarryoverService
             matchedCurrentIds,
             usedPreviousIds,
             blockedFromWeakMatching);
+        heuristicRestoredCount += ApplySameOriginalTextMatches(
+            currentItems,
+            previousSession.Items,
+            previousStatesBySegmentId,
+            matchedCurrentIds);
 
         return new TranslationProgressCarryoverResult(
             exactRestoredCount,
@@ -162,6 +167,47 @@ public sealed class TranslationProgressCarryoverService
             matchedCurrentIds.Add(currentItem.SegmentId);
             usedPreviousIds.Add(previousCandidate.Item.SegmentId);
             previousByOccurrenceKey.Remove(occurrenceKey);
+            restoredCount++;
+        }
+
+        return restoredCount;
+    }
+
+    private static int ApplySameOriginalTextMatches(
+        IEnumerable<ExtractedTextItem> currentItems,
+        IEnumerable<ExtractedTextItem> previousItems,
+        IReadOnlyDictionary<string, TranslationProgressItemState> previousStatesBySegmentId,
+        ISet<string> matchedCurrentIds)
+    {
+        var carryableGroups = previousItems
+            .Where(item => previousStatesBySegmentId.TryGetValue(item.SegmentId, out var state)
+                && CanHeuristicallyCarryOver(state))
+            .Select(item => new CarryoverCandidate(item, previousStatesBySegmentId[item.SegmentId]))
+            .GroupBy(candidate => NormalizeText(candidate.Item.OriginalText), StringComparer.Ordinal)
+            .Select(group => new
+            {
+                OriginalKey = group.Key,
+                Candidates = group.ToList(),
+                DistinctTranslations = group
+                    .Select(candidate => candidate.State.TranslatedText)
+                    .Where(static translatedText => !string.IsNullOrWhiteSpace(translatedText))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList(),
+            })
+            .Where(group => group.DistinctTranslations.Count == 1)
+            .ToDictionary(group => group.OriginalKey, group => group.Candidates[0], StringComparer.Ordinal);
+
+        var restoredCount = 0;
+        foreach (var currentItem in currentItems.Where(item => !matchedCurrentIds.Contains(item.SegmentId)))
+        {
+            var originalKey = NormalizeText(currentItem.OriginalText);
+            if (!carryableGroups.TryGetValue(originalKey, out var candidate))
+            {
+                continue;
+            }
+
+            ApplyHeuristicRestore(currentItem, candidate.Item, candidate.State);
+            matchedCurrentIds.Add(currentItem.SegmentId);
             restoredCount++;
         }
 

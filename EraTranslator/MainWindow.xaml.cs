@@ -30,7 +30,10 @@ public partial class MainWindow : Window
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        await _viewModel.ScanAsync();
+        if (await _viewModel.ScanAsync())
+        {
+            System.Windows.MessageBox.Show(this, "추출이 완료되었습니다.", "추출 완료", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private async void ConvertEncoding_Click(object sender, RoutedEventArgs e)
@@ -40,7 +43,10 @@ public partial class MainWindow : Window
 
     private async void Translate_Click(object sender, RoutedEventArgs e)
     {
-        await _viewModel.TranslatePendingAsync();
+        if (await _viewModel.TranslatePendingAsync())
+        {
+            System.Windows.MessageBox.Show(this, "번역이 완료되었습니다.", "번역 완료", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)

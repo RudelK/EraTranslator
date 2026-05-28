@@ -4,6 +4,18 @@ namespace EraTranslator.Services;
 
 public sealed partial class PlaceholderProtector
 {
+    public const string DefaultFullWidthSpecialCharacters = "／【】＜＞「」（）『』％";
+
+    private readonly Regex? _fullWidthSpecialCharacterPattern;
+
+    public PlaceholderProtector(string? fullWidthSpecialCharacters = null)
+    {
+        var normalizedCharacters = NormalizeFullWidthSpecialCharacters(fullWidthSpecialCharacters ?? DefaultFullWidthSpecialCharacters);
+        _fullWidthSpecialCharacterPattern = normalizedCharacters.Length == 0
+            ? null
+            : new Regex($"[{Regex.Escape(normalizedCharacters)}]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    }
+
     public static string GetToken(int index) => $"__PH{index}__";
 
     public ProtectedText Protect(string input)
@@ -96,18 +108,21 @@ public sealed partial class PlaceholderProtector
             });
     }
 
-    private static List<Match> CollectMatches(string input)
+    private List<Match> CollectMatches(string input)
     {
-        var patterns = new[]
+        var patterns = new List<Regex>
         {
             EscapeSequencePattern(),
             PercentPlaceholderPattern(),
             BracePlaceholderPattern(),
             AnglePlaceholderPattern(),
             ChoiceLabelPattern(),
-            FullWidthSpacePattern(),
-            FullWidthSpecialCharacterPattern(),
         };
+        if (_fullWidthSpecialCharacterPattern is not null)
+        {
+            patterns.Add(_fullWidthSpecialCharacterPattern);
+        }
+
         var selected = new List<Match>();
 
         foreach (var pattern in patterns)
@@ -133,6 +148,23 @@ public sealed partial class PlaceholderProtector
         return leftStart < rightEnd && rightStart < leftEnd;
     }
 
+    private static string NormalizeFullWidthSpecialCharacters(string characters)
+    {
+        var seen = new HashSet<char>();
+        var normalized = new System.Text.StringBuilder(characters.Length);
+        foreach (var ch in characters)
+        {
+            if (ch is '\r' or '\n' || !seen.Add(ch))
+            {
+                continue;
+            }
+
+            normalized.Append(ch);
+        }
+
+        return normalized.ToString();
+    }
+
     [GeneratedRegex(@"\\(?:\\|[%/@#nd]|[A-Za-z]+)", RegexOptions.Compiled)]
     private static partial Regex EscapeSequencePattern();
 
@@ -147,12 +179,6 @@ public sealed partial class PlaceholderProtector
 
     [GeneratedRegex(@"\[\s*\d+\s*\]", RegexOptions.Compiled)]
     private static partial Regex ChoiceLabelPattern();
-
-    [GeneratedRegex(@"[／【】＜＞「」％]", RegexOptions.Compiled)]
-    private static partial Regex FullWidthSpecialCharacterPattern();
-
-    [GeneratedRegex(@"　+", RegexOptions.Compiled)]
-    private static partial Regex FullWidthSpacePattern();
 
     [GeneratedRegex(@"(?<!_)__PH\s*(?<index>\d+)_(?!_)", RegexOptions.Compiled)]
     private static partial Regex MissingTrailingUnderscorePattern();

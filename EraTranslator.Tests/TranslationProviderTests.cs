@@ -248,7 +248,7 @@ public sealed class TranslationProviderTests
         var provider = new OpenAiCompatibleTranslationProvider(factory, true);
 
         var result = await provider.TranslateAsync(
-            [new ProtectedSegment("id-1", "[両刀]__PH0__", "[両刀]　", ["　"])],
+            [new ProtectedSegment("id-1", "[両刀]__PH0__", "[両刀]%CALLNAME%", ["%CALLNAME%"])],
             new ProviderSettings
             {
                 ProviderType = TranslationProviderType.LmStudio,
@@ -348,12 +348,12 @@ public sealed class TranslationProviderTests
     public async Task LmStudioProvider_RepairsPlaceholderBoundaryPipes()
     {
         var factory = new FakeHttpClientFactory(_ => JsonResponse("""
-{"choices":[{"message":{"content":"|__PH0__나는 당신과 다르게 바빠.__|__PH1__제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__|__PH2__|"} }]}
+{"choices":[{"message":{"content":"|__PH0__나는 당신과 다르게 바빠.　제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__|__PH1__|"} }]}
 """));
         var provider = new OpenAiCompatibleTranslationProvider(factory, true);
 
         var result = await provider.TranslateAsync(
-            [new ProtectedSegment("id-1", "__PH0__あなたと違って忙しいの。__PH1__ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH2__", "__PH0__あなたと違って忙しいの。__PH1__ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH2__", ["「", "」", "　"])],
+            [new ProtectedSegment("id-1", "__PH0__あなたと違って忙しいの。　ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH1__", "__PH0__あなたと違って忙しいの。　ちゃんと呼び出しには応じてるんだから、そのくらいは大目に見てほしいな。__PH1__", ["「", "」"])],
             new ProviderSettings
             {
                 ProviderType = TranslationProviderType.LmStudio,
@@ -362,7 +362,7 @@ public sealed class TranslationProviderTests
             },
             CancellationToken.None);
 
-        Assert.Equal("__PH0__나는 당신과 다르게 바빠.__PH1__제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__PH2__", result.Translations["id-1"]);
+        Assert.Equal("__PH0__나는 당신과 다르게 바빠.　제대로 호출에는 응하고 있으니까, 이 정도는 눈감아 주었으면 해.__PH1__", result.Translations["id-1"]);
     }
 
     [Fact]
