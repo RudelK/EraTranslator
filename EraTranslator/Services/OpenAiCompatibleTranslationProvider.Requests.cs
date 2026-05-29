@@ -5,33 +5,102 @@ namespace EraTranslator.Services;
 
 public sealed partial class OpenAiCompatibleTranslationProvider
 {
-    private static object BuildRequestPayload(
+    private readonly record struct RequestBuildMetadata(
+        LmStudioModelFamily ModelFamily,
+        LmStudioThinkingControlMode ThinkingControlMode,
+        int? MaxTokens,
+        bool FallbackUsed);
+
+    private enum ResponseMode
+    {
+        JsonObject,
+        JsonTextRetry,
+        JsonSchema,
+        JsonSchemaRetry,
+        TokenizedFallback,
+    }
+
+    private static (object Payload, RequestBuildMetadata Metadata) BuildRequestPayload(
         string model,
         ProviderSettings settings,
         IReadOnlyList<ProtectedSegment> requests,
-        bool includeJsonResponseFormat,
-        bool useTokenizedProtocol,
-        bool retryMode)
+        ResponseMode responseMode,
+        bool includeLmStudioSamplingParameters,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
     {
-        var systemPrompt = BuildSystemPrompt(settings, retryMode, useTokenizedProtocol, requests);
+        var useTokenizedProtocol = UsesTokenizedProtocol(responseMode);
+        var useRetryPrompt = UsesRetryPrompt(responseMode);
+        var modelFamily = includeLmStudioSamplingParameters
+            ? LmStudioSamplingDefaults.DetectModelFamily(model)
+            : LmStudioModelFamily.Unknown;
+        var thinkingControlMode = includeLmStudioSamplingParameters
+            ? LmStudioSamplingDefaults.GetThinkingControlMode(model, settings.DisableThinking)
+            : settings.DisableThinking ? LmStudioThinkingControlMode.PromptFallback : LmStudioThinkingControlMode.None;
+        var effectiveMaxTokens = ResolveEffectiveMaxTokens(settings, responseMode, model, requests.Count);
+        var metadata = new RequestBuildMetadata(
+            ModelFamily: modelFamily,
+            ThinkingControlMode: thinkingControlMode,
+            MaxTokens: effectiveMaxTokens,
+            FallbackUsed: responseMode is ResponseMode.JsonTextRetry or ResponseMode.JsonSchemaRetry or ResponseMode.TokenizedFallback);
+        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol, requests, thinkingControlMode, glossaryHints);
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["temperature"] = GetEffectiveTemperature(settings, responseMode),
+            ["messages"] = BuildMessages(systemPrompt, requests, settings, useTokenizedProtocol),
+        };
 
-        return includeJsonResponseFormat
-            ? new
+        if (includeLmStudioSamplingParameters)
+        {
+            if (settings.TopP.HasValue)
             {
-                model,
-                temperature = retryMode ? 0 : settings.Temperature,
-                response_format = new
-                {
-                    type = "json_object",
-                },
-                messages = BuildMessages(systemPrompt, requests, settings, useTokenizedProtocol: false),
+                payload["top_p"] = settings.TopP.Value;
             }
-            : new
+
+            if (settings.TopK.HasValue)
             {
-                model,
-                temperature = retryMode ? 0 : settings.Temperature,
-                messages = BuildMessages(systemPrompt, requests, settings, useTokenizedProtocol),
+                payload["top_k"] = settings.TopK.Value;
+            }
+
+            if (settings.RepeatPenalty.HasValue)
+            {
+                payload["repeat_penalty"] = settings.RepeatPenalty.Value;
+            }
+
+            if (settings.PresencePenalty.HasValue)
+            {
+                payload["presence_penalty"] = settings.PresencePenalty.Value;
+            }
+
+            if (settings.Seed.HasValue)
+            {
+                payload["seed"] = settings.Seed.Value;
+            }
+
+            if (effectiveMaxTokens.HasValue && effectiveMaxTokens.Value > 0)
+            {
+                payload["max_tokens"] = effectiveMaxTokens.Value;
+            }
+
+            if (thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField)
+            {
+                payload["enable_thinking"] = !settings.DisableThinking;
+            }
+        }
+
+        if (responseMode == ResponseMode.JsonObject)
+        {
+            payload["response_format"] = new Dictionary<string, object?>
+            {
+                ["type"] = "json_object",
             };
+        }
+        else if (UsesJsonSchema(responseMode))
+        {
+            payload["response_format"] = BuildJsonSchemaResponseFormat(requests);
+        }
+
+        return (payload, metadata);
     }
 
     private static object[] BuildMessages(
@@ -59,9 +128,11 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
     private static string BuildSystemPrompt(
         ProviderSettings settings,
-        bool retryMode,
+        bool useRetryPrompt,
         bool useTokenizedProtocol,
-        IReadOnlyList<ProtectedSegment> requests)
+        IReadOnlyList<ProtectedSegment> requests,
+        LmStudioThinkingControlMode thinkingControlMode,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
     {
         var targetLanguageLabel = LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage);
         var hasProtectedPlaceholders = requests.Any(request => request.Placeholders.Count > 0);
@@ -91,15 +162,17 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             + "Do not append explanatory parentheses, glosses, or notes unless the source text already contains them."
             + Environment.NewLine
             + $"For kanji-heavy labels, glossary entries, item names, and stat names translated into {targetLanguageLabel}, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.";
+        var glossaryInstruction = BuildGlossaryInstruction(glossaryHints);
 
         if (!useTokenizedProtocol)
         {
             var rendered = TranslationPromptTemplates.Render(
-                retryMode ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
+                useRetryPrompt ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
                 settings.SourceLanguage,
                 settings.TargetLanguage,
                 settings.DisableThinking,
-                retryMode);
+                useRetryPrompt,
+                thinkingControlMode);
 
             if (requests.Count == 1)
             {
@@ -107,6 +180,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
                     + placeholderInstruction
                     + scriptSyntaxInstruction
                     + termStyleInstruction
+                    + glossaryInstruction
                     + Environment.NewLine
                     + $"There is exactly one input item. In the output JSON, use id \"{requests[0].Id}\" for the single translation item.";
             }
@@ -115,6 +189,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
                 + placeholderInstruction
                 + scriptSyntaxInstruction
                 + termStyleInstruction
+                + glossaryInstruction
                 + Environment.NewLine
                 + "The user message uses repeated |id| blocks. Read the text inside each block and return one JSON item per id.";
         }
@@ -145,8 +220,29 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             placeholderInstruction +
             scriptSyntaxInstruction +
             termStyleInstruction +
+            glossaryInstruction +
             Environment.NewLine + Environment.NewLine +
-            TranslationPromptTemplates.BuildThinkingInstruction(settings.DisableThinking);
+            TranslationPromptTemplates.BuildThinkingInstruction(settings.DisableThinking, thinkingControlMode);
+    }
+
+    private static string BuildGlossaryInstruction(IReadOnlyList<GlossaryHint>? glossaryHints)
+    {
+        if (glossaryHints is null || glossaryHints.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("Glossary hints:");
+        builder.AppendLine("Prefer these pairs when they fit the current script context.");
+        builder.AppendLine("Do not copy them mechanically if they would make the line unnatural.");
+        foreach (var hint in glossaryHints)
+        {
+            builder.AppendLine($"{hint.Source} => {hint.Target}");
+        }
+
+        return builder.ToString().TrimEnd();
     }
 
     private static string BuildJsonCompatibleUserContent(IReadOnlyList<ProtectedSegment> requests, ProviderSettings settings)
@@ -190,5 +286,93 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
         builder.Append("Return only |id| ... | blocks with the same ids and count. Write translated text in the target language.");
         return builder.ToString();
+    }
+
+    private static bool UsesTokenizedProtocol(ResponseMode responseMode)
+    {
+        return responseMode == ResponseMode.TokenizedFallback;
+    }
+
+    private static bool UsesJsonSchema(ResponseMode responseMode)
+    {
+        return responseMode is ResponseMode.JsonSchema or ResponseMode.JsonSchemaRetry;
+    }
+
+    private static bool UsesRetryPrompt(ResponseMode responseMode)
+    {
+        return responseMode is ResponseMode.JsonTextRetry or ResponseMode.JsonSchemaRetry or ResponseMode.TokenizedFallback;
+    }
+
+    private static double GetEffectiveTemperature(ProviderSettings settings, ResponseMode responseMode)
+    {
+        return responseMode is ResponseMode.JsonTextRetry or ResponseMode.JsonSchemaRetry
+            ? 0
+            : settings.Temperature;
+    }
+
+    private static int? ResolveEffectiveMaxTokens(
+        ProviderSettings settings,
+        ResponseMode responseMode,
+        string model,
+        int requestCount)
+    {
+        if (settings.MaxTokens.HasValue)
+        {
+            return settings.MaxTokens.Value;
+        }
+
+        if (!UsesJsonSchema(responseMode))
+        {
+            return null;
+        }
+
+        var recommended = LmStudioSamplingDefaults.GetRecommendedStructuredMaxTokens(model, requestCount);
+        return recommended > 0 ? recommended : null;
+    }
+
+    private static object BuildJsonSchemaResponseFormat(IReadOnlyList<ProtectedSegment> requests)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "json_schema",
+            ["json_schema"] = new Dictionary<string, object?>
+            {
+                ["name"] = "translations_response",
+                ["strict"] = true,
+                ["schema"] = new Dictionary<string, object?>
+                {
+                    ["type"] = "object",
+                    ["additionalProperties"] = false,
+                    ["required"] = new[] { "translations" },
+                    ["properties"] = new Dictionary<string, object?>
+                    {
+                        ["translations"] = new Dictionary<string, object?>
+                        {
+                            ["type"] = "array",
+                            ["minItems"] = requests.Count,
+                            ["maxItems"] = requests.Count,
+                            ["items"] = new Dictionary<string, object?>
+                            {
+                                ["type"] = "object",
+                                ["additionalProperties"] = false,
+                                ["required"] = new[] { "id", "translated" },
+                                ["properties"] = new Dictionary<string, object?>
+                                {
+                                    ["id"] = new Dictionary<string, object?>
+                                    {
+                                        ["type"] = "string",
+                                        ["enum"] = requests.Select(request => request.Id).ToArray(),
+                                    },
+                                    ["translated"] = new Dictionary<string, object?>
+                                    {
+                                        ["type"] = "string",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
     }
 }

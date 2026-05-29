@@ -47,6 +47,16 @@ public partial class TranslationSettingsWindow : Window
         _viewModel.ResetPromptTemplates();
     }
 
+    private void ResetTranslationOptions_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ResetTranslationOptions();
+    }
+
+    private void ApplyLmStudioPreset_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ApplySelectedLmStudioPreset();
+    }
+
     private void RefreshEzTransStatus_Click(object sender, RoutedEventArgs e)
     {
         _viewModel.RefreshEzTransInstallationStatus();

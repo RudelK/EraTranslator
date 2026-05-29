@@ -511,6 +511,45 @@ public sealed class TranslationCoordinatorTests
         });
     }
 
+    [Fact]
+    public async Task TranslateAsync_SelectsOnlyOverlappingGlossaryHintsForCurrentBatch()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "쾌락치가 상승했다";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var item = BuildItem("id-1", "快楽値が上がった");
+        var glossaryHints = new[]
+        {
+            new GlossaryHint("快楽", "쾌락", "CSV"),
+            new GlossaryHint("快楽値", "쾌락치", "ERH"),
+            new GlossaryHint("ご主人さま", "주인님", "CSV"),
+        };
+
+        await coordinator.TranslateAsync(
+            [item],
+            [item],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+            },
+            [],
+            glossaryHints,
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Single(provider.GlossaryHistory);
+        Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
+    }
+
     private static ExtractedTextItem BuildItem(string segmentId, string originalText)
     {
         return new ExtractedTextItem
@@ -544,13 +583,16 @@ public sealed class TranslationCoordinatorTests
         private readonly Queue<Func<IReadOnlyList<ProtectedSegment>, TranslationProviderResult>> _steps = new(steps);
 
         public List<IReadOnlyList<string>> RequestHistory { get; } = [];
+        public List<IReadOnlyList<GlossaryHint>> GlossaryHistory { get; } = [];
 
         public Task<TranslationProviderResult> TranslateAsync(
             IReadOnlyList<ProtectedSegment> requests,
             ProviderSettings settings,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IReadOnlyList<GlossaryHint>? glossaryHints = null)
         {
             RequestHistory.Add(requests.Select(request => request.Id).ToList());
+            GlossaryHistory.Add((glossaryHints ?? []).ToList());
             var step = _steps.Dequeue();
             return Task.FromResult(step(requests));
         }

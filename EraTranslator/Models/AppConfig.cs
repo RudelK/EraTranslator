@@ -14,6 +14,8 @@ public sealed class AppConfig
 
     public string Model { get; init; } = "gpt-4o-mini";
 
+    public LmStudioPresetProfile LmStudioPresetProfile { get; init; } = LmStudioPresetProfile.Auto;
+
     public string SourceLanguage { get; init; } = "ja";
 
     public string TargetLanguage { get; init; } = "ko";
@@ -24,11 +26,23 @@ public sealed class AppConfig
 
     public double Temperature { get; init; } = 0.3;
 
+    public double? TopP { get; init; }
+
+    public int? TopK { get; init; }
+
+    public double? RepeatPenalty { get; init; }
+
+    public double? PresencePenalty { get; init; }
+
+    public int? Seed { get; init; }
+
+    public int? MaxTokens { get; init; }
+
     public bool DisableThinking { get; init; } = true;
 
     public bool EnableRequestResponseLogging { get; init; }
 
-    public bool EnableResultStateLogging { get; init; }
+    public bool EnableResultStateLogging { get; init; } = false;
 
     public string SystemPromptTemplate { get; init; } = string.Empty;
 

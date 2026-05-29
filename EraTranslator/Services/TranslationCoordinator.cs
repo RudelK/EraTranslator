@@ -5,6 +5,7 @@ namespace EraTranslator.Services;
 public sealed class TranslationCoordinator : IDisposable
 {
     private readonly UserDictionaryApplier _dictionaryApplier = new();
+    private readonly PhaseScopedGlossaryBuilder _glossaryBuilder = new();
     private readonly ITranslationProviderFactory _providerFactory;
 
     public TranslationCoordinator(ITranslationProviderFactory? providerFactory = null)
@@ -25,6 +26,7 @@ public sealed class TranslationCoordinator : IDisposable
             items,
             settings,
             dictionaryEntries,
+            [],
             progress,
             persistState,
             cancellationToken);
@@ -35,6 +37,27 @@ public sealed class TranslationCoordinator : IDisposable
         IReadOnlyList<ExtractedTextItem> propagationItems,
         ProviderSettings settings,
         IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
+        IProgress<(double value, string status, string detail)> progress,
+        Action? persistState,
+        CancellationToken cancellationToken)
+    {
+        await TranslateAsync(
+            items,
+            propagationItems,
+            settings,
+            dictionaryEntries,
+            [],
+            progress,
+            persistState,
+            cancellationToken);
+    }
+
+    public async Task TranslateAsync(
+        IReadOnlyList<ExtractedTextItem> items,
+        IReadOnlyList<ExtractedTextItem> propagationItems,
+        ProviderSettings settings,
+        IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
+        IReadOnlyList<GlossaryHint> glossaryHints,
         IProgress<(double value, string status, string detail)> progress,
         Action? persistState,
         CancellationToken cancellationToken)
@@ -151,6 +174,7 @@ public sealed class TranslationCoordinator : IDisposable
             for (var attempt = 0; attempt <= retryCount && remaining.Count > 0; attempt++)
             {
                 var currentBatch = remaining.Values.ToList();
+                var batchGlossaryHints = _glossaryBuilder.SelectForBatch(glossaryHints, currentBatch);
                 var protectedBatch = currentBatch
                     .Select(item =>
                     {
@@ -169,7 +193,11 @@ public sealed class TranslationCoordinator : IDisposable
 
                 try
                 {
-                    var providerResult = await provider.TranslateAsync(protectedBatch, settings, cancellationToken);
+                    var providerResult = await provider.TranslateAsync(
+                        protectedBatch,
+                        settings,
+                        cancellationToken,
+                        batchGlossaryHints);
                     var nextRemaining = new Dictionary<string, ExtractedTextItem>(StringComparer.Ordinal);
 
                     foreach (var item in currentBatch)

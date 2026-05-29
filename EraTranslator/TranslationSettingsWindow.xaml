@@ -172,9 +172,20 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <GroupBox Header="언어" Padding="10">
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,0,0,8">
+                        <Button Width="140"
+                                Click="ResetTranslationOptions_Click"
+                                Content="기본값으로 재설정" />
+                    </StackPanel>
+
+                    <GroupBox Grid.Row="1"
+                              Header="언어"
+                              Padding="10">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -214,12 +225,20 @@
                         </Grid>
                     </GroupBox>
 
-                    <GroupBox Grid.Row="1"
+                    <GroupBox Grid.Row="2"
                               Margin="0,12,0,0"
                               Header="배치 및 LLM"
                               Padding="10">
                         <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -265,17 +284,114 @@
                                        Grid.Column="0"
                                        Margin="0,0,8,8"
                                        VerticalAlignment="Center"
-                                       Text="Temperature" />
-                            <TextBox Grid.Row="3"
-                                     Grid.Column="1"
-                                     Margin="0,0,0,8"
-                                     Text="{Binding Temperature, UpdateSourceTrigger=PropertyChanged, StringFormat=F1}" />
+                                       Text="LM Studio 프리셋"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Grid Grid.Row="3"
+                                  Grid.Column="1"
+                                  Margin="0,0,0,8"
+                                  Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox Grid.Column="0"
+                                          Margin="0,0,8,0"
+                                          DisplayMemberPath="DisplayName"
+                                          ItemsSource="{Binding LmStudioPresetOptions}"
+                                          SelectedItem="{Binding SelectedLmStudioPresetOption}" />
+                                <Button Grid.Column="1"
+                                        Width="96"
+                                        Click="ApplyLmStudioPreset_Click"
+                                        Content="프리셋 적용" />
+                            </Grid>
 
                             <TextBlock Grid.Row="4"
                                        Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Temperature" />
+                            <TextBox Grid.Row="4"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding TemperatureText, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <TextBlock Grid.Row="5"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Top P"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="5"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding TopPText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="6"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Top K"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="6"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding TopKText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="7"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Repeat Penalty"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="7"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding RepeatPenaltyText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="8"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Presence Penalty"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="8"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding PresencePenaltyText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="9"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Seed"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="9"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding SeedText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="10"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="Max Tokens"
+                                       Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <TextBox Grid.Row="10"
+                                     Grid.Column="1"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding MaxTokensText, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <TextBlock Grid.Row="11"
+                                       Grid.Column="0"
                                        Grid.ColumnSpan="2"
                                        Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. 재시도 횟수는 실패한 항목만 다시 시도합니다. Temperature 기본값은 0.3입니다. Thinking 끄기는 OpenAI/LM Studio에서 추론 텍스트와 &lt;think&gt; 출력 억제를 시도합니다."
+                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. LM Studio 프리셋은 자동(모델 기준), Gemma 4, Qwen 3.5 9B 중에서 고를 수 있습니다. 프리셋 적용을 누르면 샘플링 권장값이 즉시 반영됩니다. Qwen 계열은 모델별 preset과 max_tokens 안전장치를 함께 사용하며, Max Tokens를 비워두면 요청 크기에 맞춰 자동 계산합니다."
                                        TextWrapping="Wrap" />
                         </Grid>
                     </GroupBox>
@@ -396,12 +512,12 @@
 
                     <StackPanel Orientation="Horizontal"
                                 Margin="0,0,0,8">
-                        <Button Width="110"
+                        <Button Width="140"
                                 Click="ResetPrompts_Click"
-                                Content="기본값 복원" />
+                                Content="기본값으로 재설정" />
                         <TextBlock Margin="12,2,0,0"
                                    Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                   Text="사용 가능한 치환값: {targetLanguage}, {thinkingInstruction}" />
+                                   Text="사용 가능한 치환값: {sourceLanguage}, {targetLanguage}, {thinkingInstruction}" />
                     </StackPanel>
 
                     <GroupBox Grid.Row="1"

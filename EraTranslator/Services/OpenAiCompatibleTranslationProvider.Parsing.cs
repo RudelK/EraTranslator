@@ -53,6 +53,10 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         working = StripWrappedPipes(working);
         working = TrimTrailingPipe(working).Trim();
         working = NormalizeSingleSegmentPipeArtifacts(working, request);
+        if (TryStripMetaPrefix(working, out var prefixedTranslation))
+        {
+            working = prefixedTranslation;
+        }
 
         if (LooksLikePromptEchoLine(working) || LooksLikeExplanationLine(working))
         {
@@ -230,6 +234,17 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             || normalized.Contains("depending on context", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("usually refers to", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("I will provide", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Reasoning:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Analysis:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Thought:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Let's think", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Here is the translation", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Here is your translation", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Final translation:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Translated text:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("The translation is:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("번역:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("최종 번역:", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("Since the prompt", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("*Note", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("Note:", StringComparison.OrdinalIgnoreCase)
@@ -441,8 +456,33 @@ public sealed partial class OpenAiCompatibleTranslationProvider
     private static string StripThinkingTags(string content)
     {
         var withoutThinkTags = ThinkTagPattern().Replace(content, string.Empty);
-        return withoutThinkTags.Replace("<thinking>", string.Empty, StringComparison.OrdinalIgnoreCase)
+        var withoutChannelThought = ChannelThoughtPattern().Replace(withoutThinkTags, string.Empty);
+        return withoutChannelThought.Replace("<thinking>", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("</thinking>", string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryStripMetaPrefix(string value, out string stripped)
+    {
+        foreach (var prefix in new[]
+                 {
+                     "Final translation:",
+                     "Translated text:",
+                     "The translation is:",
+                     "Translation:",
+                     "Final answer:",
+                     "번역:",
+                     "최종 번역:",
+                 })
+        {
+            if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                stripped = value[prefix.Length..].Trim();
+                return !string.IsNullOrWhiteSpace(stripped);
+            }
+        }
+
+        stripped = string.Empty;
+        return false;
     }
 
     private static bool TryExtractJsonRegion(string content, char startChar, char endChar, out string json)
@@ -476,4 +516,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
     [GeneratedRegex(@"(?:_+\|_*)+$", RegexOptions.Compiled)]
     private static partial Regex TrailingPlaceholderPipeArtifactPattern();
+
+    [GeneratedRegex(@"<\|channel\>(?:thought|analysis)\s*.*?<channel\|>\s*", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex ChannelThoughtPattern();
 }

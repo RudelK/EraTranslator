@@ -44,7 +44,8 @@ public sealed class EzTransXpTranslationProvider : ITranslationProvider, IAsyncD
     public async Task<TranslationProviderResult> TranslateAsync(
         IReadOnlyList<ProtectedSegment> requests,
         ProviderSettings settings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<GlossaryHint>? glossaryHints = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var result = new TranslationProviderResult();

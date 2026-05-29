@@ -5,5 +5,6 @@ public interface ITranslationProvider
     Task<TranslationProviderResult> TranslateAsync(
         IReadOnlyList<ProtectedSegment> requests,
         ProviderSettings settings,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IReadOnlyList<GlossaryHint>? glossaryHints = null);
 }

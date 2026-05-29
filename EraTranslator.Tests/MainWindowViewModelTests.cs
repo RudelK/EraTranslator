@@ -152,6 +152,58 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TranslatePendingAsync_ExecutesCsvErhErbPhasesAndBuildsGlossaryBetweenStages()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildPhasedSession(gameDirectory), gameDirectory);
+        var recordingStore = new RecordingSqliteProjectStateStore();
+        var provider = new RecordingProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            foreach (var request in requests)
+            {
+                result.Translations[request.Id] = request.Id switch
+                {
+                    "CSV/Terms.csv:0" => "쾌락",
+                    "ERH/Terms.ERH:0" => "쾌락치",
+                    "ERB/Test.ERB:0" => "쾌락치가 상승했다",
+                    _ => $"번역:{request.OriginalText}",
+                };
+            }
+
+            return result;
+        });
+
+        var viewModel = new MainWindowViewModel(
+            translationCoordinator: new TranslationCoordinator(new FakeTranslationProviderFactory(provider)),
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            sqliteProjectStateStore: recordingStore,
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        recordingStore.ResetCounts();
+
+        var completed = await viewModel.TranslatePendingAsync();
+
+        Assert.True(completed);
+        Assert.Equal(3, provider.RequestHistory.Count);
+        Assert.Equal(["CSV/Terms.csv:0"], provider.RequestHistory[0]);
+        Assert.Equal(["ERH/Terms.ERH:0"], provider.RequestHistory[1]);
+        Assert.Equal(["ERB/Test.ERB:0"], provider.RequestHistory[2]);
+        Assert.Empty(provider.GlossaryHistory[0]);
+        Assert.Equal(["快楽"], provider.GlossaryHistory[1].Select(static hint => hint.Source).ToList());
+        Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[2].Select(static hint => hint.Source).ToList());
+        Assert.True(recordingStore.SnapshotSaveCount >= 3);
+    }
+
+    [Fact]
     public void ManualExcludedStatus_IsRestoredAfterReopen()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");
@@ -1542,6 +1594,153 @@ public sealed class MainWindowViewModelTests : IDisposable
         }
     }
 
+    private static ScanSession BuildPhasedSession(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+
+        var csvDocument = new SourceFileDocument
+        {
+            DocumentId = "CSV/Terms.csv",
+            FullPath = Path.Combine(gameDirectory, "CSV", "Terms.csv"),
+            RelativePath = Path.Combine("CSV", "Terms.csv"),
+            FileType = "CSV",
+            OriginalText = "快楽",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = new UTF8Encoding(true),
+                Name = "UTF-8 BOM",
+                Kind = DetectedEncodingKind.Utf8Bom,
+                HasBom = true,
+            },
+            NewLineSequence = "\n",
+            CsvKind = CsvDocumentKind.GenericTable,
+        };
+        csvDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "CSV/Terms.csv:0",
+            DocumentId = csvDocument.DocumentId,
+            SegmentType = "csv-generic-field-1",
+            AbsoluteStart = 0,
+            Length = 2,
+            LineNumber = 1,
+            OriginalText = "快楽",
+            FieldIndex = 1,
+            SourceKey = "Terms:快楽",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        });
+        session.Documents[csvDocument.DocumentId] = csvDocument;
+
+        var erhDocument = new SourceFileDocument
+        {
+            DocumentId = "ERH/Terms.ERH",
+            FullPath = Path.Combine(gameDirectory, "ERH", "Terms.ERH"),
+            RelativePath = Path.Combine("ERH", "Terms.ERH"),
+            FileType = "ERH",
+            OriginalText = "\"快楽値\"",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = new UTF8Encoding(true),
+                Name = "UTF-8 BOM",
+                Kind = DetectedEncodingKind.Utf8Bom,
+                HasBom = true,
+            },
+            NewLineSequence = "\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erhDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERH/Terms.ERH:0",
+            DocumentId = erhDocument.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = 1,
+            Length = 3,
+            LineNumber = 1,
+            OriginalText = "快楽値",
+        });
+        session.Documents[erhDocument.DocumentId] = erhDocument;
+
+        var erbDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/Test.ERB",
+            FullPath = Path.Combine(gameDirectory, "ERB", "Test.ERB"),
+            RelativePath = Path.Combine("ERB", "Test.ERB"),
+            FileType = "ERB",
+            OriginalText = "\"快楽値が上がった\"",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = new UTF8Encoding(true),
+                Name = "UTF-8 BOM",
+                Kind = DetectedEncodingKind.Utf8Bom,
+                HasBom = true,
+            },
+            NewLineSequence = "\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erbDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = erbDocument.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = 1,
+            Length = 7,
+            LineNumber = 1,
+            OriginalText = "快楽値が上がった",
+        });
+        session.Documents[erbDocument.DocumentId] = erbDocument;
+
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "CSV/Terms.csv:0",
+            DocumentId = "CSV/Terms.csv",
+            FileType = "CSV",
+            RelativePath = Path.Combine("CSV", "Terms.csv"),
+            EncodingName = "utf-8",
+            SegmentType = "csv-generic-field-1",
+            LineNumber = 1,
+            OriginalText = "快楽",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            SourceKey = "Terms:快楽",
+            WarningText = string.Empty,
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERH/Terms.ERH:0",
+            DocumentId = "ERH/Terms.ERH",
+            FileType = "ERH",
+            RelativePath = Path.Combine("ERH", "Terms.ERH"),
+            EncodingName = "utf-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "快楽値",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            WarningText = string.Empty,
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/Test.ERB:0",
+            DocumentId = "ERB/Test.ERB",
+            FileType = "ERB",
+            RelativePath = Path.Combine("ERB", "Test.ERB"),
+            EncodingName = "utf-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "快楽値が上がった",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            WarningText = string.Empty,
+        });
+
+        session.Metrics["Documents"] = 3;
+        session.Metrics["Items"] = session.Items.Count;
+        session.Metrics["ErbItems"] = 2;
+        session.Metrics["CsvItems"] = 1;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+    }
+
     private sealed class RecordingSqliteProjectStateStore : SqliteProjectStateStore
     {
         public int SnapshotSaveCount { get; private set; }
@@ -1589,13 +1788,16 @@ public sealed class MainWindowViewModelTests : IDisposable
     private sealed class RecordingProvider(Func<IReadOnlyList<ProtectedSegment>, TranslationProviderResult> handler) : ITranslationProvider
     {
         public List<IReadOnlyList<string>> RequestHistory { get; } = [];
+        public List<IReadOnlyList<GlossaryHint>> GlossaryHistory { get; } = [];
 
         public Task<TranslationProviderResult> TranslateAsync(
             IReadOnlyList<ProtectedSegment> requests,
             ProviderSettings settings,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IReadOnlyList<GlossaryHint>? glossaryHints = null)
         {
             RequestHistory.Add(requests.Select(request => request.Id).ToList());
+            GlossaryHistory.Add((glossaryHints ?? []).ToList());
             return Task.FromResult(handler(requests));
         }
     }

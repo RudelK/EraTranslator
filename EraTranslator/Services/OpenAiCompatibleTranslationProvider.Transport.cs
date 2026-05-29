@@ -10,29 +10,29 @@ public sealed partial class OpenAiCompatibleTranslationProvider
     private static async Task<string> SendChatRequestAsync(
         HttpClient client,
         object payload,
+        ResponseMode responseMode,
+        string model,
+        ProviderSettings settings,
+        RequestBuildMetadata requestMetadata,
         CancellationToken cancellationToken,
         string providerName,
         string endpoint,
         IRequestResponseLogger? logger)
     {
         var serializedPayload = JsonSerializer.Serialize(payload, RequestJsonOptions);
+        var requestHeaders = BuildRequestLogHeaders(client, responseMode, model, settings, requestMetadata);
         logger?.LogRequest(
             providerName,
             endpoint,
             serializedPayload,
-            new Dictionary<string, string>
-            {
-                ["Authorization"] = client.DefaultRequestHeaders.Authorization is null
-                    ? string.Empty
-                    : SensitiveDataMasker.MaskSecret(client.DefaultRequestHeaders.Authorization.ToString(), visiblePrefixLength: 6),
-            });
+            requestHeaders);
 
         using var requestContent = new StringContent(serializedPayload, Encoding.UTF8);
         requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        using var response = await PostAsync(client, "chat/completions", requestContent, cancellationToken, providerName, endpoint, logger);
+        using var response = await PostAsync(client, "chat/completions", requestContent, cancellationToken, providerName, endpoint, logger, requestHeaders);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        logger?.LogResponse(providerName, endpoint, (int)response.StatusCode, body);
+        logger?.LogResponse(providerName, endpoint, (int)response.StatusCode, body, BuildResponseLogHeaders(responseMode, model, settings, requestMetadata));
         using var json = ParseJson(body, "OpenAI/LM Studio 응답 본문");
 
         try
@@ -67,7 +67,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         CancellationToken cancellationToken,
         string providerName,
         string endpoint,
-        IRequestResponseLogger? logger)
+        IRequestResponseLogger? logger,
+        IReadOnlyDictionary<string, string>? requestHeaders)
     {
         try
         {
@@ -78,7 +79,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             }
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            logger?.LogResponse(providerName, endpoint, (int)response.StatusCode, body);
+            logger?.LogResponse(providerName, endpoint, (int)response.StatusCode, body, requestHeaders);
             response.Dispose();
             throw new TranslationProviderException(
                 TranslationErrorKind.Http,
@@ -115,5 +116,55 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             ? "응답 본문 없음"
             : body.Length > 180 ? $"{body[..180]}..." : body;
         return $"HTTP {(int)statusCode} 오류: {summary}";
+    }
+
+    private static Dictionary<string, string> BuildRequestLogHeaders(
+        HttpClient client,
+        ResponseMode responseMode,
+        string model,
+        ProviderSettings settings,
+        RequestBuildMetadata requestMetadata)
+    {
+        var headers = BuildResponseLogHeaders(responseMode, model, settings, requestMetadata);
+        headers["Authorization"] = client.DefaultRequestHeaders.Authorization is null
+            ? string.Empty
+            : SensitiveDataMasker.MaskSecret(client.DefaultRequestHeaders.Authorization.ToString(), visiblePrefixLength: 6);
+        return headers;
+    }
+
+    private static Dictionary<string, string> BuildResponseLogHeaders(
+        ResponseMode responseMode,
+        string model,
+        ProviderSettings settings,
+        RequestBuildMetadata requestMetadata)
+    {
+        var effectiveTemperature = GetEffectiveTemperature(settings, responseMode);
+        var headers = new Dictionary<string, string>
+        {
+            ["Mode"] = GetResponseModeLabel(responseMode),
+            ["Model"] = model,
+            ["ModelFamily"] = requestMetadata.ModelFamily.ToString().ToLowerInvariant(),
+            ["ThinkingControl"] = GetThinkingControlLabel(requestMetadata.ThinkingControlMode),
+            ["Temperature"] = effectiveTemperature.ToString("0.##"),
+            ["TopP"] = settings.TopP?.ToString("0.##") ?? string.Empty,
+            ["TopK"] = settings.TopK?.ToString() ?? string.Empty,
+            ["RepeatPenalty"] = settings.RepeatPenalty?.ToString("0.##") ?? string.Empty,
+            ["PresencePenalty"] = settings.PresencePenalty?.ToString("0.##") ?? string.Empty,
+            ["Seed"] = settings.Seed?.ToString() ?? string.Empty,
+            ["MaxTokens"] = requestMetadata.MaxTokens?.ToString() ?? string.Empty,
+            ["FallbackUsed"] = requestMetadata.FallbackUsed ? "true" : "false",
+        };
+
+        return headers;
+    }
+
+    private static string GetThinkingControlLabel(LmStudioThinkingControlMode thinkingControlMode)
+    {
+        return thinkingControlMode switch
+        {
+            LmStudioThinkingControlMode.ApiCustomField => "api_custom_field",
+            LmStudioThinkingControlMode.PromptFallback => "prompt_fallback",
+            _ => "none",
+        };
     }
 }

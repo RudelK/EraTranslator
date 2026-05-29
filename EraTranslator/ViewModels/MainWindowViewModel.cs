@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Threading;
 using System.Windows.Data;
+using EraTranslator.Models;
 using EraTranslator.Services;
 
 namespace EraTranslator.ViewModels;
@@ -21,6 +22,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private readonly TranslationProgressCarryoverService _translationProgressCarryoverService;
     private readonly TranslationTextExchangeService _translationTextExchangeService;
     private readonly SourceLanguageFilterService _sourceLanguageFilterService;
+    private readonly PhaseScopedGlossaryBuilder _phaseScopedGlossaryBuilder = new();
     private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly FileResultStateLogger _resultStateLogger = new();
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
@@ -51,14 +53,21 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private ProviderOption? _selectedProviderOption;
     private string _baseUrl = "https://api.openai.com/v1";
     private string _model = "gpt-4o-mini";
+    private LmStudioPresetProfile _lmStudioPresetProfile = LmStudioPresetProfile.Auto;
     private string _sourceLanguage = "ja";
     private string _targetLanguage = "ko";
     private int _batchSize = 1;
     private int _retryCount = 1;
     private double _temperature = 0.3;
+    private double? _topP;
+    private int? _topK;
+    private double? _repeatPenalty;
+    private double? _presencePenalty;
+    private int? _seed;
+    private int? _maxTokens;
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
-    private bool _enableResultStateLogging;
+    private bool _enableResultStateLogging = false;
     private bool _excludeNonSourceText;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
@@ -230,8 +239,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         get => _model;
         set
         {
+            var previousModel = _model;
             if (SetProperty(ref _model, value))
             {
+                ApplyLmStudioPresetIfEligible(previousModel, _disableThinking);
                 RaisePropertyChanged(nameof(TranslationSettingsSummary));
                 PersistConfig();
             }
@@ -307,7 +318,21 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         get => _disableThinking;
         set
         {
+            var previousDisableThinking = _disableThinking;
             if (SetProperty(ref _disableThinking, value))
+            {
+                ApplyLmStudioPresetIfEligible(_model, previousDisableThinking);
+                PersistConfig();
+            }
+        }
+    }
+
+    public LmStudioPresetProfile LmStudioPresetProfile
+    {
+        get => _lmStudioPresetProfile;
+        set
+        {
+            if (SetProperty(ref _lmStudioPresetProfile, value))
             {
                 PersistConfig();
             }
@@ -357,6 +382,96 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         set
         {
             if (SetProperty(ref _retryPromptTemplate, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public double? TopP
+    {
+        get => _topP;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(Math.Round(value.Value, 2), 0, 1)
+                : (double?)null;
+            if (SetProperty(ref _topP, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public int? TopK
+    {
+        get => _topK;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(value.Value, 1, 500)
+                : (int?)null;
+            if (SetProperty(ref _topK, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public double? RepeatPenalty
+    {
+        get => _repeatPenalty;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(Math.Round(value.Value, 2), 0, 2)
+                : (double?)null;
+            if (SetProperty(ref _repeatPenalty, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public double? PresencePenalty
+    {
+        get => _presencePenalty;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(Math.Round(value.Value, 2), -2, 2)
+                : (double?)null;
+            if (SetProperty(ref _presencePenalty, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public int? Seed
+    {
+        get => _seed;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Max(0, value.Value)
+                : (int?)null;
+            if (SetProperty(ref _seed, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public int? MaxTokens
+    {
+        get => _maxTokens;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(value.Value, 1, 8192)
+                : (int?)null;
+            if (SetProperty(ref _maxTokens, normalized))
             {
                 PersistConfig();
             }
@@ -839,7 +954,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         var translationScope = GetCurrentTranslationScope();
-        var pendingCount = translationScope.Count(item => item.NeedsTranslation);
+        var phasePlans = BuildTranslationPhasePlans(translationScope);
+        var pendingCount = phasePlans.Sum(plan => plan.PendingCount);
         if (pendingCount == 0)
         {
             StatusText = "미번역 또는 번역 실패 항목이 없습니다.";
@@ -865,13 +981,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 _lastProgressSaveAtUtc = DateTimeOffset.MinValue;
                 try
                 {
-                    await _translationCoordinator.TranslateAsync(
-                        translationScope,
-                        Items.ToList(),
+                    await TranslatePendingPhasesAsync(
+                        phasePlans,
+                        pendingCount,
                         BuildSettings(),
                         _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
                         progress,
-                        () => SaveTranslationProgressSnapshotIfDue("TranslatePendingAsync progress callback"),
                         cancellationToken);
                 }
                 finally
@@ -1404,11 +1519,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
         BaseUrl = settingsViewModel.BaseUrl;
         Model = settingsViewModel.Model;
+        LmStudioPresetProfile = settingsViewModel.SelectedLmStudioPresetProfile;
         SourceLanguage = settingsViewModel.SourceLanguage;
         TargetLanguage = settingsViewModel.TargetLanguage;
         BatchSize = settingsViewModel.BatchSize;
         RetryCount = settingsViewModel.RetryCount;
         Temperature = settingsViewModel.Temperature;
+        TopP = settingsViewModel.TopP;
+        TopK = settingsViewModel.TopK;
+        RepeatPenalty = settingsViewModel.RepeatPenalty;
+        PresencePenalty = settingsViewModel.PresencePenalty;
+        Seed = settingsViewModel.Seed;
+        MaxTokens = settingsViewModel.MaxTokens;
         DisableThinking = settingsViewModel.DisableThinking;
         EnableRequestResponseLogging = settingsViewModel.EnableRequestResponseLogging;
         EnableResultStateLogging = settingsViewModel.EnableResultStateLogging;
@@ -1446,6 +1568,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             BatchSize = BatchSize,
             RetryCount = RetryCount,
             Temperature = Temperature,
+            TopP = TopP,
+            TopK = TopK,
+            RepeatPenalty = RepeatPenalty,
+            PresencePenalty = PresencePenalty,
+            Seed = Seed,
+            MaxTokens = MaxTokens,
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
@@ -1577,11 +1705,19 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 Model = config.Model;
             }
 
+            LmStudioPresetProfile = config.LmStudioPresetProfile;
+
             SourceLanguage = string.IsNullOrWhiteSpace(config.SourceLanguage) ? SourceLanguage : config.SourceLanguage;
             TargetLanguage = string.IsNullOrWhiteSpace(config.TargetLanguage) ? TargetLanguage : config.TargetLanguage;
             BatchSize = config.BatchSize;
             RetryCount = config.RetryCount;
             Temperature = config.Temperature;
+            TopP = config.TopP;
+            TopK = config.TopK;
+            RepeatPenalty = config.RepeatPenalty;
+            PresencePenalty = config.PresencePenalty;
+            Seed = config.Seed;
+            MaxTokens = config.MaxTokens;
             DisableThinking = config.DisableThinking;
             EnableRequestResponseLogging = config.EnableRequestResponseLogging;
             EnableResultStateLogging = config.EnableResultStateLogging;
@@ -1630,11 +1766,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             ProviderType = SelectedProviderType,
             BaseUrl = BaseUrl,
             Model = Model,
+            LmStudioPresetProfile = LmStudioPresetProfile,
             SourceLanguage = SourceLanguage,
             TargetLanguage = TargetLanguage,
             BatchSize = BatchSize,
             RetryCount = RetryCount,
             Temperature = Temperature,
+            TopP = TopP,
+            TopK = TopK,
+            RepeatPenalty = RepeatPenalty,
+            PresencePenalty = PresencePenalty,
+            Seed = Seed,
+            MaxTokens = MaxTokens,
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             EnableResultStateLogging = EnableResultStateLogging,
@@ -1665,6 +1808,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             case TranslationProviderType.LmStudio:
                 BaseUrl = "http://127.0.0.1:1234/v1";
                 Model = "local-model";
+                ApplyLmStudioPresetIfEligible(Model, DisableThinking);
                 break;
             case TranslationProviderType.DeepLFree:
                 BaseUrl = "https://api-free.deepl.com/v2/translate";
@@ -1682,6 +1826,36 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         RaisePropertyChanged(nameof(TranslationSettingsSummary));
+    }
+
+    private void ApplyLmStudioPresetIfEligible(string? previousModel, bool previousDisableThinking)
+    {
+        if (SelectedProviderType != TranslationProviderType.LmStudio)
+        {
+            return;
+        }
+
+        var previousPreset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile, previousModel, previousDisableThinking);
+        var currentPreset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile, Model, DisableThinking);
+
+        if (Math.Abs(Temperature - 0.3) < 0.0001 || Math.Abs(Temperature - previousPreset.Temperature) < 0.0001)
+        {
+            Temperature = currentPreset.Temperature;
+        }
+
+        ApplyPresetValue(previousPreset.TopP, currentPreset.TopP, TopP, value => TopP = value);
+        ApplyPresetValue(previousPreset.TopK, currentPreset.TopK, TopK, value => TopK = value);
+        ApplyPresetValue(previousPreset.RepeatPenalty, currentPreset.RepeatPenalty, RepeatPenalty, value => RepeatPenalty = value);
+        ApplyPresetValue(previousPreset.PresencePenalty, currentPreset.PresencePenalty, PresencePenalty, value => PresencePenalty = value);
+    }
+
+    private static void ApplyPresetValue<T>(T? previousPresetValue, T? currentPresetValue, T? currentValue, Action<T?> assign)
+        where T : struct
+    {
+        if (!currentValue.HasValue || EqualityComparer<T?>.Default.Equals(currentValue, previousPresetValue))
+        {
+            assign(currentPresetValue);
+        }
     }
 
     private void SaveTranslationProgressSnapshot(string? reason = null, [System.Runtime.CompilerServices.CallerMemberName] string callerName = "")
@@ -2165,6 +2339,100 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         return ItemsView.Cast<ExtractedTextItem>().ToList();
     }
 
+    private async Task TranslatePendingPhasesAsync(
+        IReadOnlyList<TranslationPhasePlan> phasePlans,
+        int totalPendingCount,
+        ProviderSettings settings,
+        IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
+        IProgress<(double value, string status, string detail)> progress,
+        CancellationToken cancellationToken)
+    {
+        if (phasePlans.Count == 0)
+        {
+            return;
+        }
+
+        var overallProcessedCount = 0;
+        foreach (var phasePlan in phasePlans)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (phasePlan.PendingCount == 0)
+            {
+                continue;
+            }
+
+            var glossaryHints = _phaseScopedGlossaryBuilder.BuildForPhase(Items, phasePlan.Kind);
+            var phaseLabel = GetTranslationPhaseLabel(phasePlan.Kind);
+            CurrentOperationDetail = glossaryHints.Count > 0
+                ? $"{phaseLabel} 단계 번역 준비 중 | glossary {glossaryHints.Count}개"
+                : $"{phaseLabel} 단계 번역 준비 중";
+
+            var phaseProgress = new Progress<(double value, string status, string detail)>(tuple =>
+            {
+                var overallValue = totalPendingCount == 0
+                    ? 1.0
+                    : (overallProcessedCount + (tuple.value * phasePlan.PendingCount)) / totalPendingCount;
+                ProgressValue = overallValue;
+                StatusText = tuple.status;
+                var detailPrefix = glossaryHints.Count > 0
+                    ? $"{phaseLabel} | glossary {glossaryHints.Count}개"
+                    : phaseLabel;
+                var combinedDetail = string.IsNullOrWhiteSpace(tuple.detail)
+                    ? detailPrefix
+                    : $"{detailPrefix} | {tuple.detail}";
+                CurrentOperationDetail = BuildTranslationProgressDetail(combinedDetail, overallValue);
+            });
+
+            await _translationCoordinator.TranslateAsync(
+                phasePlan.Items,
+                Items.ToList(),
+                settings,
+                dictionaryEntries,
+                glossaryHints,
+                phaseProgress,
+                () => SaveTranslationProgressSnapshotIfDue($"TranslatePendingAsync {phaseLabel} progress callback"),
+                cancellationToken);
+
+            overallProcessedCount += phasePlan.PendingCount;
+            SaveTranslationProgressSnapshot(force: true, reason: $"TranslatePendingAsync {phaseLabel} completed");
+        }
+    }
+
+    private static List<TranslationPhasePlan> BuildTranslationPhasePlans(IReadOnlyList<ExtractedTextItem> translationScope)
+    {
+        return new[]
+        {
+            CreatePhasePlan(translationScope, TranslationPhaseKind.Csv, "CSV"),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.Erh, "ERH"),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.Erb, "ERB"),
+        }
+        .Where(static plan => plan.Items.Count > 0)
+        .ToList();
+    }
+
+    private static TranslationPhasePlan CreatePhasePlan(
+        IReadOnlyList<ExtractedTextItem> translationScope,
+        TranslationPhaseKind kind,
+        string fileType)
+    {
+        var items = translationScope
+            .Where(item => string.Equals(item.FileType, fileType, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return new TranslationPhasePlan(kind, items, items.Count(item => item.NeedsTranslation));
+    }
+
+    private static string GetTranslationPhaseLabel(TranslationPhaseKind kind)
+    {
+        return kind switch
+        {
+            TranslationPhaseKind.Csv => "CSV",
+            TranslationPhaseKind.Erh => "ERH",
+            TranslationPhaseKind.Erb => "ERB",
+            _ => "번역",
+        };
+    }
+
     private bool IsFilterMatch(string? value)
     {
         if (string.IsNullOrWhiteSpace(FilterText))
@@ -2493,4 +2761,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         return string.IsNullOrWhiteSpace(reason) ? callerName : reason;
     }
 
+    private sealed record TranslationPhasePlan(
+        TranslationPhaseKind Kind,
+        IReadOnlyList<ExtractedTextItem> Items,
+        int PendingCount);
 }

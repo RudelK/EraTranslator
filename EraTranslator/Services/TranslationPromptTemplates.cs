@@ -24,7 +24,20 @@ public static class TranslationPromptTemplates
         14. If a line is unsafe or ambiguous, copy the source text into translated instead of explaining.
         15. Never provide substitute candidates or fallback options. Choose exactly one final translation only.
         16. Do not append parenthetical glosses, readings, or explanations unless the source itself already includes them.
-        17. For kanji-heavy labels, glossary entries, item names, and stat names, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.
+        17. Preserve tone, honorific level, and relationship cues whenever the source implies them.
+        18. Prefer consistent translations for repeated proper nouns, skill names, item names, and stat labels.
+        19. Keep the translated wording as compact as the source. Do not expand short labels into long explanations.
+        20. For kanji-heavy labels, glossary entries, item names, and stat names, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.
+
+        Examples:
+        Source: ご主人さま
+        Target: 주인님
+
+        Source: 快楽
+        Target: 쾌락
+
+        Source: __PH0__を選ぶ
+        Target: __PH0__를 선택한다
 
         {thinkingInstruction}
         """;
@@ -50,18 +63,27 @@ public static class TranslationPromptTemplates
         If translation is uncertain, copy the source text into translated.
         Never provide substitute candidates or fallback options.
         Do not append parenthetical glosses, readings, or explanations unless the source already includes them.
+        Preserve tone, honorific level, and relationship cues whenever the source implies them.
+        Keep repeated proper nouns, skill names, item names, and stat labels consistent.
+        Keep the translation as compact as the source instead of expanding it into explanations.
         For kanji-heavy labels, glossary entries, item names, and stat names, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.
 
         {thinkingInstruction}
         """;
 
-    public static string Render(string? template, string sourceLanguage, string targetLanguage, bool disableThinking, bool isRetryPrompt)
+    internal static string Render(
+        string? template,
+        string sourceLanguage,
+        string targetLanguage,
+        bool disableThinking,
+        bool isRetryPrompt,
+        LmStudioThinkingControlMode thinkingControlMode = LmStudioThinkingControlMode.PromptFallback)
     {
         var source = string.IsNullOrWhiteSpace(template)
             ? (isRetryPrompt ? DefaultRetryPrompt : DefaultSystemPrompt)
             : template;
 
-        var thinkingInstruction = BuildThinkingInstruction(disableThinking);
+        var thinkingInstruction = BuildThinkingInstruction(disableThinking, thinkingControlMode);
         var sourceLanguageLabel = LanguageDisplayService.ToInstructionLabel(sourceLanguage);
         var targetLanguageLabel = LanguageDisplayService.ToInstructionLabel(targetLanguage);
 
@@ -72,10 +94,17 @@ public static class TranslationPromptTemplates
             .Trim();
     }
 
-    public static string BuildThinkingInstruction(bool disableThinking)
+    internal static string BuildThinkingInstruction(
+        bool disableThinking,
+        LmStudioThinkingControlMode thinkingControlMode = LmStudioThinkingControlMode.PromptFallback)
     {
-        return disableThinking
-            ? "Do not output <think> tags, chain-of-thought, analysis, commentary, or any text outside the final answer."
-            : string.Empty;
+        if (!disableThinking)
+        {
+            return string.Empty;
+        }
+
+        return thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField
+            ? "Return the final answer directly. Do not output <think> tags, chain-of-thought, analysis, commentary, or any text outside the final answer."
+            : "Do not output <think> tags, chain-of-thought, analysis, commentary, or any text outside the final answer.";
     }
 }
