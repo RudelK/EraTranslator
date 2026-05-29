@@ -35,7 +35,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
-    private bool _excludeNonSourceText;
+    private bool _excludeNonSourceText = true;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
@@ -702,7 +702,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         BatchSize = 1;
         RetryCount = 1;
         DisableThinking = true;
-        ExcludeNonSourceText = false;
+        ExcludeNonSourceText = true;
         Seed = null;
 
         if (SelectedProviderOption?.ProviderType == TranslationProviderType.LmStudio)

@@ -1,24 +1,26 @@
-# Changelog
+# 변경 기록
 
 ## 0.6 - 2026-05-29
 
-- Improved extraction throughput with parallel file scanning, throttled progress updates, optimized SQLite session saves, and faster reference analysis.
-- Added `ERH` support, including extraction from `#DIM` and `#DIMS` string declarations.
-- Expanded ERB mixed code/text extraction so reusable labels are extracted as stable spans while dialogue-like mixed text remains sentence-level.
-- Improved translation carryover and same-original propagation, including filtered translation runs that reuse completed translations and propagate results to matching rows outside the current filter.
-- Added phased automatic translation ordering (`CSV -> ERH -> ERB`) with phase-boundary glossary reuse for OpenAI-compatible providers.
-- Added glossary-hint prompt injection based on overlap between the current batch and translated `CSV`/`ERH` source terms.
-- Reworked LM Studio requests to prefer `json_schema` structured output, retry once with stricter settings, and only then fall back to the tokenized pipe protocol.
-- Added LM Studio advanced sampling settings and model-aware presets for `Gemma 4` and `Qwen 3.5 9B`.
-- Added LM Studio thinking control support for Gemma/Qwen model families, including parser cleanup for leaked reasoning/thought blocks.
-- Improved translation settings UX with decimal-friendly numeric inputs, per-tab reset buttons, and a default `false` result-log-file setting.
-- Expanded Korean particle correction for regular Korean sentences, split-line particles, reverse parenthesized forms, and additional Josa helper forms.
-- Added configurable full-width protected characters in the user dictionary window, while leaving full-width spaces unprotected by default.
-- Added completion alerts for extraction and translation runs.
-- Improved save-time behavior for Josa rewriting, placeholder preservation, and code-mixed span replacement.
+- 파일 스캔 병렬화, 진행률 갱신 빈도 조정, SQLite 세션 저장 최적화, 참조 분석 개선으로 추출 속도를 높였다.
+- `#DIM`, `#DIMS` 문자열 선언을 포함해 `ERH` 추출을 지원한다.
+- ERB의 코드/텍스트 혼합 구간 추출을 확장해, 재사용 가능한 라벨은 안정적인 span으로 뽑고 대사형 혼합 텍스트는 문장 단위로 유지한다.
+- 번역 이어받기와 동일 원문 전파를 개선해, 필터 범위 번역 중에도 이미 완료된 번역을 재사용하고 현재 필터 밖의 동일 원문 행에도 결과를 전파한다.
+- 자동 번역 실행 순서에 `CSV -> ERH -> ERB` 단계를 적용하고, 단계 경계마다 glossary를 다시 구성해 다음 단계 번역에 재사용한다.
+- OpenAI 호환 공급자(`OpenAI`, `LM Studio`)에서는 현재 배치와 이미 번역된 `CSV`/`ERH` 용어가 겹칠 때 glossary 힌트를 프롬프트에 주입한다.
+- LM Studio 요청 흐름을 `json_schema` structured output 우선, 1회 보수적 재시도, 마지막에만 tokenized pipe fallback으로 재구성했다.
+- LM Studio 고급 샘플링 옵션과 `Gemma 4`, `Qwen 3.5 9B`용 모델별 프리셋을 추가했다.
+- Gemma/Qwen 계열의 LM Studio `Thinking 끄기` 제어를 보강하고, 누수된 reasoning/thought 블록을 파서에서 정리하도록 개선했다.
+- 번역 설정 화면에서 소수점 입력이 자연스럽게 되도록 개선하고, 탭별 `기본값으로 재설정` 버튼과 결과 로그 기본값 `꺼짐`을 추가했다.
+- `원문이 소스 언어가 아니면 자동 제외` 기본값을 `켜짐`으로 변경했다.
+- 번역 설정 창에서 `Esc`를 누르면 공급자 선택이 초기화되지 않고 창이 바로 닫히도록 수정했다.
+- 일반 한국어 문장, 줄바꿈 분리 조사, 역방향 괄호형 표현, 추가 조사 helper 형태까지 조사 보정을 확장했다.
+- 사용자 사전 창에서 전각 보호 문자를 설정할 수 있게 했고, 전각 공백은 기본적으로 보호하지 않도록 유지했다.
+- 추출과 번역 작업이 끝나면 완료 알림을 표시한다.
+- 저장 시 조사 재작성, placeholder 보존, 코드 혼합 span 치환 동작을 개선했다.
 
 ## 0.5 - 2026-05-27
 
-- Added visible app version metadata and `EraTranslator 0.5` window title.
-- Improved SQLite progress persistence, row-level progress updates, manual edit propagation, and reference rewriting.
-- Added function/expression filtering, Josa rewrite controls, and ERB function correction workflows.
+- 앱 버전 메타데이터를 표시하고 창 제목에 `EraTranslator 0.5`를 반영했다.
+- SQLite 진행 상태 저장, 행 단위 진행 갱신, 수동 수정 전파, 참조 재작성 동작을 개선했다.
+- 함수/표현식 필터, 조사 재작성 제어, ERB 함수 교정 워크플로우를 추가했다.

@@ -68,7 +68,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
-    private bool _excludeNonSourceText;
+    private bool _excludeNonSourceText = true;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _protectedFullWidthCharacters = PlaceholderProtector.DefaultFullWidthSpecialCharacters;

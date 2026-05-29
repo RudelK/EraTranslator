@@ -135,94 +135,104 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         IReadOnlyList<GlossaryHint>? glossaryHints)
     {
         var targetLanguageLabel = LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage);
-        var hasProtectedPlaceholders = requests.Any(request => request.Placeholders.Count > 0);
-        var placeholderInstruction = hasProtectedPlaceholders
-            ? Environment.NewLine
-              + "These inputs contain placeholder tokens such as __PH0__."
-              + Environment.NewLine
-              + "Treat every placeholder token as immutable script syntax, not as natural language."
-              + Environment.NewLine
-              + "Do not translate, rename, split, remove, duplicate, reorder, or add spaces inside placeholder tokens."
-              + Environment.NewLine
-              + "If a placeholder token would be broken, keep the source structure unchanged instead."
-            : string.Empty;
-        var scriptSyntaxInstruction =
-            Environment.NewLine
-            + "Treat script syntax and code-like expressions as immutable."
-            + Environment.NewLine
-            + "Do not rewrite ERB-style expressions, function names, ASCII identifiers, delimiters, or punctuation inside code-like expressions."
-            + Environment.NewLine
-            + "Translate only the natural-language portion when script syntax and text appear together.";
-        var termStyleInstruction =
-            Environment.NewLine
-            + "Choose exactly one final translation for each item."
-            + Environment.NewLine
-            + "Do not provide alternatives, substitutes, multiple candidates, slash-separated variants, pipe-separated variants, or fallback options."
-            + Environment.NewLine
-            + "Do not append explanatory parentheses, glosses, or notes unless the source text already contains them."
-            + Environment.NewLine
-            + $"For kanji-heavy labels, glossary entries, item names, and stat names translated into {targetLanguageLabel}, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.";
+        var rendered = TranslationPromptTemplates.Render(
+            useRetryPrompt ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
+            settings.SourceLanguage,
+            settings.TargetLanguage,
+            settings.DisableThinking,
+            useRetryPrompt,
+            thinkingControlMode);
+        var commonInstruction = BuildCommonTranslationInstruction(requests, targetLanguageLabel);
         var glossaryInstruction = BuildGlossaryInstruction(glossaryHints);
+        var formatInstruction = useTokenizedProtocol
+            ? BuildTokenizedFormatInstruction(requests, targetLanguageLabel)
+            : BuildJsonFormatInstruction(requests);
 
-        if (!useTokenizedProtocol)
+        return rendered
+            + commonInstruction
+            + glossaryInstruction
+            + formatInstruction;
+    }
+
+    private static string BuildCommonTranslationInstruction(
+        IReadOnlyList<ProtectedSegment> requests,
+        string targetLanguageLabel)
+    {
+        var hasProtectedPlaceholders = requests.Any(request => request.Placeholders.Count > 0);
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("Shared translation constraints:");
+        if (hasProtectedPlaceholders)
         {
-            var rendered = TranslationPromptTemplates.Render(
-                useRetryPrompt ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
-                settings.SourceLanguage,
-                settings.TargetLanguage,
-                settings.DisableThinking,
-                useRetryPrompt,
-                thinkingControlMode);
-
-            if (requests.Count == 1)
-            {
-                return rendered
-                    + placeholderInstruction
-                    + scriptSyntaxInstruction
-                    + termStyleInstruction
-                    + glossaryInstruction
-                    + Environment.NewLine
-                    + $"There is exactly one input item. In the output JSON, use id \"{requests[0].Id}\" for the single translation item.";
-            }
-
-            return rendered
-                + placeholderInstruction
-                + scriptSyntaxInstruction
-                + termStyleInstruction
-                + glossaryInstruction
-                + Environment.NewLine
-                + "The user message uses repeated |id| blocks. Read the text inside each block and return one JSON item per id.";
+            builder.AppendLine("These inputs contain placeholder tokens such as __PH0__.");
+            builder.AppendLine("Treat every placeholder token as immutable script syntax, not as natural language.");
+            builder.AppendLine("Do not translate, rename, split, remove, duplicate, reorder, or add spaces inside placeholder tokens.");
+            builder.AppendLine("If a placeholder token would be broken, keep the source structure unchanged instead.");
         }
 
-        var sourceLanguageLabel = LanguageDisplayService.ToInstructionLabel(settings.SourceLanguage);
-        return
-            $"""
-            You are a translation engine for Emuera game scripts.
-            Translate each input segment from {sourceLanguageLabel} into {targetLanguageLabel}.
+        builder.AppendLine("Preserve line breaks, escape sequences, and meaningful surrounding whitespace exactly when they exist.");
+        builder.AppendLine("Treat script syntax and code-like expressions as immutable.");
+        builder.AppendLine("Do not rewrite ERB-style expressions, function names, ASCII identifiers, delimiters, or punctuation inside code-like expressions.");
+        builder.AppendLine("Translate only the natural-language portion when script syntax and text appear together.");
+        builder.AppendLine("Choose exactly one final translation for each item.");
+        builder.AppendLine("Do not provide alternatives, substitutes, multiple candidates, slash-separated variants, pipe-separated variants, or fallback options.");
+        builder.AppendLine("Do not append explanatory parentheses, glosses, or notes unless the source text already contains them.");
+        builder.AppendLine("Do not include the source text, romanization, translator comments, metadata, or extra annotation inside the final translated content.");
+        builder.AppendLine($"For kanji-heavy labels, glossary entries, item names, and stat names translated into {targetLanguageLabel}, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.");
+        return builder.ToString().TrimEnd();
+    }
 
-            Output rules:
-            1. Do not return JSON.
-            2. Do not return markdown, code fences, prose, comments, or extra explanations.
-            3. Preserve placeholder tokens such as __PH0__ exactly.
-            4. Preserve line breaks, escape sequences, and meaningful surrounding whitespace exactly when they exist.
-            5. Treat script syntax and code-like expressions as immutable. Do not rewrite function names, identifiers, delimiters, or punctuation inside them.
-            6. Keep each segment id unchanged.
-            7. If there is only one input segment, return only the translated text itself with no label, no separator, and no extra line.
-            8. If there are multiple input segments, return exactly one output block for every input block.
-            9. If a line is unsafe or ambiguous, copy the source text into the translated block instead of explaining.
-            10. For multiple input segments, use this exact format only:
-            |<id>|
-            <translated text>
-            |
-            11. Do not write any text before the first output or after the last output.
-            12. The translated text itself must be written in {targetLanguageLabel}. Do not answer in English unless the target language is English.
-            """ +
-            placeholderInstruction +
-            scriptSyntaxInstruction +
-            termStyleInstruction +
-            glossaryInstruction +
-            Environment.NewLine + Environment.NewLine +
-            TranslationPromptTemplates.BuildThinkingInstruction(settings.DisableThinking, thinkingControlMode);
+    private static string BuildJsonFormatInstruction(IReadOnlyList<ProtectedSegment> requests)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("Output format rules:");
+        builder.AppendLine("1. Return exactly one JSON object.");
+        builder.AppendLine("2. Do not output markdown, code fences, prose, comments, XML, or any text before or after the JSON.");
+        builder.AppendLine("3. The root schema must be: {\"translations\":[{\"id\":\"...\",\"translated\":\"...\"}]}.");
+        builder.AppendLine("4. Keep every id unchanged.");
+        builder.AppendLine("5. Return exactly one translated item for every input item.");
+        builder.AppendLine("6. The translated field must contain only the final translated text itself.");
+        builder.AppendLine("7. Escape JSON strings correctly with double quotes.");
+        if (requests.Count == 1)
+        {
+            builder.AppendLine($"8. There is exactly one input item. In the output JSON, use id \"{requests[0].Id}\" for the single translation item.");
+        }
+        else
+        {
+            builder.AppendLine("8. The user message uses repeated |id| blocks. Read the text inside each block and return one JSON item per id.");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string BuildTokenizedFormatInstruction(
+        IReadOnlyList<ProtectedSegment> requests,
+        string targetLanguageLabel)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("Output format rules:");
+        builder.AppendLine("1. Do not return JSON.");
+        builder.AppendLine("2. Do not return markdown, code fences, prose, comments, or extra explanations.");
+        builder.AppendLine("3. Keep each segment id unchanged.");
+        if (requests.Count == 1)
+        {
+            builder.AppendLine("4. There is exactly one input segment. Return only the translated text itself with no label, no separator, and no extra line.");
+        }
+        else
+        {
+            builder.AppendLine("4. Return exactly one output block for every input block.");
+            builder.AppendLine("5. For multiple input segments, use this exact format only:");
+            builder.AppendLine("|<id>|");
+            builder.AppendLine("<translated text>");
+            builder.AppendLine("|");
+            builder.AppendLine("6. Do not write any text before the first output or after the last output.");
+        }
+
+        var finalRuleNumber = requests.Count == 1 ? 5 : 7;
+        builder.AppendLine($"{finalRuleNumber}. The translated text itself must be written in {targetLanguageLabel}. Do not answer in English unless the target language is English.");
+        return builder.ToString().TrimEnd();
     }
 
     private static string BuildGlossaryInstruction(IReadOnlyList<GlossaryHint>? glossaryHints)

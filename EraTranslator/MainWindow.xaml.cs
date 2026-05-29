@@ -62,11 +62,25 @@ public partial class MainWindow : Window
 
     private void ResetTranslations_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmReset(
+                "현재 번역문, 실패 상태, 검수 상태를 모두 지웁니다.\n정말 번역 리셋을 진행하시겠습니까?",
+                "번역 리셋 확인"))
+        {
+            return;
+        }
+
         _viewModel.ResetTranslations();
     }
 
     private void ResetExtraction_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmReset(
+                "현재 추출 결과와 저장된 번역 진행 상태를 모두 지웁니다.\n정말 추출 리셋을 진행하시겠습니까?",
+                "추출 리셋 확인"))
+        {
+            return;
+        }
+
         _viewModel.ResetExtraction();
     }
 
@@ -233,5 +247,17 @@ public partial class MainWindow : Window
         TranslationGrid.CommitEdit(DataGridEditingUnit.Cell, true);
         TranslationGrid.CommitEdit(DataGridEditingUnit.Row, true);
         _viewModel.CommitSelectedItemTranslatedTextEdit();
+    }
+
+    private bool ConfirmReset(string message, string title)
+    {
+        return System.Windows.MessageBox.Show(
+                this,
+                message,
+                title,
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No)
+            == MessageBoxResult.Yes;
     }
 }

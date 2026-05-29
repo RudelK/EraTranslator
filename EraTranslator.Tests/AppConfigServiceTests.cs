@@ -27,6 +27,17 @@ public sealed class AppConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public void Load_ReturnsExcludeNonSourceTextEnabledByDefault()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+
+        var actual = service.Load();
+
+        Assert.True(actual.ExcludeNonSourceText);
+    }
+
+    [Fact]
     public void SaveAndLoad_RoundTripsConfigInTargetDirectory()
     {
         Directory.CreateDirectory(_rootPath);

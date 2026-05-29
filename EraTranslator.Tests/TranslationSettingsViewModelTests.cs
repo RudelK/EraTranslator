@@ -47,7 +47,7 @@ public sealed class TranslationSettingsViewModelTests
         Assert.Equal(1, viewModel.BatchSize);
         Assert.Equal(1, viewModel.RetryCount);
         Assert.True(viewModel.DisableThinking);
-        Assert.False(viewModel.ExcludeNonSourceText);
+        Assert.True(viewModel.ExcludeNonSourceText);
         var preset = LmStudioSamplingDefaults.GetRecommendedPreset(viewModel.Model, viewModel.DisableThinking);
         Assert.Equal(preset.Temperature, viewModel.Temperature);
         Assert.Equal(preset.TopP, viewModel.TopP);
@@ -56,6 +56,14 @@ public sealed class TranslationSettingsViewModelTests
         Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
         Assert.Null(viewModel.Seed);
         Assert.Null(viewModel.MaxTokens);
+    }
+
+    [Fact]
+    public void DefaultExcludeNonSourceText_IsEnabled()
+    {
+        var viewModel = CreateViewModel();
+
+        Assert.True(viewModel.ExcludeNonSourceText);
     }
 
     [Fact]

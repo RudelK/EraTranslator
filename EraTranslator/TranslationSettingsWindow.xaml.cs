@@ -42,6 +42,17 @@ public partial class TranslationSettingsWindow : Window
         DialogResult = false;
     }
 
+    private void TranslationSettingsWindow_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        DialogResult = false;
+    }
+
     private void ResetPrompts_Click(object sender, RoutedEventArgs e)
     {
         _viewModel.ResetPromptTemplates();

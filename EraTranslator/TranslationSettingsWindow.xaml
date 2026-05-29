@@ -10,6 +10,7 @@
         MinWidth="560"
         MinHeight="600"
         ResizeMode="CanResize"
+        PreviewKeyDown="TranslationSettingsWindow_OnPreviewKeyDown"
         WindowStartupLocation="CenterOwner">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
@@ -605,6 +606,7 @@
             <Button Width="80"
                     Margin="0,0,12,0"
                     Click="Cancel_Click"
+                    IsCancel="True"
                     Content="취소" />
             <Button Width="80"
                     IsDefault="True"

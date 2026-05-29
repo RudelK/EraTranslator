@@ -18,7 +18,7 @@ public sealed class TranslationPromptTemplatesTests
     }
 
     [Fact]
-    public void Render_IncludesCurrentScriptSyntaxGuidance()
+    public void Render_RetryPromptIncludesCoreMeaningRules()
     {
         var rendered = TranslationPromptTemplates.Render(
             TranslationPromptTemplates.DefaultRetryPrompt,
@@ -27,9 +27,9 @@ public sealed class TranslationPromptTemplatesTests
             disableThinking: true,
             isRetryPrompt: true);
 
-        Assert.Contains("script syntax such as %...%, {...}, <...>", rendered, StringComparison.Ordinal);
-        Assert.Contains("Do not translate or rewrite script syntax", rendered, StringComparison.Ordinal);
-        Assert.Contains("Keep repeated proper nouns, skill names, item names, and stat labels consistent.", rendered, StringComparison.Ordinal);
+        Assert.Contains("Return only the final translation content required by the format rules.", rendered, StringComparison.Ordinal);
+        Assert.Contains("Choose exactly one final translation per item.", rendered, StringComparison.Ordinal);
+        Assert.Contains("Do not provide alternatives, notes, or explanations.", rendered, StringComparison.Ordinal);
     }
 
     [Fact]

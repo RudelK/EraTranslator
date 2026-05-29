@@ -48,7 +48,7 @@ public sealed class AppConfig
 
     public string RetryPromptTemplate { get; init; } = string.Empty;
 
-    public bool ExcludeNonSourceText { get; init; }
+    public bool ExcludeNonSourceText { get; init; } = true;
 
     public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 

@@ -413,6 +413,73 @@ public sealed class TranslationProviderTests
         Assert.Equal(0, secondJson.RootElement.GetProperty("temperature").GetDouble());
         Assert.False(thirdJson.RootElement.TryGetProperty("response_format", out _));
         Assert.Contains("Return only the translated text with no label or separator.", thirdJson.RootElement.GetProperty("messages")[1].GetProperty("content").GetString(), StringComparison.Ordinal);
+        Assert.Contains("Return only the final translation content required by the format rules.", thirdJson.RootElement.GetProperty("messages")[0].GetProperty("content").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_TokenizedFallbackUsesCustomRetryPromptTemplate()
+    {
+        var requestBodies = new List<string>();
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            requestBodies.Add(request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty);
+            return JsonResponse("""
+{"choices":[{"message":{"content":"|id-1|\n주인님\n|"} }]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                Model = "google/gemma-4-e4b",
+                TargetLanguage = "ko",
+                DisableThinking = true,
+                RetryPromptTemplate = "CUSTOM RETRY TEMPLATE\nTranslate from {sourceLanguage} into {targetLanguage}.",
+            },
+            CancellationToken.None);
+
+        using var fallbackJson = JsonDocument.Parse(requestBodies[2]);
+        var systemPrompt = fallbackJson.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.NotNull(systemPrompt);
+        Assert.Contains("CUSTOM RETRY TEMPLATE", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Output format rules:", systemPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Output rules:\n1. Return exactly one JSON object.", systemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenAiProvider_SystemPromptDoesNotDuplicateCoreInstructions()
+    {
+        string? capturedBody = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return JsonResponse("""
+{"choices":[{"message":{"content":"{\"translations\":[{\"id\":\"id-1\",\"translated\":\"로그 테스트\"}]}"}}]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, false);
+
+        await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "__PH0__を選ぶ", "__PH0__を選ぶ", ["%CALLNAME%"])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                ApiKey = "test-key",
+                TargetLanguage = "ko",
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        using var json = JsonDocument.Parse(capturedBody!);
+        var systemPrompt = json.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.NotNull(systemPrompt);
+        Assert.Equal(1, CountOccurrences(systemPrompt!, "Choose exactly one final translation for each item."));
+        Assert.Equal(1, CountOccurrences(systemPrompt!, "Treat script syntax and code-like expressions as immutable."));
+        Assert.Contains("Output format rules:", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Shared translation constraints:", systemPrompt, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -834,6 +901,19 @@ public sealed class TranslationProviderTests
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
+    }
+
+    private static int CountOccurrences(string input, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = input.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 
     private sealed class FakeHttpClientFactory(Func<HttpRequestMessage, HttpResponseMessage> responder) : ISimpleHttpClientFactory
