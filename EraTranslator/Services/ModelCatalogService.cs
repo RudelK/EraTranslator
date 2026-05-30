@@ -14,7 +14,7 @@ public sealed class ModelCatalogService
 
     public bool SupportsModelCatalog(TranslationProviderType providerType)
     {
-        return providerType is TranslationProviderType.OpenAi or TranslationProviderType.LmStudio;
+        return providerType is TranslationProviderType.OpenAi or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade;
     }
 
     public async Task<IReadOnlyList<string>> LoadModelsAsync(ProviderSettings settings, CancellationToken cancellationToken)
@@ -30,7 +30,12 @@ public sealed class ModelCatalogService
         }
 
         var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
-            ? (settings.ProviderType == TranslationProviderType.LmStudio ? "http://127.0.0.1:1234/v1" : "https://api.openai.com/v1")
+            ? settings.ProviderType switch
+            {
+                TranslationProviderType.LmStudio => "http://127.0.0.1:1234/v1",
+                TranslationProviderType.Lemonade => "http://127.0.0.1:13305/v1",
+                _ => "https://api.openai.com/v1",
+            }
             : settings.BaseUrl.TrimEnd('/');
 
         var client = _httpClientFactory.CreateClient(nameof(ModelCatalogService));

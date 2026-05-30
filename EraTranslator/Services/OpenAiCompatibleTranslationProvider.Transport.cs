@@ -152,6 +152,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             ["PresencePenalty"] = settings.PresencePenalty?.ToString("0.##") ?? string.Empty,
             ["Seed"] = settings.Seed?.ToString() ?? string.Empty,
             ["MaxTokens"] = requestMetadata.MaxTokens?.ToString() ?? string.Empty,
+            ["MaxTokensField"] = requestMetadata.MaxTokensFieldName ?? "max_tokens",
             ["FallbackUsed"] = requestMetadata.FallbackUsed ? "true" : "false",
         };
 

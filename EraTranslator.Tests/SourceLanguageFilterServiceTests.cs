@@ -25,28 +25,17 @@ public sealed class SourceLanguageFilterServiceTests
     [Fact]
     public void Apply_MarksNonSourcePendingItemsAsExcluded_AndRestoresWhenDisabled()
     {
-        var item = new ExtractedTextItem
-        {
-            SegmentId = "seg-1",
-            DocumentId = "ERB/Test.ERB",
-            FileType = "ERB",
-            RelativePath = "ERB/Test.ERB",
-            EncodingName = "UTF-8",
-            SegmentType = "print",
-            LineNumber = 1,
-            OriginalText = "안녕하세요",
-            WarningText = string.Empty,
-        };
+        var item = BuildItem("seg-1", "안녕하세요");
 
         var service = new SourceLanguageFilterService();
-        var changedCount = service.Apply([item], "ja", enabled: true);
+        var changedCount = service.Apply([item], "ja", "en", enabled: true);
 
         Assert.Equal(1, changedCount);
         Assert.Equal("제외됨", item.Status);
         Assert.Equal("언어 제외", item.ValidationStatus);
         Assert.False(item.NeedsTranslation);
 
-        changedCount = service.Apply([item], "ja", enabled: false);
+        changedCount = service.Apply([item], "ja", "en", enabled: false);
 
         Assert.Equal(1, changedCount);
         Assert.Equal("번역 대기", item.Status);
@@ -57,21 +46,10 @@ public sealed class SourceLanguageFilterServiceTests
     [Fact]
     public void Apply_DoesNotExcludePlaceholderLedJapaneseText()
     {
-        var item = new ExtractedTextItem
-        {
-            SegmentId = "seg-2",
-            DocumentId = "ERB/Test.ERB",
-            FileType = "ERB",
-            RelativePath = "ERB/Test.ERB",
-            EncodingName = "UTF-8",
-            SegmentType = "print",
-            LineNumber = 2,
-            OriginalText = "%CALLNAME:MASTER%の町",
-            WarningText = string.Empty,
-        };
+        var item = BuildItem("seg-2", "%CALLNAME:MASTER%の町");
 
         var service = new SourceLanguageFilterService();
-        var changedCount = service.Apply([item], "ja", enabled: true);
+        var changedCount = service.Apply([item], "ja", "ko", enabled: true);
 
         Assert.Equal(0, changedCount);
         Assert.Equal("번역 대기", item.Status);
@@ -82,26 +60,74 @@ public sealed class SourceLanguageFilterServiceTests
     [Fact]
     public void Apply_DoesNotRestoreManuallyExcludedItems()
     {
-        var item = new ExtractedTextItem
-        {
-            SegmentId = "seg-3",
-            DocumentId = "ERB/Test.ERB",
-            FileType = "ERB",
-            RelativePath = "ERB/Test.ERB",
-            EncodingName = "UTF-8",
-            SegmentType = "print",
-            LineNumber = 3,
-            OriginalText = "こんにちは",
-            WarningText = string.Empty,
-        };
+        var item = BuildItem("seg-3", "こんにちは");
         item.ApplyManualStatusOverride("제외됨");
 
         var service = new SourceLanguageFilterService();
-        var changedCount = service.Apply([item], "ja", enabled: false);
+        var changedCount = service.Apply([item], "ja", "ko", enabled: false);
 
         Assert.Equal(0, changedCount);
         Assert.Equal("제외됨", item.Status);
         Assert.Equal("수동 제외", item.ValidationStatus);
         Assert.False(item.NeedsTranslation);
+    }
+
+    [Fact]
+    public void Apply_ReusesOriginalWhenTextIsEntirelyTargetLanguage()
+    {
+        var item = BuildItem("seg-4", "안녕하세요");
+
+        var service = new SourceLanguageFilterService();
+        var changedCount = service.Apply([item], "ja", "ko", enabled: true);
+
+        Assert.Equal(1, changedCount);
+        Assert.Equal("번역 완료", item.Status);
+        Assert.Equal("통과", item.ValidationStatus);
+        Assert.Equal("안녕하세요", item.TranslatedText);
+        Assert.True(item.CanSave);
+        Assert.False(item.NeedsTranslation);
+    }
+
+    [Fact]
+    public void Apply_ReusesOriginalWithSameNormalizationRules()
+    {
+        var item = BuildItem("seg-5", "테 스트", fileType: "CSV");
+
+        var service = new SourceLanguageFilterService();
+        var changedCount = service.Apply([item], "ja", "ko", enabled: true);
+
+        Assert.Equal(1, changedCount);
+        Assert.Equal("번역 완료", item.Status);
+        Assert.Equal("테스트", item.TranslatedText);
+    }
+
+    [Fact]
+    public void Apply_DoesNotReuseOriginalWhenFeatureDisabled()
+    {
+        var item = BuildItem("seg-6", "안녕하세요");
+
+        var service = new SourceLanguageFilterService();
+        var changedCount = service.Apply([item], "ja", "ko", enabled: false);
+
+        Assert.Equal(0, changedCount);
+        Assert.Equal("번역 대기", item.Status);
+        Assert.Equal(string.Empty, item.TranslatedText);
+        Assert.True(item.NeedsTranslation);
+    }
+
+    private static ExtractedTextItem BuildItem(string segmentId, string originalText, string fileType = "ERB")
+    {
+        return new ExtractedTextItem
+        {
+            SegmentId = segmentId,
+            DocumentId = $"{fileType}/Test.{fileType.ToLowerInvariant()}",
+            FileType = fileType,
+            RelativePath = $"{fileType}/Test.{fileType.ToLowerInvariant()}",
+            EncodingName = "UTF-8",
+            SegmentType = "print",
+            LineNumber = 1,
+            OriginalText = originalText,
+            WarningText = string.Empty,
+        };
     }
 }

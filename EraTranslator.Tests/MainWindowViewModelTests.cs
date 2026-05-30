@@ -737,6 +737,63 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void ResetTranslations_PreservesManualExcludedItems()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSession(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var item = Assert.Single(viewModel.Items);
+        item.ApplyManualStatusOverride("제외됨");
+
+        viewModel.ResetTranslations();
+
+        Assert.Equal("제외됨", item.Status);
+        Assert.Equal("수동 제외", item.ValidationStatus);
+        Assert.True(item.CanSave);
+        Assert.Equal(string.Empty, item.TranslatedText);
+    }
+
+    [Fact]
+    public void ResetTranslations_RefreshesSummaryWarningCount()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSession(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var item = Assert.Single(viewModel.Items);
+        item.ApplyTranslationState("번역 실패", "HTTP 500", "server error", false);
+
+        Assert.Contains("경고 1건", viewModel.SummaryText, StringComparison.Ordinal);
+
+        viewModel.ResetTranslations();
+
+        Assert.Contains("경고 0건", viewModel.SummaryText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ApplyJosaRewriteToCurrentScope_UpdatesFilteredItemsAndUsesSnapshotSave()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");

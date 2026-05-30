@@ -10,6 +10,9 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private readonly ModelCatalogService _modelCatalogService = new();
     private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
+    private PromptProfile _selectedPromptProfile = PromptProfile.Auto;
+    private string _lastAppliedSystemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
+    private string _lastAppliedRetryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private LmStudioPresetOption? _selectedLmStudioPresetOption;
     private ProviderOption? _selectedProviderOption;
     private string _baseUrl = string.Empty;
@@ -70,6 +73,16 @@ public sealed class TranslationSettingsViewModel : BindableBase
         new() { Profile = LmStudioPresetProfile.Auto, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Auto) },
         new() { Profile = LmStudioPresetProfile.Gemma4, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Gemma4) },
         new() { Profile = LmStudioPresetProfile.Qwen35_9B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Qwen35_9B) },
+        new() { Profile = LmStudioPresetProfile.TranslateGemma, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.TranslateGemma) },
+        new() { Profile = LmStudioPresetProfile.HyMt2_7B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.HyMt2_7B) },
+        new() { Profile = LmStudioPresetProfile.HyMt2_30B_A3B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.HyMt2_30B_A3B) },
+    ];
+
+    public IReadOnlyList<PromptProfile> PromptProfiles { get; } =
+    [
+        PromptProfile.Auto,
+        PromptProfile.Generic,
+        PromptProfile.HyMt2,
     ];
 
     public BulkObservableCollection<string> AvailableModels { get; } = [];
@@ -92,6 +105,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
                 RaisePropertyChanged(nameof(UsesApiKey));
                 RaisePropertyChanged(nameof(UsesPapagoCredentials));
                 RaisePropertyChanged(nameof(SupportsModelCatalog));
+                RaisePropertyChanged(nameof(CanEditModel));
                 RaisePropertyChanged(nameof(CanLoadModels));
                 RaisePropertyChanged(nameof(SupportsThinkingToggle));
                 RaisePropertyChanged(nameof(SupportsAdvancedSampling));
@@ -105,6 +119,20 @@ public sealed class TranslationSettingsViewModel : BindableBase
     {
         get => _baseUrl;
         set => SetProperty(ref _baseUrl, value);
+    }
+
+    public PromptProfile SelectedPromptProfile
+    {
+        get => _selectedPromptProfile;
+        set
+        {
+            var previousProfile = _selectedPromptProfile;
+            if (SetProperty(ref _selectedPromptProfile, value))
+            {
+                ApplyPromptProfileIfEligible(previousProfile, _model);
+                RaisePropertyChanged(nameof(ProviderHelpText));
+            }
+        }
     }
 
     public LmStudioPresetOption? SelectedLmStudioPresetOption
@@ -129,6 +157,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
             {
                 RaisePropertyChanged(nameof(ProviderHelpText));
                 ApplyLmStudioPresetIfEligible(previousModel, _disableThinking);
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, previousModel);
             }
         }
     }
@@ -248,7 +277,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set
         {
             var normalized = value.HasValue
-                ? Math.Clamp(value.Value, 1, 500)
+                ? value.Value == 0 ? 1 : Math.Clamp(value.Value, -1, 500)
                 : (int?)null;
             if (SetProperty(ref _topK, normalized))
             {
@@ -523,16 +552,25 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public bool SupportsModelCatalog => SelectedProviderOption is not null
         && _modelCatalogService.SupportsModelCatalog(SelectedProviderOption.ProviderType);
 
+    public bool CanEditModel => SelectedProviderOption?.ProviderType is
+        TranslationProviderType.OpenAi or
+        TranslationProviderType.XiaomiMiMo or
+        TranslationProviderType.LmStudio or
+        TranslationProviderType.Lemonade;
+
     public bool CanLoadModels => SupportsModelCatalog && !IsLoadingModels;
 
     public bool SupportsThinkingToggle => SelectedProviderOption?.ProviderType is
         TranslationProviderType.OpenAi or
-        TranslationProviderType.LmStudio;
+        TranslationProviderType.XiaomiMiMo or
+        TranslationProviderType.LmStudio or
+        TranslationProviderType.Lemonade;
 
-    public bool SupportsAdvancedSampling => SelectedProviderOption?.ProviderType == TranslationProviderType.LmStudio;
+    public bool SupportsAdvancedSampling => SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade or TranslationProviderType.XiaomiMiMo;
 
     public bool UsesApiKey => SelectedProviderOption?.ProviderType is
         TranslationProviderType.OpenAi or
+        TranslationProviderType.XiaomiMiMo or
         TranslationProviderType.DeepLFree or
         TranslationProviderType.DeepLPro;
 
@@ -543,7 +581,9 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public string ProviderHelpText => SelectedProviderOption?.ProviderType switch
     {
         TranslationProviderType.OpenAi => "OpenAI 호환 `/models` 엔드포인트에서 모델 목록을 불러옵니다.",
+        TranslationProviderType.XiaomiMiMo => BuildXiaomiMiMoHelpText(),
         TranslationProviderType.LmStudio => BuildLmStudioHelpText(),
+        TranslationProviderType.Lemonade => BuildLemonadeHelpText(),
         TranslationProviderType.DeepLFree => "DeepL Free 엔드포인트를 사용합니다. API Key는 Free 계정용 키를 입력하세요.",
         TranslationProviderType.DeepLPro => "DeepL Pro 엔드포인트를 사용합니다. API Key는 유료 계정용 키를 입력하세요.",
         TranslationProviderType.Papago => "Papago는 모델 목록 조회를 지원하지 않습니다.",
@@ -553,10 +593,12 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public void LoadFrom(MainWindowViewModel source)
     {
-        SelectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == source.SelectedProviderType);
+        SelectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == source.SelectedProviderType)
+            ?? ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
         BaseUrl = source.BaseUrl;
         Model = source.Model;
         SelectedLmStudioPresetOption = FindLmStudioPresetOption(source.LmStudioPresetProfile);
+        SelectedPromptProfile = source.PromptProfile;
         foreach (var pair in source.ProviderApiKeys)
         {
             _providerApiKeys[pair.Key] = pair.Value;
@@ -633,6 +675,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
             BaseUrl = BaseUrl,
             Model = Model,
             ApiKey = ApiKey,
+            PromptProfile = SelectedPromptProfile,
             SourceLanguage = SourceLanguage,
             TargetLanguage = TargetLanguage,
             BatchSize = BatchSize,
@@ -691,8 +734,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public void ResetPromptTemplates()
     {
-        SystemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
-        RetryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
+        ApplyPromptProfileDefaults(ResolvePromptProfile(Model, SelectedPromptProfile));
     }
 
     public void ResetTranslationOptions()
@@ -705,9 +747,13 @@ public sealed class TranslationSettingsViewModel : BindableBase
         ExcludeNonSourceText = true;
         Seed = null;
 
-        if (SelectedProviderOption?.ProviderType == TranslationProviderType.LmStudio)
+        if (SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade)
         {
             ApplySelectedLmStudioPreset();
+        }
+        else if (SelectedProviderOption?.ProviderType == TranslationProviderType.XiaomiMiMo)
+        {
+            ApplyXiaomiMiMoDefaults();
         }
         else
         {
@@ -732,6 +778,17 @@ public sealed class TranslationSettingsViewModel : BindableBase
                 {
                     Model = "gpt-4o-mini";
                 }
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
+                break;
+            case TranslationProviderType.XiaomiMiMo:
+                BaseUrl = "https://api.xiaomimimo.com/v1";
+                AvailableModels.ReplaceAll(["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-flash"]);
+                if (string.IsNullOrWhiteSpace(Model) || Model == "local-model")
+                {
+                    Model = "mimo-v2.5-pro";
+                }
+                ApplyXiaomiMiMoDefaults();
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
                 break;
             case TranslationProviderType.LmStudio:
                 BaseUrl = "http://127.0.0.1:1234/v1";
@@ -740,6 +797,16 @@ public sealed class TranslationSettingsViewModel : BindableBase
                     Model = "local-model";
                 }
                 ApplyLmStudioPresetIfEligible(Model, DisableThinking);
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
+                break;
+            case TranslationProviderType.Lemonade:
+                BaseUrl = "http://127.0.0.1:13305/v1";
+                if (string.IsNullOrWhiteSpace(Model))
+                {
+                    Model = "local-model";
+                }
+                ApplyLmStudioPresetIfEligible(Model, DisableThinking);
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
                 break;
             case TranslationProviderType.DeepLFree:
                 BaseUrl = "https://api-free.deepl.com/v2/translate";
@@ -769,18 +836,59 @@ public sealed class TranslationSettingsViewModel : BindableBase
     {
         var family = LmStudioSamplingDefaults.DetectModelFamily(Model);
         var presetLabel = LmStudioSamplingDefaults.GetPresetDisplayName(SelectedLmStudioPresetProfile);
-        var familyNote = family == LmStudioModelFamily.Qwen
-            ? "Qwen 계열은 thinking 제어와 max_tokens 안전장치를 함께 사용합니다."
-            : "LM Studio는 모델별 기본 preset이 다르며, 미지정 모델은 Gemma 기준 preset을 사용합니다.";
+        var promptProfile = ResolvePromptProfile(Model, SelectedPromptProfile);
+        var promptProfileLabel = GetPromptProfileDisplayName(promptProfile);
+        var familyNote = family switch
+        {
+            LmStudioModelFamily.Qwen => "Qwen 계열은 thinking 제어와 max_tokens 안전장치를 함께 사용합니다.",
+            LmStudioModelFamily.TranslateGemma => "TranslateGemma는 전용 LM Studio 형식을 사용하며 glossary 힌트와 사용자 프롬프트 템플릿을 사용하지 않고, 배치 크기는 실질적으로 1로 동작합니다.",
+            LmStudioModelFamily.HyMt2 when LmStudioSamplingDefaults.DetectHyMt2PresetProfile(Model) == LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B는 top_k = -1, max_tokens = 4096 권장값을 사용할 수 있습니다.",
+            LmStudioModelFamily.HyMt2 => "Hy-MT2 7B는 기존 LM Studio structured output 경로를 유지하며 HF 권장 inference 값을 사용할 수 있습니다.",
+            _ => "LM Studio는 모델별 기본 preset이 다르며, 미지정 모델은 Gemma 기준 preset을 사용합니다.",
+        };
         return "LM Studio는 JSON schema 출력 우선, 실패 시 안전한 tokenized fallback으로 재시도합니다. "
             + $"현재 선택 프리셋: {presetLabel}. "
+            + $"현재 프롬프트 프로필: {promptProfileLabel}. "
             + familyNote + " "
             + LmStudioSamplingDefaults.BuildPresetSummary(SelectedLmStudioPresetProfile, Model, DisableThinking);
     }
 
+    private string BuildLemonadeHelpText()
+    {
+        var family = LmStudioSamplingDefaults.DetectModelFamily(Model);
+        var presetLabel = LmStudioSamplingDefaults.GetPresetDisplayName(SelectedLmStudioPresetProfile);
+        var promptProfile = ResolvePromptProfile(Model, SelectedPromptProfile);
+        var promptProfileLabel = GetPromptProfileDisplayName(promptProfile);
+        var familyNote = family switch
+        {
+            LmStudioModelFamily.TranslateGemma => "TranslateGemma는 전용 요청 형식을 사용하므로 glossary 힌트와 사용자 프롬프트 템플릿을 실제 요청에는 적용하지 않습니다.",
+            LmStudioModelFamily.HyMt2 when LmStudioSamplingDefaults.DetectHyMt2PresetProfile(Model) == LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B는 top_k = -1, max_tokens = 4096 권장값을 사용할 수 있습니다.",
+            LmStudioModelFamily.HyMt2 => "Hy-MT2 7B는 HF 권장 inference 값과 Hy-MT2 프롬프트 프로필을 함께 사용할 수 있습니다.",
+            _ => "Lemonade는 OpenAI 호환 `/v1/models`와 `/v1/chat/completions`를 사용하며, 모델명 기준 로컬 프리셋을 적용합니다.",
+        };
+        return "Lemonade는 OpenAI 호환 서버입니다. "
+            + $"현재 선택 프리셋: {presetLabel}. "
+            + $"현재 프롬프트 프로필: {promptProfileLabel}. "
+            + familyNote + " "
+            + "문서 기준 지원 샘플링은 temperature, top_p, top_k, repeat_penalty, max_tokens 또는 max_completion_tokens입니다. presence_penalty, seed, json_schema response_format, enable_thinking는 공식 chat/completions 문서에 없습니다. "
+            + LmStudioSamplingDefaults.BuildPresetSummary(SelectedLmStudioPresetProfile, Model, DisableThinking);
+    }
+
+    private string BuildXiaomiMiMoHelpText()
+    {
+        var modelNote = Model.Contains("mimo-v2-flash", StringComparison.OrdinalIgnoreCase)
+            ? "mimo-v2-flash는 기본 Temperature 0.3 / Top P 0.95를 사용합니다."
+            : "mimo-v2.5-pro와 mimo-v2.5는 thinking 모드에서 Temperature 1.0이 권장됩니다.";
+        return "Xiaomi MiMo는 OpenAI 호환 클라우드 서비스입니다. "
+            + "기본 URL은 https://api.xiaomimimo.com/v1 이고, API Key는 Bearer 인증으로 보냅니다. "
+            + "라이브 /models 조회는 사용하지 않고, mimo-v2.5-pro / mimo-v2.5 / mimo-v2-flash 추천 목록을 제공합니다. "
+            + "thinking.type과 max_completion_tokens를 사용하며, MiMo 권장 시스템 프롬프트는 자동으로 주입하지 않습니다. "
+            + modelNote;
+    }
+
     private void ApplyLmStudioPresetIfEligible(string? previousModel, bool previousDisableThinking)
     {
-        if (SelectedProviderOption?.ProviderType != TranslationProviderType.LmStudio)
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -797,11 +905,16 @@ public sealed class TranslationSettingsViewModel : BindableBase
         ApplyPresetValue(previousPreset.TopK, currentPreset.TopK, TopK, value => TopK = value);
         ApplyPresetValue(previousPreset.RepeatPenalty, currentPreset.RepeatPenalty, RepeatPenalty, value => RepeatPenalty = value);
         ApplyPresetValue(previousPreset.PresencePenalty, currentPreset.PresencePenalty, PresencePenalty, value => PresencePenalty = value);
+        ApplyPresetValue(
+            LmStudioSamplingDefaults.GetRecommendedMaxTokens(SelectedLmStudioPresetProfile, previousModel),
+            LmStudioSamplingDefaults.GetRecommendedMaxTokens(SelectedLmStudioPresetProfile, Model),
+            MaxTokens,
+            value => MaxTokens = value);
     }
 
     public void ApplySelectedLmStudioPreset()
     {
-        if (SelectedProviderOption?.ProviderType != TranslationProviderType.LmStudio)
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -812,7 +925,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         TopK = preset.TopK;
         RepeatPenalty = preset.RepeatPenalty;
         PresencePenalty = preset.PresencePenalty;
-        MaxTokens = null;
+        MaxTokens = LmStudioSamplingDefaults.GetRecommendedMaxTokens(SelectedLmStudioPresetProfile, Model);
         StatusText = $"{LmStudioSamplingDefaults.GetPresetDisplayName(SelectedLmStudioPresetProfile)} 프리셋을 적용했습니다.";
     }
 
@@ -931,7 +1044,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
             if (Math.Abs(rounded % 1) < 0.000001)
             {
                 value = (int)Math.Round(rounded, MidpointRounding.AwayFromZero);
-                return true;
+                return value is >= -1 and <= 500 && value != 0;
             }
         }
 
@@ -942,6 +1055,91 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private static string FormatDouble(double value)
     {
         return value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private void ApplyPromptProfileIfEligible(PromptProfile previousProfile, string? previousModel)
+    {
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.OpenAi or TranslationProviderType.XiaomiMiMo or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
+        {
+            return;
+        }
+
+        var previousResolved = ResolvePromptProfile(previousModel, previousProfile);
+        var currentResolved = ResolvePromptProfile(Model, SelectedPromptProfile);
+        var previousSystem = TranslationPromptTemplates.GetDefaultTemplate(previousResolved, isRetryPrompt: false);
+        var previousRetry = TranslationPromptTemplates.GetDefaultTemplate(previousResolved, isRetryPrompt: true);
+        var currentSystem = TranslationPromptTemplates.GetDefaultTemplate(currentResolved, isRetryPrompt: false);
+        var currentRetry = TranslationPromptTemplates.GetDefaultTemplate(currentResolved, isRetryPrompt: true);
+
+        if (ShouldReplacePromptTemplate(SystemPromptTemplate, previousSystem, _lastAppliedSystemPromptTemplate))
+        {
+            SystemPromptTemplate = currentSystem;
+        }
+
+        if (ShouldReplacePromptTemplate(RetryPromptTemplate, previousRetry, _lastAppliedRetryPromptTemplate))
+        {
+            RetryPromptTemplate = currentRetry;
+        }
+
+        _lastAppliedSystemPromptTemplate = currentSystem;
+        _lastAppliedRetryPromptTemplate = currentRetry;
+    }
+
+    private void ApplyPromptProfileDefaults(PromptProfile resolvedProfile)
+    {
+        SystemPromptTemplate = TranslationPromptTemplates.GetDefaultTemplate(resolvedProfile, isRetryPrompt: false);
+        RetryPromptTemplate = TranslationPromptTemplates.GetDefaultTemplate(resolvedProfile, isRetryPrompt: true);
+        _lastAppliedSystemPromptTemplate = SystemPromptTemplate;
+        _lastAppliedRetryPromptTemplate = RetryPromptTemplate;
+    }
+
+    private PromptProfile ResolvePromptProfile(string? model, PromptProfile selectedProfile)
+    {
+        if (selectedProfile != PromptProfile.Auto)
+        {
+            return selectedProfile;
+        }
+
+        return model?.Contains("hy-mt2", StringComparison.OrdinalIgnoreCase) == true
+            ? PromptProfile.HyMt2
+            : PromptProfile.Generic;
+    }
+
+    private static bool ShouldReplacePromptTemplate(string currentTemplate, string previousDefault, string lastAppliedDefault)
+    {
+        return string.IsNullOrWhiteSpace(currentTemplate)
+            || string.Equals(currentTemplate, previousDefault, StringComparison.Ordinal)
+            || string.Equals(currentTemplate, lastAppliedDefault, StringComparison.Ordinal);
+    }
+
+    private static string GetPromptProfileDisplayName(PromptProfile profile)
+    {
+        return profile switch
+        {
+            PromptProfile.Auto => "자동",
+            PromptProfile.Generic => "기본",
+            PromptProfile.HyMt2 => "Hy-MT2",
+            _ => profile.ToString(),
+        };
+    }
+
+    private void ApplyXiaomiMiMoDefaults()
+    {
+        if (Model.Contains("mimo-v2-flash", StringComparison.OrdinalIgnoreCase))
+        {
+            Temperature = 0.3;
+            TopP = 0.95;
+        }
+        else
+        {
+            Temperature = 1.0;
+            TopP = 0.95;
+        }
+
+        TopK = null;
+        RepeatPenalty = null;
+        PresencePenalty = null;
+        MaxTokens = null;
     }
 
     private static string FormatNullableDouble(double? value)

@@ -198,4 +198,36 @@ public sealed class ExtractedTextItemTests
         item.ApplyTranslationState("검수 필요", "통과", "review", true, "번역");
         Assert.False(item.NeedsTranslation);
     }
+
+    [Fact]
+    public void ApplyPersistedState_BlankSuccessfulTranslationBecomesFailureAndNeedsTranslation()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        item.ApplyPersistedState(new TranslationProgressItemState
+        {
+            SegmentId = "doc:1",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            CanSave = true,
+            TranslatedText = "   ",
+        });
+
+        Assert.Equal("번역 실패", item.Status);
+        Assert.Equal("빈 번역문", item.ValidationStatus);
+        Assert.True(item.NeedsTranslation);
+        Assert.False(item.CanSave);
+        Assert.Equal(string.Empty, item.TranslatedText);
+    }
 }

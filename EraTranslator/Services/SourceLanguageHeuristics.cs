@@ -28,6 +28,52 @@ public static partial class SourceLanguageHeuristics
         };
     }
 
+    public static bool IsEntirelyMeaningfulLanguageText(string text, string language)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var meaningfulChars = GetMeaningfulChars(text);
+        if (meaningfulChars.Count == 0)
+        {
+            return false;
+        }
+
+        var normalizedLanguage = (language ?? string.Empty).Trim().ToLowerInvariant();
+        return normalizedLanguage switch
+        {
+            "ja" or "jp" => meaningfulChars.All(IsJapaneseChar),
+            "ko" => meaningfulChars.All(IsHangulChar),
+            "en" => meaningfulChars.All(IsLatinChar),
+            _ => false,
+        };
+    }
+
+    public static bool ContainsMeaningfulLanguageText(string text, string language)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var meaningfulChars = GetMeaningfulChars(text);
+        if (meaningfulChars.Count == 0)
+        {
+            return false;
+        }
+
+        var normalizedLanguage = (language ?? string.Empty).Trim().ToLowerInvariant();
+        return normalizedLanguage switch
+        {
+            "ja" or "jp" => meaningfulChars.Any(IsJapaneseChar),
+            "ko" => meaningfulChars.Any(IsHangulChar),
+            "en" => meaningfulChars.Any(IsLatinChar),
+            _ => false,
+        };
+    }
+
     private static bool IsLikelyJapanese(IReadOnlyList<char> chars)
     {
         var japaneseCount = chars.Count(IsJapaneseChar);
@@ -70,6 +116,12 @@ public static partial class SourceLanguageHeuristics
     {
         return ch is >= 'A' and <= 'Z'
             or >= 'a' and <= 'z';
+    }
+
+    private static List<char> GetMeaningfulChars(string text)
+    {
+        var sanitized = StripPlaceholderLikeTokens(text);
+        return sanitized.Where(static ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch) && !char.IsDigit(ch)).ToList();
     }
 
     private static string StripPlaceholderLikeTokens(string text)

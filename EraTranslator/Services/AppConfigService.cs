@@ -38,6 +38,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 BaseUrl = loaded.BaseUrl,
                 Model = loaded.Model,
                 LmStudioPresetProfile = loaded.LmStudioPresetProfile,
+                PromptProfile = loaded.PromptProfile,
                 SourceLanguage = loaded.SourceLanguage,
                 TargetLanguage = loaded.TargetLanguage,
                 BatchSize = loaded.BatchSize,
@@ -100,6 +101,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             BaseUrl = config.BaseUrl,
             Model = config.Model,
             LmStudioPresetProfile = config.LmStudioPresetProfile,
+            PromptProfile = config.PromptProfile,
             SourceLanguage = config.SourceLanguage,
             TargetLanguage = config.TargetLanguage,
             BatchSize = config.BatchSize,
@@ -163,6 +165,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             BaseUrl = config.BaseUrl,
             Model = config.Model,
             LmStudioPresetProfile = config.LmStudioPresetProfile,
+            PromptProfile = config.PromptProfile,
             SourceLanguage = config.SourceLanguage,
             TargetLanguage = config.TargetLanguage,
             BatchSize = config.BatchSize,
@@ -218,6 +221,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
         public string Model { get; init; } = "gpt-4o-mini";
 
         public LmStudioPresetProfile LmStudioPresetProfile { get; init; } = LmStudioPresetProfile.Auto;
+
+        public PromptProfile PromptProfile { get; init; } = PromptProfile.Auto;
 
         public string SourceLanguage { get; init; } = "ja";
 

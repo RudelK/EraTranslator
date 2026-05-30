@@ -4,6 +4,8 @@ namespace EraTranslator.Services;
 
 public static partial class TranslationQualityRules
 {
+    public readonly record struct HardFailureReason(string ValidationStatus, string Message);
+
     public static string NormalizeTranslatedText(string fileType, string text, bool preserveWhitespace = false)
     {
         if (string.Equals(fileType, "CSV", StringComparison.OrdinalIgnoreCase))
@@ -14,6 +16,26 @@ public static partial class TranslationQualityRules
         }
 
         return NormalizeErbFunctionArgumentSeparators(NormalizeProtectedCharacterSpacing(text));
+    }
+
+    public static HardFailureReason? GetHardFailureReason(
+        string translatedText,
+        string sourceLanguage,
+        string targetLanguage,
+        string? originalText = null)
+    {
+        var normalizedTranslated = translatedText.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedTranslated))
+        {
+            return new HardFailureReason("빈 번역문", "정규화 후 번역문이 비어 있습니다.");
+        }
+
+        if (ShouldRejectSourceLanguageLeak(normalizedTranslated, sourceLanguage, targetLanguage, originalText))
+        {
+            return new HardFailureReason("대상 언어 불일치", "원문 언어 텍스트가 남아 있어 번역 실패로 처리했습니다.");
+        }
+
+        return null;
     }
 
     public static string NormalizeErbFunctionArgumentSeparators(string text)
@@ -180,6 +202,48 @@ public static partial class TranslationQualityRules
     private static bool ContainsAsciiWord(string value)
     {
         return AsciiWordPattern().IsMatch(value);
+    }
+
+    private static bool ShouldRejectSourceLanguageLeak(
+        string translatedText,
+        string sourceLanguage,
+        string targetLanguage,
+        string? originalText)
+    {
+        var normalizedSource = (sourceLanguage ?? string.Empty).Trim().ToLowerInvariant();
+        var normalizedTarget = (targetLanguage ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedSource is not ("ja" or "jp") || normalizedTarget != "ko")
+        {
+            return false;
+        }
+
+        if (SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedText, normalizedSource))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(originalText))
+        {
+            return false;
+        }
+
+        var normalizedOriginal = NormalizeForLanguageComparison(originalText);
+        if (normalizedOriginal.Length == 0
+            || !SourceLanguageHeuristics.ContainsMeaningfulLanguageText(normalizedOriginal, normalizedSource)
+            || SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedText, normalizedTarget))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            NormalizeForLanguageComparison(translatedText),
+            normalizedOriginal,
+            StringComparison.Ordinal);
+    }
+
+    private static string NormalizeForLanguageComparison(string text)
+    {
+        return string.Concat(text.Where(static character => !char.IsWhiteSpace(character)));
     }
 
     private static bool LooksLikeErbFunctionCall(string text, int openParenIndex)

@@ -87,9 +87,11 @@ public sealed class TranslationCoordinator : IDisposable
             .ToHashSet(StringComparer.Ordinal);
         var totalCount = initiallyPendingSegmentIds.Count;
         var processedSegmentIds = new HashSet<string>(StringComparer.Ordinal);
+        var processedCount = 0;
 
         var seededItems = ApplyExistingSharedTranslations(propagationGroupedByOriginal, targetOriginals);
         var seededCount = MarkProcessed(seededItems);
+        processedCount = seededCount;
         if (seededCount > 0)
         {
             persistState?.Invoke();
@@ -101,11 +103,34 @@ public sealed class TranslationCoordinator : IDisposable
             .Select(group => group.First())
             .ToList();
 
+        var targetLanguageRepresentatives = representatives
+            .Where(item => ShouldReuseOriginalAsTranslation(item.OriginalText, settings))
+            .ToList();
+        foreach (var item in targetLanguageRepresentatives)
+        {
+            processedCount += MarkProcessed(ApplySuccessToGroup(
+                activeGroupedByOriginal,
+                propagationGroupedByOriginal,
+                activeSegmentIds,
+                item.OriginalText,
+                item.OriginalText,
+                settings.SourceLanguage,
+                settings.TargetLanguage));
+        }
+
+        if (targetLanguageRepresentatives.Count > 0)
+        {
+            persistState?.Invoke();
+            representatives = representatives
+                .Except(targetLanguageRepresentatives)
+                .ToList();
+        }
+
         if (representatives.Count == 0)
         {
-            if (totalCount > 0 && seededCount > 0)
+            if (totalCount > 0 && processedCount > 0)
             {
-                progress.Report((1.0, $"번역 진행 중... {seededCount}/{totalCount}", string.Empty));
+                progress.Report((1.0, $"번역 진행 중... {processedCount}/{totalCount}", string.Empty));
             }
 
             return;
@@ -119,9 +144,13 @@ public sealed class TranslationCoordinator : IDisposable
                 : settings.BatchSize,
             1,
             100);
+        if (settings.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade
+            && LmStudioSamplingDefaults.DetectModelFamily(settings.Model) == LmStudioModelFamily.TranslateGemma)
+        {
+            batchSize = 1;
+        }
         var retryCount = Math.Clamp(settings.RetryCount, 0, 10);
         var queue = new Queue<ExtractedTextItem>(representatives);
-        var processedCount = seededCount;
 
         int MarkProcessed(IEnumerable<ExtractedTextItem> affectedItems)
         {
@@ -286,7 +315,9 @@ public sealed class TranslationCoordinator : IDisposable
                             propagationGroupedByOriginal,
                             activeSegmentIds,
                             item.OriginalText,
-                            restoredTranslation));
+                            restoredTranslation,
+                            settings.SourceLanguage,
+                            settings.TargetLanguage));
                     }
 
                     remaining = nextRemaining;
@@ -398,7 +429,9 @@ public sealed class TranslationCoordinator : IDisposable
         IReadOnlyDictionary<string, List<ExtractedTextItem>> propagationGroupedByOriginal,
         IReadOnlySet<string> activeSegmentIds,
         string originalText,
-        string translatedText)
+        string translatedText,
+        string sourceLanguage,
+        string targetLanguage)
     {
         var affectedItems = ApplyToGroup(
             activeGroupedByOriginal,
@@ -406,6 +439,22 @@ public sealed class TranslationCoordinator : IDisposable
             item =>
             {
                 var normalizedTranslation = TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
+                var hardFailureReason = TranslationQualityRules.GetHardFailureReason(
+                    normalizedTranslation,
+                    sourceLanguage,
+                    targetLanguage,
+                    item.OriginalText);
+                if (hardFailureReason is not null)
+                {
+                    item.ApplyTranslationState(
+                        "번역 실패",
+                        hardFailureReason.Value.ValidationStatus,
+                        hardFailureReason.Value.Message,
+                        false,
+                        hardFailureReason.Value.ValidationStatus == "빈 번역문" ? string.Empty : normalizedTranslation);
+                    return;
+                }
+
                 var reviewReason = TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation);
                 item.ApplyTranslationState(
                     reviewReason is null ? "번역 완료" : "검수 필요",
@@ -423,6 +472,23 @@ public sealed class TranslationCoordinator : IDisposable
         foreach (var item in propagationGroup.Where(item => !activeSegmentIds.Contains(item.SegmentId) && item.NeedsTranslation))
         {
             var normalizedTranslation = TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
+            var hardFailureReason = TranslationQualityRules.GetHardFailureReason(
+                normalizedTranslation,
+                sourceLanguage,
+                targetLanguage,
+                item.OriginalText);
+            if (hardFailureReason is not null)
+            {
+                item.ApplyTranslationState(
+                    "번역 실패",
+                    hardFailureReason.Value.ValidationStatus,
+                    hardFailureReason.Value.Message,
+                    false,
+                    hardFailureReason.Value.ValidationStatus == "빈 번역문" ? string.Empty : normalizedTranslation);
+                affectedItems.Add(item);
+                continue;
+            }
+
             var reviewReason = TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation);
             item.ApplyTranslationState(
                 reviewReason is null ? "번역 완료" : "검수 필요",
@@ -469,6 +535,16 @@ public sealed class TranslationCoordinator : IDisposable
                 reviewReason,
                 false,
                 translatedText));
+    }
+
+    private static bool ShouldReuseOriginalAsTranslation(string originalText, ProviderSettings settings)
+    {
+        if (!settings.ExcludeNonSourceText)
+        {
+            return false;
+        }
+
+        return SourceLanguageHeuristics.IsEntirelyMeaningfulLanguageText(originalText, settings.TargetLanguage);
     }
 
     private static List<ExtractedTextItem> ApplyToGroup(

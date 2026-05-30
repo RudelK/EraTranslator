@@ -7,6 +7,8 @@ internal enum LmStudioModelFamily
     Unknown,
     Gemma,
     Qwen,
+    TranslateGemma,
+    HyMt2,
 }
 
 internal enum LmStudioThinkingControlMode
@@ -26,7 +28,7 @@ internal readonly record struct LmStudioSamplingPreset(
 internal static class LmStudioSamplingDefaults
 {
     public static LmStudioSamplingPreset GemmaPreset { get; } = new(
-        Temperature: 0.1,
+        Temperature: 0.2,
         TopP: 0.9,
         TopK: 40,
         RepeatPenalty: 1.10,
@@ -46,6 +48,27 @@ internal static class LmStudioSamplingDefaults
         RepeatPenalty: null,
         PresencePenalty: 1.5);
 
+    public static LmStudioSamplingPreset TranslateGemmaPreset { get; } = new(
+        Temperature: 0.2,
+        TopP: 0.9,
+        TopK: 40,
+        RepeatPenalty: 1.05,
+        PresencePenalty: null);
+
+    public static LmStudioSamplingPreset HyMt2_7BPreset { get; } = new(
+        Temperature: 0.7,
+        TopP: 0.6,
+        TopK: 20,
+        RepeatPenalty: 1.05,
+        PresencePenalty: null);
+
+    public static LmStudioSamplingPreset HyMt2_30B_A3BPreset { get; } = new(
+        Temperature: 0.7,
+        TopP: 1.0,
+        TopK: -1,
+        RepeatPenalty: 1.0,
+        PresencePenalty: null);
+
     public static LmStudioModelFamily DetectModelFamily(string? model)
     {
         if (string.IsNullOrWhiteSpace(model))
@@ -54,6 +77,16 @@ internal static class LmStudioSamplingDefaults
         }
 
         var normalized = model.Trim();
+        if (normalized.Contains("translategemma", StringComparison.OrdinalIgnoreCase))
+        {
+            return LmStudioModelFamily.TranslateGemma;
+        }
+
+        if (normalized.Contains("hy-mt2", StringComparison.OrdinalIgnoreCase))
+        {
+            return LmStudioModelFamily.HyMt2;
+        }
+
         if (normalized.Contains("qwen", StringComparison.OrdinalIgnoreCase))
         {
             return LmStudioModelFamily.Qwen;
@@ -73,8 +106,23 @@ internal static class LmStudioSamplingDefaults
         {
             LmStudioPresetProfile.Gemma4 => LmStudioModelFamily.Gemma,
             LmStudioPresetProfile.Qwen35_9B => LmStudioModelFamily.Qwen,
+            LmStudioPresetProfile.TranslateGemma => LmStudioModelFamily.TranslateGemma,
+            LmStudioPresetProfile.HyMt2_7B => LmStudioModelFamily.HyMt2,
+            LmStudioPresetProfile.HyMt2_30B_A3B => LmStudioModelFamily.HyMt2,
             _ => DetectModelFamily(model),
         };
+    }
+
+    public static LmStudioPresetProfile DetectHyMt2PresetProfile(string? model)
+    {
+        var normalized = model?.Trim() ?? string.Empty;
+        if (normalized.Contains("30b-a3b", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("30b", StringComparison.OrdinalIgnoreCase))
+        {
+            return LmStudioPresetProfile.HyMt2_30B_A3B;
+        }
+
+        return LmStudioPresetProfile.HyMt2_7B;
     }
 
     public static LmStudioSamplingPreset GetRecommendedPreset(string? model, bool disableThinking)
@@ -91,6 +139,12 @@ internal static class LmStudioSamplingDefaults
         {
             LmStudioModelFamily.Qwen => disableThinking ? QwenNonThinkingPreset : QwenThinkingPreset,
             LmStudioModelFamily.Gemma => GemmaPreset,
+            LmStudioModelFamily.TranslateGemma => TranslateGemmaPreset,
+            LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.HyMt2_30B_A3B => HyMt2_30B_A3BPreset,
+            LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.HyMt2_7B => HyMt2_7BPreset,
+            LmStudioModelFamily.HyMt2 => DetectHyMt2PresetProfile(model) == LmStudioPresetProfile.HyMt2_30B_A3B
+                ? HyMt2_30B_A3BPreset
+                : HyMt2_7BPreset,
             _ => GemmaPreset,
         };
     }
@@ -153,6 +207,13 @@ internal static class LmStudioSamplingDefaults
             && MatchesPresetValue(settings.PresencePenalty, preset.PresencePenalty);
     }
 
+    public static int? GetRecommendedMaxTokens(
+        LmStudioPresetProfile profile,
+        string? model)
+    {
+        return GetModelFamily(profile, model) == LmStudioModelFamily.HyMt2 ? 4096 : null;
+    }
+
     public static string BuildPresetSummary(string? model, bool disableThinking)
     {
         return BuildPresetSummary(LmStudioPresetProfile.Auto, model, disableThinking);
@@ -171,6 +232,11 @@ internal static class LmStudioSamplingDefaults
             LmStudioModelFamily.Qwen => disableThinking ? "Qwen 3.5 9B non-thinking" : "Qwen 3.5 9B thinking/general",
             LmStudioModelFamily.Gemma when profile == LmStudioPresetProfile.Auto => "Gemma (auto)",
             LmStudioModelFamily.Gemma => "Gemma 4",
+            LmStudioModelFamily.TranslateGemma when profile == LmStudioPresetProfile.Auto => "TranslateGemma (auto)",
+            LmStudioModelFamily.TranslateGemma => "TranslateGemma",
+            LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.Auto => DetectHyMt2PresetProfile(model) == LmStudioPresetProfile.HyMt2_30B_A3B ? "Hy-MT2 30B-A3B (auto)" : "Hy-MT2 7B (auto)",
+            LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B",
+            LmStudioModelFamily.HyMt2 => "Hy-MT2 7B",
             _ => "Gemma-style",
         };
 
@@ -183,6 +249,9 @@ internal static class LmStudioSamplingDefaults
         {
             LmStudioPresetProfile.Gemma4 => "Gemma 4",
             LmStudioPresetProfile.Qwen35_9B => "Qwen 3.5 9B",
+            LmStudioPresetProfile.TranslateGemma => "TranslateGemma",
+            LmStudioPresetProfile.HyMt2_7B => "Hy-MT2 7B",
+            LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B",
             _ => "자동 (모델 기준)",
         };
     }

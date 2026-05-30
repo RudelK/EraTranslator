@@ -54,6 +54,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private string _baseUrl = "https://api.openai.com/v1";
     private string _model = "gpt-4o-mini";
     private LmStudioPresetProfile _lmStudioPresetProfile = LmStudioPresetProfile.Auto;
+    private PromptProfile _promptProfile = PromptProfile.Auto;
     private string _sourceLanguage = "ja";
     private string _targetLanguage = "ko";
     private int _batchSize = 1;
@@ -339,6 +340,19 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
+    public PromptProfile PromptProfile
+    {
+        get => _promptProfile;
+        set
+        {
+            if (SetProperty(ref _promptProfile, value))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
     public bool EnableRequestResponseLogging
     {
         get => _enableRequestResponseLogging;
@@ -409,7 +423,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         set
         {
             var normalized = value.HasValue
-                ? Math.Clamp(value.Value, 1, 500)
+                ? value.Value == 0 ? 1 : Math.Clamp(value.Value, -1, 500)
                 : (int?)null;
             if (SetProperty(ref _topK, normalized))
             {
@@ -889,13 +903,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 await Task.Run(() => _projectStatePersistenceService.SaveScanSession(scanResult.Session, projectDataDirectory), cancellationToken);
                 SaveTranslationProgressSnapshot("ScanAsync completed");
 
-                SummaryText =
-                    $"문서 {scanResult.Session.Metrics.GetValueOrDefault("Documents")}개, " +
-                    $"항목 {scanResult.Session.Metrics.GetValueOrDefault("Items")}개, " +
-                    $"ERB {scanResult.Session.Metrics.GetValueOrDefault("ErbItems")}개, " +
-                    $"CSV {scanResult.Session.Metrics.GetValueOrDefault("CsvItems")}개, " +
-                    $"경고 {scanResult.Session.Metrics.GetValueOrDefault("Warnings")}건, " +
-                    $"조사 패턴 {scanResult.Session.Metrics.GetValueOrDefault("JosaPatterns")}건";
+                RefreshSummaryText();
 
                 StatusText = restoreResult.RestoredCount > 0
                     ? $"스캔이 완료되었습니다. 이전 번역 상태 {restoreResult.ExactRestoredCount}개 정확 복원, {restoreResult.HeuristicRestoredCount}개 업데이트 승계, {restoreResult.UnmatchedCount}개 신규/변경 항목입니다."
@@ -1101,6 +1109,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             foreach (var item in Items)
             {
+                if (item.IsExcluded)
+                {
+                    continue;
+                }
+
                 item.ResetTranslationState();
             }
         }
@@ -1111,6 +1124,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
         ApplySourceLanguageFilter(persistProgress: false);
         SaveTranslationProgressSnapshot("ResetTranslations");
+        RefreshSummaryText();
         StatusText = "번역 상태를 리셋했습니다.";
         CurrentOperationDetail = "번역문, 실패 상태, 검증 상태를 초기화했습니다.";
         RefreshItemsView();
@@ -1520,6 +1534,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         BaseUrl = settingsViewModel.BaseUrl;
         Model = settingsViewModel.Model;
         LmStudioPresetProfile = settingsViewModel.SelectedLmStudioPresetProfile;
+        PromptProfile = settingsViewModel.SelectedPromptProfile;
         SourceLanguage = settingsViewModel.SourceLanguage;
         TargetLanguage = settingsViewModel.TargetLanguage;
         BatchSize = settingsViewModel.BatchSize;
@@ -1563,6 +1578,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             BaseUrl = BaseUrl,
             Model = Model,
             ApiKey = _providerApiKeys.GetValueOrDefault(SelectedProviderType, string.Empty),
+            PromptProfile = PromptProfile,
             SourceLanguage = SourceLanguage,
             TargetLanguage = TargetLanguage,
             BatchSize = BatchSize,
@@ -1607,13 +1623,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         ApplySession(session, restoreProgress: true);
-        SummaryText =
-            $"문서 {session.Metrics.GetValueOrDefault("Documents")}개, " +
-            $"항목 {session.Metrics.GetValueOrDefault("Items")}개, " +
-            $"ERB {session.Metrics.GetValueOrDefault("ErbItems")}개, " +
-            $"CSV {session.Metrics.GetValueOrDefault("CsvItems")}개, " +
-            $"경고 {session.Metrics.GetValueOrDefault("Warnings")}건, " +
-            $"조사 패턴 {session.Metrics.GetValueOrDefault("JosaPatterns")}건";
+        RefreshSummaryText();
         StatusText = "마지막 추출 상태를 불러왔습니다.";
         CurrentOperationDetail = $"복원 완료: {session.Documents.Count}개 문서";
         ProgressValue = 1.0;
@@ -1706,6 +1716,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             }
 
             LmStudioPresetProfile = config.LmStudioPresetProfile;
+            PromptProfile = config.PromptProfile;
 
             SourceLanguage = string.IsNullOrWhiteSpace(config.SourceLanguage) ? SourceLanguage : config.SourceLanguage;
             TargetLanguage = string.IsNullOrWhiteSpace(config.TargetLanguage) ? TargetLanguage : config.TargetLanguage;
@@ -1767,6 +1778,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             BaseUrl = BaseUrl,
             Model = Model,
             LmStudioPresetProfile = LmStudioPresetProfile,
+            PromptProfile = PromptProfile,
             SourceLanguage = SourceLanguage,
             TargetLanguage = TargetLanguage,
             BatchSize = BatchSize,
@@ -1804,11 +1816,24 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 {
                     Model = "gpt-4o-mini";
                 }
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                break;
+            case TranslationProviderType.XiaomiMiMo:
+                BaseUrl = "https://api.xiaomimimo.com/v1";
+                Model = "mimo-v2.5-pro";
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
                 break;
             case TranslationProviderType.LmStudio:
                 BaseUrl = "http://127.0.0.1:1234/v1";
                 Model = "local-model";
                 ApplyLmStudioPresetIfEligible(Model, DisableThinking);
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                break;
+            case TranslationProviderType.Lemonade:
+                BaseUrl = "http://127.0.0.1:13305/v1";
+                Model = "local-model";
+                ApplyLmStudioPresetIfEligible(Model, DisableThinking);
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
                 break;
             case TranslationProviderType.DeepLFree:
                 BaseUrl = "https://api-free.deepl.com/v2/translate";
@@ -1830,7 +1855,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void ApplyLmStudioPresetIfEligible(string? previousModel, bool previousDisableThinking)
     {
-        if (SelectedProviderType != TranslationProviderType.LmStudio)
+        if (SelectedProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -1847,6 +1872,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         ApplyPresetValue(previousPreset.TopK, currentPreset.TopK, TopK, value => TopK = value);
         ApplyPresetValue(previousPreset.RepeatPenalty, currentPreset.RepeatPenalty, RepeatPenalty, value => RepeatPenalty = value);
         ApplyPresetValue(previousPreset.PresencePenalty, currentPreset.PresencePenalty, PresencePenalty, value => PresencePenalty = value);
+        ApplyPresetValue(
+            LmStudioSamplingDefaults.GetRecommendedMaxTokens(LmStudioPresetProfile, previousModel),
+            LmStudioSamplingDefaults.GetRecommendedMaxTokens(LmStudioPresetProfile, Model),
+            MaxTokens,
+            value => MaxTokens = value);
     }
 
     private static void ApplyPresetValue<T>(T? previousPresetValue, T? currentPresetValue, T? currentValue, Action<T?> assign)
@@ -2003,7 +2033,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 new SymbolReferenceAnalyzer().Analyze(session);
             }
 
-            _sourceLanguageFilterService.Apply(Items, SourceLanguage, ExcludeNonSourceText);
+            _sourceLanguageFilterService.Apply(Items, SourceLanguage, TargetLanguage, ExcludeNonSourceText);
         }
         finally
         {
@@ -2011,6 +2041,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         AttachItemStateHandlers(Items);
+        RefreshSummaryText();
         RefreshItemsView();
         return restoreResult;
     }
@@ -2043,6 +2074,14 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             return;
         }
 
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.Status))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.ValidationStatus))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.WarningText))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslationError)))
+        {
+            RefreshSummaryText();
+        }
+
         if (MatchesPropertyChange(e, nameof(ExtractedTextItem.EditableStatus)))
         {
             var propertyName = string.IsNullOrWhiteSpace(e.PropertyName) ? "(all)" : e.PropertyName;
@@ -2061,6 +2100,30 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 });
             SaveTranslationProgressItems([item], $"ItemOnPropertyChanged:{item.SegmentId}:{propertyName}");
         }
+    }
+
+    private void RefreshSummaryText()
+    {
+        if (_session is null)
+        {
+            SummaryText = "아직 스캔 전입니다.";
+            return;
+        }
+
+        SummaryText =
+            $"문서 {_session.Metrics.GetValueOrDefault("Documents")}개, " +
+            $"항목 {_session.Metrics.GetValueOrDefault("Items")}개, " +
+            $"ERB {_session.Metrics.GetValueOrDefault("ErbItems")}개, " +
+            $"CSV {_session.Metrics.GetValueOrDefault("CsvItems")}개, " +
+            $"경고 {GetCurrentWarningCount()}건, " +
+            $"조사 패턴 {_session.Metrics.GetValueOrDefault("JosaPatterns")}건";
+    }
+
+    private int GetCurrentWarningCount()
+    {
+        return Items.Count(static item =>
+            !string.IsNullOrWhiteSpace(item.WarningText)
+            || item.Status is "검수 필요" or "번역 실패");
     }
 
     private async Task<bool> RunBusyAsync(
@@ -2517,8 +2580,20 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         };
         yield return new ProviderOption
         {
+            ProviderType = TranslationProviderType.XiaomiMiMo,
+            DisplayName = "Xiaomi MiMo API",
+            IsAvailable = true,
+        };
+        yield return new ProviderOption
+        {
             ProviderType = TranslationProviderType.LmStudio,
             DisplayName = "LM Studio",
+            IsAvailable = true,
+        };
+        yield return new ProviderOption
+        {
+            ProviderType = TranslationProviderType.Lemonade,
+            DisplayName = "Lemonade",
             IsAvailable = true,
         };
         yield return new ProviderOption
@@ -2720,7 +2795,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         _suppressItemStatePersistence = true;
         try
         {
-            _sourceLanguageFilterService.Apply(Items, SourceLanguage, ExcludeNonSourceText);
+            _sourceLanguageFilterService.Apply(Items, SourceLanguage, TargetLanguage, ExcludeNonSourceText);
         }
         finally
         {

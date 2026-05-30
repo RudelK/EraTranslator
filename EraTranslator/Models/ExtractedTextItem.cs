@@ -288,6 +288,18 @@ public sealed class ExtractedTextItem : BindableBase
             _ => state.CanSave,
         };
 
+        if (status is "번역 완료" or "검수 필요" or "수동 수정"
+            && string.IsNullOrWhiteSpace(state.TranslatedText))
+        {
+            ApplyTranslationState(
+                "번역 실패",
+                "빈 번역문",
+                "저장된 진행 상태의 번역문이 비어 있어 다시 번역 대상으로 되돌렸습니다.",
+                false,
+                string.Empty);
+            return;
+        }
+
         ApplyTranslationState(
             status,
             validationStatus,

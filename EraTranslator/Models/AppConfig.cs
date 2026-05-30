@@ -16,6 +16,8 @@ public sealed class AppConfig
 
     public LmStudioPresetProfile LmStudioPresetProfile { get; init; } = LmStudioPresetProfile.Auto;
 
+    public PromptProfile PromptProfile { get; init; } = PromptProfile.Auto;
+
     public string SourceLanguage { get; init; } = "ja";
 
     public string TargetLanguage { get; init; } = "ko";

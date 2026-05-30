@@ -80,6 +80,36 @@ public sealed class TranslationSettingsViewModelTests
         Assert.Equal(preset.TopK, viewModel.TopK);
         Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
         Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+        Assert.Equal(LmStudioSamplingDefaults.GetRecommendedMaxTokens(viewModel.SelectedLmStudioPresetProfile, viewModel.Model), viewModel.MaxTokens);
+    }
+
+    [Fact]
+    public void LmStudioModelChange_HyMt2ThirtyBAutoPresetAlsoUpdatesMaxTokens()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+
+        viewModel.Model = "tencent/Hy-MT2-30B-A3B";
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(preset.TopK, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+        Assert.Equal(4096, viewModel.MaxTokens);
+    }
+
+    [Fact]
+    public void LmStudioModelChange_LeavingHyMt2ClearsAutoMaxTokens()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "tencent/Hy-MT2-30B-A3B";
+
+        viewModel.Model = "google/gemma-4-27b";
+
+        Assert.Null(viewModel.MaxTokens);
     }
 
     [Fact]
@@ -122,6 +152,72 @@ public sealed class TranslationSettingsViewModelTests
     }
 
     [Fact]
+    public void LmStudioPresetOptions_IncludeTranslateGemmaAndHyMt2()
+    {
+        var viewModel = CreateViewModel();
+
+        Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.TranslateGemma);
+        Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.HyMt2_7B);
+        Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.HyMt2_30B_A3B);
+    }
+
+    [Fact]
+    public void ApplySelectedLmStudioPreset_UsesExplicitTranslateGemmaPreset()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "google/gemma-4-27b";
+        viewModel.SelectedLmStudioPresetOption = viewModel.LmStudioPresetOptions.Single(option => option.Profile == LmStudioPresetProfile.TranslateGemma);
+
+        viewModel.ApplySelectedLmStudioPreset();
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile.TranslateGemma, viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(preset.TopK, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+    }
+
+    [Fact]
+    public void ApplySelectedLmStudioPreset_UsesExplicitHyMt2SevenBPreset()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "qwen/qwen3.5-9b";
+        viewModel.SelectedLmStudioPresetOption = viewModel.LmStudioPresetOptions.Single(option => option.Profile == LmStudioPresetProfile.HyMt2_7B);
+
+        viewModel.ApplySelectedLmStudioPreset();
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile.HyMt2_7B, viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(preset.TopK, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+        Assert.Equal(4096, viewModel.MaxTokens);
+    }
+
+    [Fact]
+    public void ApplySelectedLmStudioPreset_UsesExplicitHyMt2ThirtyBPresetAndAllowsNegativeTopK()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "tencent/Hy-MT2-30B-A3B";
+        viewModel.SelectedLmStudioPresetOption = viewModel.LmStudioPresetOptions.Single(option => option.Profile == LmStudioPresetProfile.HyMt2_30B_A3B);
+
+        viewModel.ApplySelectedLmStudioPreset();
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile.HyMt2_30B_A3B, viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(-1, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+        Assert.Equal(4096, viewModel.MaxTokens);
+    }
+
+    [Fact]
     public void ResetTranslationOptions_UsesSelectedExplicitPreset()
     {
         var viewModel = CreateViewModel();
@@ -139,6 +235,77 @@ public sealed class TranslationSettingsViewModelTests
         Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
     }
 
+    [Fact]
+    public void PromptProfile_AutoDetectsHyMt2AndResetUsesProfileDefaults()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "tencent/Hy-MT2-7B";
+        viewModel.SelectedPromptProfile = PromptProfile.Auto;
+
+        viewModel.ResetPromptTemplates();
+
+        Assert.Contains("only output the translated result without any additional explanation", viewModel.SystemPromptTemplate, StringComparison.Ordinal);
+        Assert.Contains("ONLY output the translated result", viewModel.RetryPromptTemplate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PromptProfile_ChangeDoesNotOverwriteCustomEditedTemplates()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.OpenAi);
+        viewModel.SystemPromptTemplate = "CUSTOM SYSTEM";
+        viewModel.RetryPromptTemplate = "CUSTOM RETRY";
+
+        viewModel.SelectedPromptProfile = PromptProfile.HyMt2;
+
+        Assert.Equal("CUSTOM SYSTEM", viewModel.SystemPromptTemplate);
+        Assert.Equal("CUSTOM RETRY", viewModel.RetryPromptTemplate);
+    }
+
+    [Fact]
+    public void TopKText_AcceptsNegativeOne()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+
+        viewModel.TopKText = "-1";
+
+        Assert.Equal(-1, viewModel.TopK);
+    }
+
+    [Fact]
+    public void BuildSettings_IncludesPromptProfile()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.OpenAi);
+        viewModel.SelectedPromptProfile = PromptProfile.HyMt2;
+
+        var settings = viewModel.BuildSettings();
+
+        Assert.Equal(PromptProfile.HyMt2, settings.PromptProfile);
+    }
+
+    [Fact]
+    public void XiaomiMiMoProvider_AppliesRecommendedDefaultsAndStaticModels()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.XiaomiMiMo);
+
+        Assert.True(viewModel.CanEditModel);
+        Assert.False(viewModel.CanLoadModels);
+        Assert.Equal("https://api.xiaomimimo.com/v1", viewModel.BaseUrl);
+        Assert.Equal("mimo-v2.5-pro", viewModel.Model);
+        Assert.Equal(1.0, viewModel.Temperature);
+        Assert.Equal(0.95, viewModel.TopP);
+        Assert.Null(viewModel.TopK);
+        Assert.Null(viewModel.RepeatPenalty);
+        Assert.Null(viewModel.MaxTokens);
+        Assert.Contains("mimo-v2.5-pro", viewModel.AvailableModels);
+        Assert.Contains("mimo-v2.5", viewModel.AvailableModels);
+        Assert.Contains("mimo-v2-flash", viewModel.AvailableModels);
+    }
+
     private static TranslationSettingsViewModel CreateViewModel()
     {
         return new TranslationSettingsViewModel(
@@ -147,6 +314,12 @@ public sealed class TranslationSettingsViewModelTests
             {
                 ProviderType = TranslationProviderType.OpenAi,
                 DisplayName = "OpenAI",
+                IsAvailable = true,
+            },
+            new ProviderOption
+            {
+                ProviderType = TranslationProviderType.XiaomiMiMo,
+                DisplayName = "Xiaomi MiMo",
                 IsAvailable = true,
             },
             new ProviderOption

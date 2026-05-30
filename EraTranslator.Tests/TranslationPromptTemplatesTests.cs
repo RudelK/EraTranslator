@@ -1,4 +1,5 @@
 using EraTranslator.Services;
+using EraTranslator.Models;
 
 namespace EraTranslator.Tests;
 
@@ -45,5 +46,20 @@ public sealed class TranslationPromptTemplatesTests
         Assert.Contains("Preserve tone, honorific level, and relationship cues whenever the source implies them.", rendered, StringComparison.Ordinal);
         Assert.Contains("Source: ご主人さま", rendered, StringComparison.Ordinal);
         Assert.Contains("Target: __PH0__를 선택한다", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_HyMt2Prompt_UsesFullLanguageNames()
+    {
+        var rendered = TranslationPromptTemplates.Render(
+            null,
+            "ja",
+            "ko",
+            disableThinking: true,
+            isRetryPrompt: false,
+            promptProfile: PromptProfile.HyMt2);
+
+        Assert.Contains("from Japanese into Korean", rendered, StringComparison.Ordinal);
+        Assert.Contains("only output the translated result without any additional explanation", rendered, StringComparison.Ordinal);
     }
 }

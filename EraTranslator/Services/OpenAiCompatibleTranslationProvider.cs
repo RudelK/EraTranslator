@@ -11,6 +11,22 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
     bool isLmStudio,
     IRequestResponseLogger? requestResponseLogger = null) : ITranslationProvider
 {
+    private readonly TranslationProviderType _providerType = isLmStudio ? TranslationProviderType.LmStudio : TranslationProviderType.OpenAi;
+
+    public OpenAiCompatibleTranslationProvider(
+        ISimpleHttpClientFactory httpClientFactory,
+        TranslationProviderType providerType,
+        IRequestResponseLogger? requestResponseLogger = null)
+        : this(httpClientFactory, providerType == TranslationProviderType.LmStudio, requestResponseLogger)
+    {
+        _providerType = providerType;
+    }
+
+    private bool IsLmStudio => _providerType == TranslationProviderType.LmStudio;
+    private bool IsLemonade => _providerType == TranslationProviderType.Lemonade;
+    private bool IsXiaomiMiMo => _providerType == TranslationProviderType.XiaomiMiMo;
+    private bool IsOpenAi => _providerType == TranslationProviderType.OpenAi;
+
     private static readonly JsonSerializerOptions RequestJsonOptions = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -28,31 +44,57 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             return result;
         }
 
-        if (!isLmStudio && string.IsNullOrWhiteSpace(settings.ApiKey))
+        if (IsOpenAi && string.IsNullOrWhiteSpace(settings.ApiKey))
         {
             throw new TranslationProviderException(TranslationErrorKind.Configuration, "OpenAI API Key를 입력하세요.");
         }
 
         var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
-            ? (isLmStudio ? "http://127.0.0.1:1234/v1" : "https://api.openai.com/v1")
+            ? _providerType switch
+            {
+                TranslationProviderType.LmStudio => "http://127.0.0.1:1234/v1",
+                TranslationProviderType.XiaomiMiMo => "https://api.xiaomimimo.com/v1",
+                TranslationProviderType.Lemonade => "http://127.0.0.1:13305/v1",
+                _ => "https://api.openai.com/v1",
+            }
             : settings.BaseUrl.TrimEnd('/');
         var model = string.IsNullOrWhiteSpace(settings.Model)
-            ? (isLmStudio ? "local-model" : "gpt-4o-mini")
+            ? (IsOpenAi ? "gpt-4o-mini" : IsXiaomiMiMo ? "mimo-v2.5-pro" : "local-model")
             : settings.Model;
 
         var client = httpClientFactory.CreateClient(nameof(OpenAiCompatibleTranslationProvider));
         client.BaseAddress = new Uri($"{baseUrl}/");
-        if (!isLmStudio)
+        if (IsOpenAi || IsXiaomiMiMo)
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         }
 
-        var providerName = isLmStudio ? "LM Studio" : "OpenAI";
+        var providerName = _providerType switch
+        {
+            TranslationProviderType.LmStudio => "LM Studio",
+            TranslationProviderType.XiaomiMiMo => "Xiaomi MiMo",
+            TranslationProviderType.Lemonade => "Lemonade",
+            _ => "OpenAI",
+        };
         var endpoint = $"{baseUrl}/chat/completions";
 
-        return isLmStudio
-            ? await TranslateLmStudioAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints)
-            : await TranslateOpenAiAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
+        if (IsLmStudio)
+        {
+            return await TranslateLmStudioAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
+        }
+
+        if (IsLemonade)
+        {
+            return await TranslateLemonadeAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
+        }
+
+        if (IsXiaomiMiMo)
+        {
+            return await TranslateXiaomiMiMoAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
+        }
+
+        return
+            await TranslateOpenAiAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
     }
 
     private async Task<TranslationProviderResult> TranslateOpenAiAsync(
@@ -70,8 +112,11 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             settings,
             requests,
             ResponseMode.JsonObject,
-            includeLmStudioSamplingParameters: false,
-            glossaryHints);
+            includeAdvancedSamplingParameters: false,
+            allowApiThinkingControl: false,
+            glossaryHints: glossaryHints,
+            allowPresencePenalty: true,
+            allowSeed: true);
         var content = await SendChatRequestAsync(
             client,
             requestPayload,
@@ -127,6 +172,19 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
         string endpoint,
         IReadOnlyList<GlossaryHint>? glossaryHints)
     {
+        if (LmStudioSamplingDefaults.DetectModelFamily(model) == LmStudioModelFamily.TranslateGemma)
+        {
+            var parsed = await TranslateTranslateGemmaAsync(
+                client,
+                model,
+                settings,
+                requests,
+                cancellationToken,
+                providerName,
+                endpoint);
+            return BuildResult(parsed, requests);
+        }
+
         var attempts = new[]
         {
             ResponseMode.JsonSchema,
@@ -168,6 +226,208 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
         throw lastException ?? new TranslationProviderException(TranslationErrorKind.Json, "LM Studio 응답을 처리하지 못했습니다.");
     }
 
+    private async Task<TranslationProviderResult> TranslateLemonadeAsync(
+        HttpClient client,
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests,
+        CancellationToken cancellationToken,
+        string providerName,
+        string endpoint,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
+    {
+        if (LmStudioSamplingDefaults.DetectModelFamily(model) == LmStudioModelFamily.TranslateGemma)
+        {
+            var parsed = await TranslateTranslateGemmaAsync(
+                client,
+                model,
+                settings,
+                requests,
+                cancellationToken,
+                providerName,
+                endpoint);
+            return BuildResult(parsed, requests);
+        }
+
+        var attempts = new[]
+        {
+            ResponseMode.JsonTextRetry,
+            ResponseMode.TokenizedFallback,
+        };
+
+        TranslationProviderException? lastException = null;
+
+        for (var index = 0; index < attempts.Length; index++)
+        {
+            try
+            {
+                var parsed = await TranslateWithModeAsync(
+                    client,
+                    model,
+                    settings,
+                    requests,
+                    attempts[index],
+                    cancellationToken,
+                    providerName,
+                    endpoint,
+                    parseFailureKind: attempts[index] == ResponseMode.TokenizedFallback
+                        ? TranslationErrorKind.Validation
+                        : TranslationErrorKind.Json,
+                    glossaryHints,
+                    includeAdvancedSamplingParameters: true,
+                    allowApiThinkingControl: false,
+                    allowPresencePenalty: false,
+                    allowSeed: false);
+                return BuildResult(parsed, requests);
+            }
+            catch (TranslationProviderException ex) when (index < attempts.Length - 1)
+            {
+                lastException = ex;
+                requestResponseLogger?.LogError(
+                    providerName,
+                    endpoint,
+                    $"응답 모드 {GetResponseModeLabel(attempts[index])} 실패: {ex.Message}. 다음 모드 {GetResponseModeLabel(attempts[index + 1])}로 재시도합니다.");
+            }
+        }
+
+        throw lastException ?? new TranslationProviderException(TranslationErrorKind.Json, "Lemonade 응답을 처리하지 못했습니다.");
+    }
+
+    private async Task<TranslationProviderResult> TranslateXiaomiMiMoAsync(
+        HttpClient client,
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests,
+        CancellationToken cancellationToken,
+        string providerName,
+        string endpoint,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
+    {
+        var (requestPayload, requestMetadata) = BuildXiaomiMiMoRequestPayload(
+            model,
+            settings,
+            requests,
+            ResponseMode.JsonObject,
+            glossaryHints);
+        var content = await SendChatRequestAsync(
+            client,
+            requestPayload,
+            ResponseMode.JsonObject,
+            model,
+            settings,
+            requestMetadata,
+            cancellationToken,
+            providerName,
+            endpoint,
+            requestResponseLogger);
+
+        if (!TryParseTranslations(content, preferTokenizedProtocol: false, requests, out var parsed))
+        {
+            var (retryPayload, retryMetadata) = BuildXiaomiMiMoRequestPayload(
+                model,
+                settings,
+                requests,
+                ResponseMode.JsonTextRetry,
+                glossaryHints);
+            var retryContent = await SendChatRequestAsync(
+                client,
+                retryPayload,
+                ResponseMode.JsonTextRetry,
+                model,
+                settings,
+                retryMetadata,
+                cancellationToken,
+                providerName,
+                endpoint,
+                requestResponseLogger);
+
+            if (!TryParseTranslations(retryContent, preferTokenizedProtocol: false, requests, out parsed))
+            {
+                throw new TranslationProviderException(TranslationErrorKind.Json, DescribeParseFailure(retryContent, ResponseMode.JsonTextRetry));
+            }
+        }
+
+        if (!TryFinalizeTranslations(parsed, requests, out parsed))
+        {
+            var (retryPayload, retryMetadata) = BuildXiaomiMiMoRequestPayload(
+                model,
+                settings,
+                requests,
+                ResponseMode.JsonTextRetry,
+                glossaryHints);
+            var retryContent = await SendChatRequestAsync(
+                client,
+                retryPayload,
+                ResponseMode.JsonTextRetry,
+                model,
+                settings,
+                retryMetadata,
+                cancellationToken,
+                providerName,
+                endpoint,
+                requestResponseLogger);
+
+            if (!TryParseTranslations(retryContent, preferTokenizedProtocol: false, requests, out parsed))
+            {
+                throw new TranslationProviderException(TranslationErrorKind.Json, DescribeParseFailure(retryContent, ResponseMode.JsonTextRetry));
+            }
+
+            if (!TryFinalizeTranslations(parsed, requests, out parsed))
+            {
+                throw new TranslationProviderException(TranslationErrorKind.Validation, DescribeValidationFailure(retryContent, ResponseMode.JsonTextRetry));
+            }
+        }
+
+        return BuildResult(parsed, requests);
+    }
+
+    private async Task<Dictionary<string, string>> TranslateTranslateGemmaAsync(
+        HttpClient client,
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests,
+        CancellationToken cancellationToken,
+        string providerName,
+        string endpoint)
+    {
+        var (requestPayload, requestMetadata) = BuildRequestPayload(
+            model,
+            settings,
+            requests,
+            ResponseMode.TranslateGemmaDedicated,
+            includeAdvancedSamplingParameters: true,
+            allowApiThinkingControl: false,
+            glossaryHints: null,
+            allowPresencePenalty: !IsLemonade,
+            allowSeed: !IsLemonade);
+        var content = await SendChatRequestAsync(
+            client,
+            requestPayload,
+            ResponseMode.TranslateGemmaDedicated,
+            model,
+            settings,
+            requestMetadata,
+            cancellationToken,
+            providerName,
+            endpoint,
+            requestResponseLogger);
+
+        if (requests.Count != 1)
+        {
+            throw new TranslationProviderException(TranslationErrorKind.Validation, "TranslateGemma 전용 응답은 단일 세그먼트 요청만 지원합니다.");
+        }
+
+        if (!TryNormalizeTranslationCandidate(content, requests[0], out var normalized))
+        {
+            throw new TranslationProviderException(TranslationErrorKind.Validation, "TranslateGemma 응답을 단일 번역문으로 정규화하지 못했습니다.");
+        }
+
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [requests[0].Id] = normalized,
+        };
+    }
+
     private async Task<Dictionary<string, string>> TranslateWithModeAsync(
         HttpClient client,
         string model,
@@ -178,15 +438,22 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
         string providerName,
         string endpoint,
         TranslationErrorKind parseFailureKind,
-        IReadOnlyList<GlossaryHint>? glossaryHints)
+        IReadOnlyList<GlossaryHint>? glossaryHints,
+        bool? includeAdvancedSamplingParameters = null,
+        bool? allowApiThinkingControl = null,
+        bool? allowPresencePenalty = null,
+        bool? allowSeed = null)
     {
         var (requestPayload, requestMetadata) = BuildRequestPayload(
             model,
             settings,
             requests,
             responseMode,
-            includeLmStudioSamplingParameters: isLmStudio,
-            glossaryHints);
+            includeAdvancedSamplingParameters: includeAdvancedSamplingParameters ?? IsLmStudio,
+            allowApiThinkingControl: allowApiThinkingControl ?? IsLmStudio,
+            glossaryHints: glossaryHints,
+            allowPresencePenalty: allowPresencePenalty ?? true,
+            allowSeed: allowSeed ?? true);
         var content = await SendChatRequestAsync(
             client,
             requestPayload,
@@ -242,6 +509,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             ResponseMode.JsonSchema => "json_schema",
             ResponseMode.JsonSchemaRetry => "json_schema_retry",
             ResponseMode.TokenizedFallback => "tokenized_fallback",
+            ResponseMode.TranslateGemmaDedicated => "translategemma_dedicated",
             _ => "unknown",
         };
     }

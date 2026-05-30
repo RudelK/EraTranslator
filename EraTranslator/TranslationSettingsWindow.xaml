@@ -91,7 +91,7 @@
                                       Grid.Column="1"
                                       Margin="0,0,8,8"
                                       IsEditable="True"
-                                      IsEnabled="{Binding SupportsModelCatalog}"
+                                      IsEnabled="{Binding CanEditModel}"
                                       IsTextSearchEnabled="False"
                                       ItemsSource="{Binding AvailableModels}"
                                       Text="{Binding Model, UpdateSourceTrigger=PropertyChanged}" />
@@ -285,7 +285,7 @@
                                        Grid.Column="0"
                                        Margin="0,0,8,8"
                                        VerticalAlignment="Center"
-                                       Text="LM Studio 프리셋"
+                                       Text="로컬 모델 프리셋"
                                        Visibility="{Binding SupportsAdvancedSampling, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <Grid Grid.Row="3"
                                   Grid.Column="1"
@@ -392,7 +392,7 @@
                                        Grid.Column="0"
                                        Grid.ColumnSpan="2"
                                        Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. LM Studio 프리셋은 자동(모델 기준), Gemma 4, Qwen 3.5 9B 중에서 고를 수 있습니다. 프리셋 적용을 누르면 샘플링 권장값이 즉시 반영됩니다. Qwen 계열은 모델별 preset과 max_tokens 안전장치를 함께 사용하며, Max Tokens를 비워두면 요청 크기에 맞춰 자동 계산합니다."
+                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. 로컬 모델 프리셋은 LM Studio와 Lemonade에서 공통으로 사용하며, 자동(모델 기준), Gemma 4, Qwen 3.5 9B, TranslateGemma, Hy-MT2 7B, Hy-MT2 30B-A3B 중에서 고를 수 있습니다. 프리셋 적용을 누르면 샘플링 권장값이 즉시 반영됩니다. Qwen 계열은 모델별 preset과 max_tokens 안전장치를 함께 사용하며, Max Tokens를 비워두면 요청 크기에 맞춰 자동 계산합니다. Hy-MT2 30B-A3B는 모델 카드 권장값으로 Top K에 -1을 사용할 수 있습니다."
                                        TextWrapping="Wrap" />
                         </Grid>
                     </GroupBox>
@@ -507,12 +507,21 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
                     <StackPanel Orientation="Horizontal"
                                 Margin="0,0,0,8">
+                        <TextBlock Width="120"
+                                   Margin="0,4,8,0"
+                                   VerticalAlignment="Center"
+                                   Text="프롬프트 프로필" />
+                        <ComboBox Width="220"
+                                  Margin="0,0,12,0"
+                                  ItemsSource="{Binding PromptProfiles}"
+                                  SelectedItem="{Binding SelectedPromptProfile}" />
                         <Button Width="140"
                                 Click="ResetPrompts_Click"
                                 Content="기본값으로 재설정" />
@@ -521,7 +530,13 @@
                                    Text="사용 가능한 치환값: {sourceLanguage}, {targetLanguage}, {thinkingInstruction}" />
                     </StackPanel>
 
-                    <GroupBox Grid.Row="1"
+                    <TextBlock Grid.Row="1"
+                               Margin="0,0,0,8"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="자동은 현재 모델명을 기준으로 프롬프트 프로필을 고릅니다. Hy-MT2는 전용 프롬프트 규칙과 glossary 형식을 사용하고, TranslateGemma는 전용 LM Studio 요청 형식을 사용하므로 여기서 고른 프롬프트가 실제 요청에는 적용되지 않습니다."
+                               TextWrapping="Wrap" />
+
+                    <GroupBox Grid.Row="2"
                               Header="기본 프롬프트"
                               Padding="10">
                         <TextBox AcceptsReturn="True"
@@ -530,7 +545,7 @@
                                  VerticalScrollBarVisibility="Auto" />
                     </GroupBox>
 
-                    <GroupBox Grid.Row="2"
+                    <GroupBox Grid.Row="3"
                               Margin="0,12,0,0"
                               Header="재시도 프롬프트"
                               Padding="10">

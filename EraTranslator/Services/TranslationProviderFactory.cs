@@ -20,7 +20,9 @@ public sealed class TranslationProviderFactory : ITranslationProviderFactory, ID
         return settings.ProviderType switch
         {
             TranslationProviderType.OpenAi => new OpenAiCompatibleTranslationProvider(_httpClientFactory, false, logger),
+            TranslationProviderType.XiaomiMiMo => new OpenAiCompatibleTranslationProvider(_httpClientFactory, TranslationProviderType.XiaomiMiMo, logger),
             TranslationProviderType.LmStudio => new OpenAiCompatibleTranslationProvider(_httpClientFactory, true, logger),
+            TranslationProviderType.Lemonade => new OpenAiCompatibleTranslationProvider(_httpClientFactory, TranslationProviderType.Lemonade, logger),
             TranslationProviderType.DeepLFree => new DeepLTranslationProvider(_httpClientFactory, logger),
             TranslationProviderType.DeepLPro => new DeepLTranslationProvider(_httpClientFactory, logger),
             TranslationProviderType.Papago => new PapagoTranslationProvider(_httpClientFactory, logger),

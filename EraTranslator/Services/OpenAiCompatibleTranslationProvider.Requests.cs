@@ -9,7 +9,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         LmStudioModelFamily ModelFamily,
         LmStudioThinkingControlMode ThinkingControlMode,
         int? MaxTokens,
-        bool FallbackUsed);
+        bool FallbackUsed,
+        string? MaxTokensFieldName = null);
 
     private enum ResponseMode
     {
@@ -18,6 +19,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         JsonSchema,
         JsonSchemaRetry,
         TokenizedFallback,
+        TranslateGemmaDedicated,
     }
 
     private static (object Payload, RequestBuildMetadata Metadata) BuildRequestPayload(
@@ -25,24 +27,39 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         ProviderSettings settings,
         IReadOnlyList<ProtectedSegment> requests,
         ResponseMode responseMode,
-        bool includeLmStudioSamplingParameters,
-        IReadOnlyList<GlossaryHint>? glossaryHints)
+        bool includeAdvancedSamplingParameters,
+        bool allowApiThinkingControl,
+        IReadOnlyList<GlossaryHint>? glossaryHints,
+        bool allowPresencePenalty = true,
+        bool allowSeed = true)
     {
+        if (responseMode == ResponseMode.TranslateGemmaDedicated)
+        {
+            return BuildTranslateGemmaRequestPayload(model, settings, requests);
+        }
+
         var useTokenizedProtocol = UsesTokenizedProtocol(responseMode);
         var useRetryPrompt = UsesRetryPrompt(responseMode);
-        var modelFamily = includeLmStudioSamplingParameters
+        var modelFamily = includeAdvancedSamplingParameters
             ? LmStudioSamplingDefaults.DetectModelFamily(model)
             : LmStudioModelFamily.Unknown;
-        var thinkingControlMode = includeLmStudioSamplingParameters
+        var promptProfile = ResolvePromptProfile(settings, model);
+        var thinkingControlMode = includeAdvancedSamplingParameters
             ? LmStudioSamplingDefaults.GetThinkingControlMode(model, settings.DisableThinking)
             : settings.DisableThinking ? LmStudioThinkingControlMode.PromptFallback : LmStudioThinkingControlMode.None;
+        if (!allowApiThinkingControl && thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField)
+        {
+            thinkingControlMode = settings.DisableThinking
+                ? LmStudioThinkingControlMode.PromptFallback
+                : LmStudioThinkingControlMode.None;
+        }
         var effectiveMaxTokens = ResolveEffectiveMaxTokens(settings, responseMode, model, requests.Count);
         var metadata = new RequestBuildMetadata(
             ModelFamily: modelFamily,
             ThinkingControlMode: thinkingControlMode,
             MaxTokens: effectiveMaxTokens,
             FallbackUsed: responseMode is ResponseMode.JsonTextRetry or ResponseMode.JsonSchemaRetry or ResponseMode.TokenizedFallback);
-        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol, requests, thinkingControlMode, glossaryHints);
+        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol, requests, thinkingControlMode, glossaryHints, promptProfile);
         var payload = new Dictionary<string, object?>
         {
             ["model"] = model,
@@ -50,7 +67,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             ["messages"] = BuildMessages(systemPrompt, requests, settings, useTokenizedProtocol),
         };
 
-        if (includeLmStudioSamplingParameters)
+        if (includeAdvancedSamplingParameters)
         {
             if (settings.TopP.HasValue)
             {
@@ -67,12 +84,12 @@ public sealed partial class OpenAiCompatibleTranslationProvider
                 payload["repeat_penalty"] = settings.RepeatPenalty.Value;
             }
 
-            if (settings.PresencePenalty.HasValue)
+            if (allowPresencePenalty && settings.PresencePenalty.HasValue)
             {
                 payload["presence_penalty"] = settings.PresencePenalty.Value;
             }
 
-            if (settings.Seed.HasValue)
+            if (allowSeed && settings.Seed.HasValue)
             {
                 payload["seed"] = settings.Seed.Value;
             }
@@ -82,7 +99,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
                 payload["max_tokens"] = effectiveMaxTokens.Value;
             }
 
-            if (thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField)
+            if (allowApiThinkingControl && thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField)
             {
                 payload["enable_thinking"] = !settings.DisableThinking;
             }
@@ -98,6 +115,134 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         else if (UsesJsonSchema(responseMode))
         {
             payload["response_format"] = BuildJsonSchemaResponseFormat(requests);
+        }
+
+        return (payload, metadata);
+    }
+
+    private static (object Payload, RequestBuildMetadata Metadata) BuildXiaomiMiMoRequestPayload(
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests,
+        ResponseMode responseMode,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
+    {
+        var useRetryPrompt = UsesRetryPrompt(responseMode);
+        var promptProfile = ResolvePromptProfile(settings, model);
+        var thinkingControlMode = settings.DisableThinking
+            ? LmStudioThinkingControlMode.PromptFallback
+            : LmStudioThinkingControlMode.None;
+        var effectiveMaxTokens = settings.MaxTokens;
+        var metadata = new RequestBuildMetadata(
+            ModelFamily: LmStudioModelFamily.Unknown,
+            ThinkingControlMode: thinkingControlMode,
+            MaxTokens: effectiveMaxTokens,
+            FallbackUsed: responseMode == ResponseMode.JsonTextRetry,
+            MaxTokensFieldName: effectiveMaxTokens.HasValue ? "max_completion_tokens" : null);
+        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol: false, requests, thinkingControlMode, glossaryHints, promptProfile);
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["temperature"] = GetEffectiveTemperature(settings, responseMode),
+            ["messages"] = BuildMessages(systemPrompt, requests, settings, useTokenizedProtocol: false),
+            ["thinking"] = new Dictionary<string, object?>
+            {
+                ["type"] = settings.DisableThinking ? "disabled" : "enabled",
+            },
+        };
+
+        if (settings.TopP.HasValue)
+        {
+            payload["top_p"] = settings.TopP.Value;
+        }
+
+        if (settings.PresencePenalty.HasValue)
+        {
+            payload["presence_penalty"] = settings.PresencePenalty.Value;
+        }
+
+        if (effectiveMaxTokens.HasValue)
+        {
+            payload["max_completion_tokens"] = effectiveMaxTokens.Value;
+        }
+
+        payload["response_format"] = new Dictionary<string, object?>
+        {
+            ["type"] = "json_object",
+        };
+
+        return (payload, metadata);
+    }
+
+    private static (object Payload, RequestBuildMetadata Metadata) BuildTranslateGemmaRequestPayload(
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests)
+    {
+        if (requests.Count != 1)
+        {
+            throw new TranslationProviderException(TranslationErrorKind.Validation, "TranslateGemma 전용 요청은 한 번에 하나의 세그먼트만 지원합니다.");
+        }
+
+        var request = requests[0];
+        var metadata = new RequestBuildMetadata(
+            ModelFamily: LmStudioModelFamily.TranslateGemma,
+            ThinkingControlMode: LmStudioThinkingControlMode.None,
+            MaxTokens: settings.MaxTokens,
+            FallbackUsed: false);
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["temperature"] = settings.Temperature,
+            ["messages"] = new object[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new
+                        {
+                            type = "text",
+                            source_lang_code = settings.SourceLanguage,
+                            target_lang_code = settings.TargetLanguage,
+                            text = request.Text,
+                            image = (string?)null,
+                        },
+                    },
+                },
+            },
+        };
+
+        if (settings.TopP.HasValue)
+        {
+            payload["top_p"] = settings.TopP.Value;
+        }
+
+        if (settings.TopK.HasValue)
+        {
+            payload["top_k"] = settings.TopK.Value;
+        }
+
+        if (settings.RepeatPenalty.HasValue)
+        {
+            payload["repeat_penalty"] = settings.RepeatPenalty.Value;
+        }
+
+        if (settings.PresencePenalty.HasValue)
+        {
+            payload["presence_penalty"] = settings.PresencePenalty.Value;
+        }
+
+        if (settings.Seed.HasValue)
+        {
+            payload["seed"] = settings.Seed.Value;
+        }
+
+        if (settings.MaxTokens.HasValue)
+        {
+            payload["max_tokens"] = settings.MaxTokens.Value;
         }
 
         return (payload, metadata);
@@ -132,18 +277,20 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         bool useTokenizedProtocol,
         IReadOnlyList<ProtectedSegment> requests,
         LmStudioThinkingControlMode thinkingControlMode,
-        IReadOnlyList<GlossaryHint>? glossaryHints)
+        IReadOnlyList<GlossaryHint>? glossaryHints,
+        PromptProfile promptProfile)
     {
-        var targetLanguageLabel = LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage);
+        var targetLanguageLabel = GetPromptLanguageLabel(settings.TargetLanguage, promptProfile);
         var rendered = TranslationPromptTemplates.Render(
             useRetryPrompt ? settings.RetryPromptTemplate : settings.SystemPromptTemplate,
             settings.SourceLanguage,
             settings.TargetLanguage,
             settings.DisableThinking,
             useRetryPrompt,
-            thinkingControlMode);
+            thinkingControlMode,
+            promptProfile);
         var commonInstruction = BuildCommonTranslationInstruction(requests, targetLanguageLabel);
-        var glossaryInstruction = BuildGlossaryInstruction(glossaryHints);
+        var glossaryInstruction = BuildGlossaryInstruction(glossaryHints, promptProfile);
         var formatInstruction = useTokenizedProtocol
             ? BuildTokenizedFormatInstruction(requests, targetLanguageLabel)
             : BuildJsonFormatInstruction(requests);
@@ -235,7 +382,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         return builder.ToString().TrimEnd();
     }
 
-    private static string BuildGlossaryInstruction(IReadOnlyList<GlossaryHint>? glossaryHints)
+    private static string BuildGlossaryInstruction(IReadOnlyList<GlossaryHint>? glossaryHints, PromptProfile promptProfile)
     {
         if (glossaryHints is null || glossaryHints.Count == 0)
         {
@@ -244,12 +391,23 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
         var builder = new StringBuilder();
         builder.AppendLine();
-        builder.AppendLine("Glossary hints:");
-        builder.AppendLine("Prefer these pairs when they fit the current script context.");
-        builder.AppendLine("Do not copy them mechanically if they would make the line unnatural.");
-        foreach (var hint in glossaryHints)
+        if (promptProfile == PromptProfile.HyMt2)
         {
-            builder.AppendLine($"{hint.Source} => {hint.Target}");
+            builder.AppendLine("Reference the following translations:");
+            foreach (var hint in glossaryHints)
+            {
+                builder.AppendLine($"`{hint.Source}` translates to `{hint.Target}`");
+            }
+        }
+        else
+        {
+            builder.AppendLine("Glossary hints:");
+            builder.AppendLine("Prefer these pairs when they fit the current script context.");
+            builder.AppendLine("Do not copy them mechanically if they would make the line unnatural.");
+            foreach (var hint in glossaryHints)
+            {
+                builder.AppendLine($"{hint.Source} => {hint.Target}");
+            }
         }
 
         return builder.ToString().TrimEnd();
@@ -263,7 +421,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         }
 
         var builder = new StringBuilder();
-        builder.AppendLine($"Target language: {LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage)}");
+        builder.AppendLine($"Target language: {GetPromptLanguageLabel(settings.TargetLanguage, ResolvePromptProfile(settings, settings.Model))}");
         foreach (var request in requests)
         {
             builder.AppendLine($"|{request.Id}|");
@@ -279,13 +437,13 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         if (requests.Count == 1)
         {
             return
-                $"Target language: {LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage)}" + Environment.NewLine +
+                $"Target language: {GetPromptLanguageLabel(settings.TargetLanguage, ResolvePromptProfile(settings, settings.Model))}" + Environment.NewLine +
                 "Return only the translated text with no label or separator." + Environment.NewLine +
                 requests[0].Text;
         }
 
         var builder = new StringBuilder();
-        builder.AppendLine($"Target language: {LanguageDisplayService.ToInstructionLabel(settings.TargetLanguage)}");
+        builder.AppendLine($"Target language: {GetPromptLanguageLabel(settings.TargetLanguage, ResolvePromptProfile(settings, settings.Model))}");
         builder.AppendLine("Input segments:");
         foreach (var request in requests)
         {
@@ -338,6 +496,34 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
         var recommended = LmStudioSamplingDefaults.GetRecommendedStructuredMaxTokens(model, requestCount);
         return recommended > 0 ? recommended : null;
+    }
+
+    private static PromptProfile ResolvePromptProfile(ProviderSettings settings, string? model)
+    {
+        if (settings.PromptProfile != PromptProfile.Auto)
+        {
+            return settings.PromptProfile;
+        }
+
+        return model?.Contains("hy-mt2", StringComparison.OrdinalIgnoreCase) == true
+            ? PromptProfile.HyMt2
+            : PromptProfile.Generic;
+    }
+
+    private static string GetPromptLanguageLabel(string language, PromptProfile promptProfile)
+    {
+        if (promptProfile != PromptProfile.HyMt2)
+        {
+            return LanguageDisplayService.ToInstructionLabel(language);
+        }
+
+        return (language ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "ja" or "jp" => "Japanese",
+            "ko" => "Korean",
+            "en" => "English",
+            _ => LanguageDisplayService.ToInstructionLabel(language ?? string.Empty),
+        };
     }
 
     private static object BuildJsonSchemaResponseFormat(IReadOnlyList<ProtectedSegment> requests)

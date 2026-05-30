@@ -374,6 +374,163 @@ public sealed class TranslationProviderTests
     }
 
     [Fact]
+    public async Task LmStudioProvider_TranslateGemmaUsesDedicatedPayloadWithoutSystemPromptOrResponseFormat()
+    {
+        string? capturedBody = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return JsonResponse("""
+{"choices":[{"message":{"content":"주인님"}}]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                Model = "google/translategemma-4b-it",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                Temperature = 0.2,
+                TopP = 0.9,
+                TopK = 40,
+                RepeatPenalty = 1.05,
+                DisableThinking = true,
+                SystemPromptTemplate = "CUSTOM SYSTEM TEMPLATE",
+                RetryPromptTemplate = "CUSTOM RETRY TEMPLATE",
+            },
+            CancellationToken.None,
+            [
+                new GlossaryHint("ご主人さま", "주인님", "CSV"),
+            ]);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        Assert.NotNull(capturedBody);
+        using var json = JsonDocument.Parse(capturedBody!);
+        var root = json.RootElement;
+        Assert.False(root.TryGetProperty("response_format", out _));
+        var messages = root.GetProperty("messages");
+        Assert.Single(messages.EnumerateArray());
+        Assert.Equal("user", messages[0].GetProperty("role").GetString());
+        var content = messages[0].GetProperty("content");
+        Assert.Single(content.EnumerateArray());
+        var contentItem = content[0];
+        Assert.Equal("text", contentItem.GetProperty("type").GetString());
+        Assert.Equal("ja", contentItem.GetProperty("source_lang_code").GetString());
+        Assert.Equal("ko", contentItem.GetProperty("target_lang_code").GetString());
+        Assert.Equal("ご主人さま", contentItem.GetProperty("text").GetString());
+        Assert.True(contentItem.TryGetProperty("image", out var imageProperty));
+        Assert.Equal(JsonValueKind.Null, imageProperty.ValueKind);
+        Assert.False(root.TryGetProperty("enable_thinking", out _));
+        Assert.DoesNotContain("CUSTOM SYSTEM TEMPLATE", capturedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("CUSTOM RETRY TEMPLATE", capturedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Glossary hints:", capturedBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_LogsTranslateGemmaDedicatedMode()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"주인님"}}]}
+"""));
+        var logger = new FakeRequestResponseLogger();
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true, logger);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                Model = "google/translategemma-4b-it",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        var requestEvent = logger.Events.First(item => item.Kind == "REQUEST");
+        Assert.Equal("translategemma_dedicated", requestEvent.Headers?["Mode"]);
+        Assert.Equal("translategemma", requestEvent.Headers?["ModelFamily"]);
+        Assert.Equal("none", requestEvent.Headers?["ThinkingControl"]);
+    }
+
+    [Fact]
+    public async Task LmStudioProvider_LogsHyMt2AsDedicatedModelFamilyWhileUsingGenericStructuredMode()
+    {
+        var factory = new FakeHttpClientFactory(_ => JsonResponse("""
+{"choices":[{"message":{"content":"{\"translations\":[{\"id\":\"id-1\",\"translated\":\"주인님\"}]}"}}]}
+"""));
+        var logger = new FakeRequestResponseLogger();
+        var provider = new OpenAiCompatibleTranslationProvider(factory, true, logger);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                Model = "tencent/Hy-MT2-7B",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                DisableThinking = true,
+            },
+            CancellationToken.None,
+            [
+                new GlossaryHint("ご主人さま", "주인님", "CSV"),
+            ]);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        var requestEvent = logger.Events.First(item => item.Kind == "REQUEST");
+        Assert.Equal("json_schema", requestEvent.Headers?["Mode"]);
+        Assert.Equal("hymt2", requestEvent.Headers?["ModelFamily"]);
+        Assert.Equal("prompt_fallback", requestEvent.Headers?["ThinkingControl"]);
+        Assert.Contains("Reference the following translations:", requestEvent.Content, StringComparison.Ordinal);
+        Assert.Contains("`ご主人さま` translates to `주인님`", requestEvent.Content, StringComparison.Ordinal);
+        Assert.Contains("Translate the following text from Japanese into Korean.", requestEvent.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenAiProvider_HyMt2PromptProfileUsesReferenceGlossaryFormat()
+    {
+        string? capturedBody = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return JsonResponse("""
+{"choices":[{"message":{"content":"{\"translations\":[{\"id\":\"id-1\",\"translated\":\"쾌락\"}]}"}}]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, false);
+
+        await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "快楽", "快楽", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                ApiKey = "test-key",
+                Model = "tencent/Hy-MT2-7B",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                PromptProfile = PromptProfile.Auto,
+            },
+            CancellationToken.None,
+            [
+                new GlossaryHint("快楽", "쾌락", "CSV"),
+            ]);
+
+        Assert.NotNull(capturedBody);
+        using var json = JsonDocument.Parse(capturedBody!);
+        var systemPrompt = json.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.NotNull(systemPrompt);
+        Assert.Contains("Translate the following text from Japanese into Korean.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Reference the following translations:", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("`快楽` translates to `쾌락`", systemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LmStudioProvider_FallsBackToTokenizedProtocolAfterStructuredOutputFailures()
     {
         var requestBodies = new List<string>();
@@ -885,6 +1042,104 @@ public sealed class TranslationProviderTests
             .Select(item => item.Headers?["Mode"]));
         Assert.Equal("qwen", logger.Events.First(item => item.Kind == "REQUEST").Headers?["ModelFamily"]);
         Assert.Equal("api_custom_field", logger.Events.First(item => item.Kind == "REQUEST").Headers?["ThinkingControl"]);
+    }
+
+    [Fact]
+    public async Task LemonadeProvider_UsesOpenAiCompatibleEnvelopeWithoutAuthorizationAndSupportsLocalSampling()
+    {
+        string? capturedBody = null;
+        string? capturedAuthorization = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            capturedAuthorization = request.Headers.Authorization?.ToString();
+            return JsonResponse("""
+{"choices":[{"message":{"content":"{\"translations\":[{\"id\":\"id-1\",\"translated\":\"주인님\"}]}"}}]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, TranslationProviderType.Lemonade);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.Lemonade,
+                Model = "google/gemma-4-e4b",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                Temperature = 0.2,
+                TopP = 0.9,
+                TopK = 40,
+                RepeatPenalty = 1.1,
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        Assert.Null(capturedAuthorization);
+        Assert.NotNull(capturedBody);
+        using var json = JsonDocument.Parse(capturedBody!);
+        var root = json.RootElement;
+        Assert.False(root.TryGetProperty("response_format", out _));
+        Assert.Equal(0, root.GetProperty("temperature").GetDouble());
+        Assert.Equal(0.9, root.GetProperty("top_p").GetDouble());
+        Assert.Equal(40, root.GetProperty("top_k").GetInt32());
+        Assert.Equal(1.1, root.GetProperty("repeat_penalty").GetDouble());
+        Assert.False(root.TryGetProperty("presence_penalty", out _));
+        Assert.False(root.TryGetProperty("seed", out _));
+        Assert.False(root.TryGetProperty("enable_thinking", out _));
+    }
+
+    [Fact]
+    public async Task XiaomiMiMoProvider_UsesBearerAuthAndMiMoSpecificFields()
+    {
+        string? capturedBody = null;
+        string? capturedAuthorization = null;
+        string? capturedUri = null;
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            capturedAuthorization = request.Headers.Authorization?.ToString();
+            capturedUri = request.RequestUri?.ToString();
+            return JsonResponse("""
+{"choices":[{"message":{"content":"{\"translations\":[{\"id\":\"id-1\",\"translated\":\"주인님\"}]}"}}]}
+""");
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, TranslationProviderType.XiaomiMiMo);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.XiaomiMiMo,
+                Model = "mimo-v2.5-pro",
+                ApiKey = "mimo-test-key",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                Temperature = 1.0,
+                TopP = 0.95,
+                PresencePenalty = 0.4,
+                MaxTokens = 512,
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        Assert.Equal("Bearer mimo-test-key", capturedAuthorization);
+        Assert.Equal("https://api.xiaomimimo.com/v1/chat/completions", capturedUri);
+        Assert.NotNull(capturedBody);
+        using var json = JsonDocument.Parse(capturedBody!);
+        var root = json.RootElement;
+        Assert.Equal(1.0, root.GetProperty("temperature").GetDouble());
+        Assert.Equal(0.95, root.GetProperty("top_p").GetDouble());
+        Assert.Equal(0.4, root.GetProperty("presence_penalty").GetDouble());
+        Assert.Equal(512, root.GetProperty("max_completion_tokens").GetInt32());
+        Assert.Equal("disabled", root.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("json_object", root.GetProperty("response_format").GetProperty("type").GetString());
+        Assert.False(root.TryGetProperty("top_k", out _));
+        Assert.False(root.TryGetProperty("repeat_penalty", out _));
+        Assert.False(root.TryGetProperty("seed", out _));
+        Assert.False(root.TryGetProperty("enable_thinking", out _));
     }
 
     private static HttpResponseMessage JsonResponse(string json)

@@ -51,13 +51,14 @@ public sealed class AppConfigServiceTests : IDisposable
             BaseUrl = "http://127.0.0.1:1234/v1",
             Model = "gemma",
             LmStudioPresetProfile = LmStudioPresetProfile.Qwen35_9B,
+            PromptProfile = PromptProfile.HyMt2,
             SourceLanguage = "ja",
             TargetLanguage = "ko",
             BatchSize = 5,
             RetryCount = 3,
             Temperature = 0.7,
             TopP = 0.85,
-            TopK = 64,
+            TopK = -1,
             RepeatPenalty = 1.1,
             PresencePenalty = 1.5,
             Seed = 1234,
@@ -93,6 +94,7 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.BaseUrl, actual.BaseUrl);
         Assert.Equal(expected.Model, actual.Model);
         Assert.Equal(expected.LmStudioPresetProfile, actual.LmStudioPresetProfile);
+        Assert.Equal(expected.PromptProfile, actual.PromptProfile);
         Assert.Equal(expected.SourceLanguage, actual.SourceLanguage);
         Assert.Equal(expected.TargetLanguage, actual.TargetLanguage);
         Assert.Equal(expected.BatchSize, actual.BatchSize);

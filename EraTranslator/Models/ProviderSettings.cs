@@ -8,6 +8,8 @@ public sealed class ProviderSettings
 
     public string Model { get; init; } = string.Empty;
 
+    public PromptProfile PromptProfile { get; init; } = PromptProfile.Auto;
+
     public string ApiKey { get; init; } = string.Empty;
 
     public string SourceLanguage { get; init; } = "ja";

@@ -465,6 +465,263 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_FailsWhenNormalizedTranslationBecomesBlank()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "   ";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "空白"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("번역 실패", items[0].Status);
+        Assert.Equal("빈 번역문", items[0].ValidationStatus);
+        Assert.False(items[0].CanSave);
+        Assert.Equal(string.Empty, items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_FailsWhenJapaneseLeaksIntoJaToKoTranslation()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "쾌락快楽";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "快楽"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("번역 실패", items[0].Status);
+        Assert.Equal("대상 언어 불일치", items[0].ValidationStatus);
+        Assert.False(items[0].CanSave);
+        Assert.Equal("쾌락快楽", items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_FailsWhenKanjiOnlyJapaneseIsReturnedUnchanged()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "交渉術";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "交渉術", fileType: "CSV"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("번역 실패", items[0].Status);
+        Assert.Equal("대상 언어 불일치", items[0].ValidationStatus);
+        Assert.False(items[0].CanSave);
+        Assert.Equal("交渉術", items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_SkipsProviderWhenOriginalIsEntirelyTargetLanguage()
+    {
+        var provider = new SequencedProvider();
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "안녕하세요"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                ExcludeNonSourceText = true,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Empty(provider.RequestHistory);
+        Assert.Equal("번역 완료", items[0].Status);
+        Assert.Equal("안녕하세요", items[0].TranslatedText);
+        Assert.True(items[0].CanSave);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_StillAppliesNormalizationWhenOriginalIsEntirelyTargetLanguage()
+    {
+        var provider = new SequencedProvider();
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "테 스트", fileType: "CSV"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                ExcludeNonSourceText = true,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Empty(provider.RequestHistory);
+        Assert.Equal("번역 완료", items[0].Status);
+        Assert.Equal("테스트", items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_DoesNotSkipProviderWhenTargetLanguageIsMixedWithOtherLanguage()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "쾌락";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "쾌락快楽"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                ExcludeNonSourceText = true,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Single(provider.RequestHistory);
+        Assert.Equal(["id-1"], provider.RequestHistory[0]);
+        Assert.Equal("쾌락", items[0].TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ForcesSingleItemBatchForTranslateGemma()
+    {
+        var provider = new SequencedProvider(
+            requests =>
+            {
+                var result = new TranslationProviderResult();
+                result.Translations["id-1"] = "첫째 번역";
+                return result;
+            },
+            requests =>
+            {
+                var result = new TranslationProviderResult();
+                result.Translations["id-2"] = "둘째 번역";
+                return result;
+            });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "첫째"),
+            BuildItem("id-2", "둘째"),
+        };
+
+        await coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.LmStudio,
+                Model = "google/translategemma-4b-it",
+                BatchSize = 5,
+                RetryCount = 0,
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(2, provider.RequestHistory.Count);
+        Assert.Equal(["id-1"], provider.RequestHistory[0]);
+        Assert.Equal(["id-2"], provider.RequestHistory[1]);
+    }
+
+    [Fact]
     public async Task TranslateAsync_EzTransUsesProcessCountToExpandBatch()
     {
         var provider = new SequencedProvider(requests =>
@@ -550,13 +807,13 @@ public sealed class TranslationCoordinatorTests
         Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
     }
 
-    private static ExtractedTextItem BuildItem(string segmentId, string originalText)
+    private static ExtractedTextItem BuildItem(string segmentId, string originalText, string fileType = "ERB")
     {
         return new ExtractedTextItem
         {
             SegmentId = segmentId,
             DocumentId = "doc",
-            FileType = "ERB",
+            FileType = fileType,
             RelativePath = "A.ERB",
             EncodingName = "utf-8",
             SegmentType = "PRINT",

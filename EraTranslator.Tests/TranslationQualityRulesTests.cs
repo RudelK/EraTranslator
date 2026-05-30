@@ -50,6 +50,33 @@ public sealed class TranslationQualityRulesTests
     }
 
     [Fact]
+    public void GetHardFailureReason_ReturnsFailureForBlankTranslation()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason("   ", "ja", "ko");
+
+        Assert.NotNull(reason);
+        Assert.Equal("빈 번역문", reason.Value.ValidationStatus);
+    }
+
+    [Fact]
+    public void GetHardFailureReason_ReturnsFailureForJapaneseLeakInJaToKo()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason("쾌락快楽", "ja", "ko");
+
+        Assert.NotNull(reason);
+        Assert.Equal("대상 언어 불일치", reason.Value.ValidationStatus);
+    }
+
+    [Fact]
+    public void GetHardFailureReason_ReturnsFailureForUnchangedKanjiOnlyTranslationInJaToKo()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason("交渉術", "ja", "ko", "交渉術");
+
+        Assert.NotNull(reason);
+        Assert.Equal("대상 언어 불일치", reason.Value.ValidationStatus);
+    }
+
+    [Fact]
     public void NormalizeTranslatedText_RemovesSpacesForCsv()
     {
         var normalized = TranslationQualityRules.NormalizeTranslatedText("CSV", "초기 장비 색상 ／ 머리");

@@ -1,7 +1,33 @@
+using EraTranslator.Models;
+
 namespace EraTranslator.Services;
 
 public static class TranslationPromptTemplates
 {
+    public const string HyMt2SystemPrompt =
+        """
+        Translate the following text from {sourceLanguage} into {targetLanguage}.
+        Note that you should only output the translated result without any additional explanation.
+
+        Translation rules:
+        1. Preserve placeholders, script syntax, and code-like expressions exactly.
+        2. Keep the translated wording compact and faithful to the source.
+        3. Prefer consistent translations for repeated terms, names, and labels.
+        4. Do not provide alternatives, notes, commentary, or extra annotation.
+        5. If the text is ambiguous, choose the single most likely final translation.
+
+        {thinkingInstruction}
+        """;
+
+    public const string HyMt2RetryPrompt =
+        """
+        Translate the following text from {sourceLanguage} into {targetLanguage}.
+        You must ONLY output the translated result without any additional explanation.
+        Preserve placeholders, script syntax, and code-like expressions exactly.
+
+        {thinkingInstruction}
+        """;
+
     public const string DefaultSystemPrompt =
         """
         You are a translation engine for Emuera game scripts.
@@ -47,21 +73,31 @@ public static class TranslationPromptTemplates
         string targetLanguage,
         bool disableThinking,
         bool isRetryPrompt,
-        LmStudioThinkingControlMode thinkingControlMode = LmStudioThinkingControlMode.PromptFallback)
+        LmStudioThinkingControlMode thinkingControlMode = LmStudioThinkingControlMode.PromptFallback,
+        PromptProfile promptProfile = PromptProfile.Generic)
     {
         var source = string.IsNullOrWhiteSpace(template)
-            ? (isRetryPrompt ? DefaultRetryPrompt : DefaultSystemPrompt)
+            ? GetDefaultTemplate(promptProfile, isRetryPrompt)
             : template;
 
         var thinkingInstruction = BuildThinkingInstruction(disableThinking, thinkingControlMode);
-        var sourceLanguageLabel = LanguageDisplayService.ToInstructionLabel(sourceLanguage);
-        var targetLanguageLabel = LanguageDisplayService.ToInstructionLabel(targetLanguage);
+        var sourceLanguageLabel = GetPromptLanguageLabel(sourceLanguage, promptProfile);
+        var targetLanguageLabel = GetPromptLanguageLabel(targetLanguage, promptProfile);
 
         return source
             .Replace("{sourceLanguage}", sourceLanguageLabel, StringComparison.Ordinal)
             .Replace("{targetLanguage}", targetLanguageLabel, StringComparison.Ordinal)
             .Replace("{thinkingInstruction}", thinkingInstruction, StringComparison.Ordinal)
             .Trim();
+    }
+
+    internal static string GetDefaultTemplate(PromptProfile promptProfile, bool isRetryPrompt)
+    {
+        return promptProfile switch
+        {
+            PromptProfile.HyMt2 => isRetryPrompt ? HyMt2RetryPrompt : HyMt2SystemPrompt,
+            _ => isRetryPrompt ? DefaultRetryPrompt : DefaultSystemPrompt,
+        };
     }
 
     internal static string BuildThinkingInstruction(
@@ -76,5 +112,22 @@ public static class TranslationPromptTemplates
         return thinkingControlMode == LmStudioThinkingControlMode.ApiCustomField
             ? "Return the final answer directly. Do not output <think> tags, chain-of-thought, analysis, commentary, or any text outside the final answer."
             : "Do not output <think> tags, chain-of-thought, analysis, commentary, or any text outside the final answer.";
+    }
+
+    private static string GetPromptLanguageLabel(string language, PromptProfile promptProfile)
+    {
+        if (promptProfile != PromptProfile.HyMt2)
+        {
+            return LanguageDisplayService.ToInstructionLabel(language);
+        }
+
+        return (language ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "ja" or "jp" => "Japanese",
+            "ko" => "Korean",
+            "en" => "English",
+            "zh" or "zh-cn" or "zh-tw" => "Chinese",
+            _ => LanguageDisplayService.ToInstructionLabel(language ?? string.Empty),
+        };
     }
 }
