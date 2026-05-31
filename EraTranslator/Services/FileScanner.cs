@@ -6,7 +6,8 @@ namespace EraTranslator.Services;
 public sealed class FileScanner
 {
     private static readonly string[] ErbExtensions = [".erb", ".era", ".erh"];
-    private static readonly string[] CsvExtensions = [".csv", ".cvs"];
+    private static readonly string[] CsvExtensions = [".csv", ".cvs", ".erd"];
+    private static readonly string[] SupportedScanDirectoryNames = ["ERB", "CSV", "CVS", "DATA"];
     private readonly int? _maxDegreeOfParallelismOverride;
     private readonly SymbolReferenceAnalyzer _symbolReferenceAnalyzer = new();
     private readonly JosaSupportPackageService _josaSupportPackageService = new();
@@ -30,7 +31,10 @@ public sealed class FileScanner
             GameRoot = gameRoot,
             JosaPackageInfo = _josaSupportPackageService.InspectProject(gameRoot),
         };
-        var files = EnumerateTargetFiles(gameRoot)
+        var targetFiles = EnumerateTargetFiles(gameRoot).ToList();
+        var namespaceRegistry = SymbolNamespaceRegistry.CreateFromRelativePaths(
+            targetFiles.Select(path => Path.GetRelativePath(gameRoot, path)));
+        var files = targetFiles
             .Select((path, index) => new ScanTargetFile(index, path))
             .ToList();
         var results = new ScannedFileResult[files.Count];
@@ -50,7 +54,7 @@ public sealed class FileScanner
             targetFile =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = ScanFile(gameRoot, targetFile.Path, session.JosaPackageInfo, cancellationToken);
+                var result = ScanFile(gameRoot, targetFile.Path, namespaceRegistry, session.JosaPackageInfo, cancellationToken);
                 results[targetFile.Index] = result;
                 Interlocked.Add(ref translatableErbSegments, result.ErbItemCount);
                 Interlocked.Add(ref translatableCsvSegments, result.CsvItemCount);
@@ -121,21 +125,26 @@ public sealed class FileScanner
             .Where(path =>
             {
                 var name = Path.GetFileName(path);
-                return name.Equals("ERB", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("ERH", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("CSV", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("CVS", StringComparison.OrdinalIgnoreCase);
+                return SupportedScanDirectoryNames.Contains(name, StringComparer.OrdinalIgnoreCase);
             })
+            .Concat(SupportedScanDirectoryNames.Contains(Path.GetFileName(gameRoot), StringComparer.OrdinalIgnoreCase)
+                ? [gameRoot]
+                : [])
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var yieldedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var directory in directories)
         {
             foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
             {
+                var fullPath = Path.GetFullPath(file);
                 var extension = Path.GetExtension(file).ToLowerInvariant();
-                if (ErbExtensions.Contains(extension) || CsvExtensions.Contains(extension))
+                if ((ErbExtensions.Contains(extension) || CsvExtensions.Contains(extension))
+                    && yieldedFiles.Add(fullPath))
                 {
-                    yield return file;
+                    yield return fullPath;
                 }
             }
         }
@@ -149,15 +158,16 @@ public sealed class FileScanner
     private static ScannedFileResult ScanFile(
         string gameRoot,
         string path,
+        SymbolNamespaceRegistry namespaceRegistry,
         JosaSupportPackageInfo packageInfo,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         var encodingDetector = new EncodingDetector();
-        var erbExtractor = new ErbExtractor();
-        var erbReferenceExtractor = new ErbReferenceExtractor();
-        var csvExtractor = new CsvExtractor();
+        var erbExtractor = new ErbExtractor(namespaceRegistry);
+        var erbReferenceExtractor = new ErbReferenceExtractor(namespaceRegistry);
+        var csvExtractor = new CsvExtractor(namespaceRegistry);
         var josaPatternAnalyzer = new JosaPatternAnalyzer();
 
         var bytes = File.ReadAllBytes(path);
@@ -168,7 +178,9 @@ public sealed class FileScanner
         var relativePath = Path.GetRelativePath(gameRoot, path);
         var extension = Path.GetExtension(path).ToLowerInvariant();
         var fileType = CsvExtensions.Contains(extension)
-            ? DocumentFileTypes.Csv
+            ? extension.Equals(".erd", StringComparison.OrdinalIgnoreCase)
+                ? DocumentFileTypes.Erd
+                : DocumentFileTypes.Csv
             : extension.Equals(".erh", StringComparison.OrdinalIgnoreCase)
                 ? DocumentFileTypes.Erh
                 : DocumentFileTypes.Erb;
@@ -205,7 +217,11 @@ public sealed class FileScanner
             var referenceResult = erbReferenceExtractor.Extract(documentId, content);
             document.SymbolReferences.AddRange(referenceResult.references);
             document.VariableLiteralOccurrences.AddRange(referenceResult.variableLiterals);
-            document.JosaAnalysis = josaPatternAnalyzer.AnalyzeDocument(content, packageInfo);
+            if (DocumentFileTypes.SupportsJosaRewrite(fileType))
+            {
+                document.JosaAnalysis = josaPatternAnalyzer.AnalyzeDocument(content, packageInfo);
+            }
+
             erbItemCount = segments.Count;
         }
 

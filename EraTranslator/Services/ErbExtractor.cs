@@ -4,6 +4,21 @@ namespace EraTranslator.Services;
 
 public sealed partial class ErbExtractor
 {
+    private static readonly string[] ReservedScriptVariables = ["LOCAL", "LOCALS", "ARG", "ARGS", "RESULT", "RESULTS"];
+    private static readonly string[] ProtectedCodeArgumentFunctionNames = ["GETCONFIG", "VARSIZE", "LOADTEXT", "SAVETEXT"];
+    private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
+    private readonly Regex _scriptSyntaxTokenPattern;
+
+    public ErbExtractor()
+        : this(SymbolNamespaceRegistry.Default)
+    {
+    }
+
+    public ErbExtractor(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        _scriptSyntaxTokenPattern = BuildScriptSyntaxTokenPattern(namespaceRegistry);
+    }
+
     public List<TextSegment> Extract(string documentId, string content)
     {
         var segments = new List<TextSegment>();
@@ -11,22 +26,40 @@ public sealed partial class ErbExtractor
         var absoluteOffset = 0;
         var segmentIndex = 0;
         var insideDataBlock = false;
+        var insideDirectiveContinuation = false;
+        var directiveContinuationParenDepth = 0;
+        var insidePaletteLookupFunction = false;
 
         for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
         {
             var line = lines[lineIndex];
             var normalizedLine = line.TrimEnd('\r');
             var trimmed = normalizedLine.TrimStart();
+            if (TryReadFunctionName(trimmed, out var functionName))
+            {
+                insidePaletteLookupFunction = IsPaletteLookupFunction(functionName);
+            }
+
             if (trimmed.StartsWith(';'))
             {
                 absoluteOffset += line.Length + 1;
                 continue;
             }
 
+            if (insideDirectiveContinuation)
+            {
+                ExtractDirectiveStrings(normalizedLine, directiveContinuationParenDepth, out directiveContinuationParenDepth);
+                insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
+                absoluteOffset += line.Length + 1;
+                continue;
+            }
+
             if (trimmed.StartsWith('#'))
             {
-                if (TryExtractDirectiveStringLine(normalizedLine))
+                if (DimDirectivePattern().IsMatch(normalizedLine))
                 {
+                    ExtractDirectiveStrings(normalizedLine, 0, out directiveContinuationParenDepth);
+                    insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
                     absoluteOffset += line.Length + 1;
                     continue;
                 }
@@ -64,9 +97,22 @@ public sealed partial class ErbExtractor
                 continue;
             }
 
+            ExtractCharacterSearchArguments(normalizedLine);
+
             var htmlContext = HtmlAssignmentPattern().IsMatch(normalizedLine) || HtmlPrintPattern().IsMatch(normalizedLine);
+            var protectedQuotedRanges = CollectProtectedQuotedRanges(normalizedLine, "html-markup");
+            var imageResourceContext = LooksLikeImageResourceContext(normalizedLine);
+            var skipQuotedStrings = PrintImageCommandPattern().IsMatch(normalizedLine) || imageResourceContext;
             foreach (Match match in QuotedStringPattern().Matches(normalizedLine))
             {
+                if (skipQuotedStrings
+                    || protectedQuotedRanges.Any(range => RangesOverlap(range.start, range.end - range.start, match.Index, match.Length))
+                    || (insidePaletteLookupFunction && IsCaseLabelLine(normalizedLine))
+                    || IsQuotedStringProtectedCodeArgument(normalizedLine, match.Index, match.Length))
+                {
+                    continue;
+                }
+
                 var value = match.Groups["content"].Value;
                 if (!TextHeuristics.ContainsTranslatableText(value))
                 {
@@ -89,7 +135,11 @@ public sealed partial class ErbExtractor
                 AddSegment("quoted-string", match.Groups["content"].Index, value);
             }
 
-            ExtractAssignmentValueIfNeeded(normalizedLine);
+            if (!imageResourceContext)
+            {
+                ExtractAssignmentValueIfNeeded(normalizedLine);
+            }
+
             ExtractHtmlTailIfNeeded(normalizedLine);
 
             var printMatch = PrintCommandPattern().Match(normalizedLine);
@@ -105,27 +155,34 @@ public sealed partial class ErbExtractor
 
             absoluteOffset += line.Length + 1;
 
-            bool TryExtractDirectiveStringLine(string sourceLine)
+            void ExtractDirectiveStrings(string sourceLine, int startingParenDepth, out int endingParenDepth)
             {
-                if (!DimDirectivePattern().IsMatch(sourceLine))
+                var scanResult = ScanDirectiveQuotedStrings(sourceLine, startingParenDepth);
+                endingParenDepth = scanResult.endingParenDepth;
+                foreach (var quotedString in scanResult.quotedStrings)
                 {
-                    return false;
-                }
-
-                var extracted = false;
-                foreach (Match match in QuotedStringPattern().Matches(sourceLine))
-                {
-                    var value = match.Groups["content"].Value;
+                    var value = quotedString.value;
                     if (!TextHeuristics.ContainsTranslatableText(value))
                     {
                         continue;
                     }
 
-                    AddSegment("directive-string", match.Groups["content"].Index, value);
-                    extracted = true;
+                    AddSegment("directive-string", quotedString.relativeStart, value);
                 }
+            }
 
-                return extracted;
+            void ExtractCharacterSearchArguments(string sourceLine)
+            {
+                foreach (Match match in CharacterSearchArgumentPattern().Matches(sourceLine))
+                {
+                    var value = match.Groups["name"].Value;
+                    if (!TextHeuristics.ContainsTranslatableText(value))
+                    {
+                        continue;
+                    }
+
+                    AddSegment("character-search-name", match.Groups["name"].Index, value);
+                }
             }
 
             bool TryExtractDataLine(string sourceLine)
@@ -141,8 +198,15 @@ public sealed partial class ErbExtractor
                 var tailOffset = dataMatch.Groups["tail"].Index;
                 var extractedQuoted = false;
 
+                var protectedTailRanges = CollectProtectedQuotedRanges(tail, $"data-{command}-markup");
                 foreach (Match match in QuotedStringPattern().Matches(tail))
                 {
+                    if (protectedTailRanges.Any(range => RangesOverlap(range.start, range.end - range.start, match.Index, match.Length))
+                        || IsQuotedStringProtectedCodeArgument(tail, match.Index, match.Length))
+                    {
+                        continue;
+                    }
+
                     var quotedValue = match.Groups["content"].Value;
                     if (!TextHeuristics.ContainsTranslatableText(quotedValue))
                     {
@@ -241,15 +305,77 @@ public sealed partial class ErbExtractor
             {
                 foreach (var range in ExtractHtmlTextRanges(markup))
                 {
+                    if (ContainsScriptSyntaxToken(range.value)
+                        && TryAddCodeMixedTextSpans($"{type}-fragment", range.value, relativeStart + range.start))
+                    {
+                        continue;
+                    }
+
                     AddSegment(type, relativeStart + range.start, range.value);
                 }
+            }
+
+            List<(int start, int end)> CollectProtectedQuotedRanges(string sourceLine, string htmlSegmentType)
+            {
+                var ranges = new List<(int start, int end)>();
+                foreach (Match match in RawHtmlStringPattern().Matches(sourceLine))
+                {
+                    if (!match.Success || match.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    ranges.Add((match.Index, match.Index + match.Length));
+
+                    var contentGroup = match.Groups["content"];
+                    var markup = contentGroup.Value;
+                    if (!TextHeuristics.ContainsTranslatableText(markup))
+                    {
+                        continue;
+                    }
+
+                    ExtractHtmlSegments(htmlSegmentType, markup, contentGroup.Index);
+                }
+
+                foreach (var rawString in EnumerateRawStringsWithScriptExpressions(sourceLine))
+                {
+                    if (ranges.Any(range => RangesOverlap(range.start, range.end - range.start, rawString.start, rawString.end - rawString.start)))
+                    {
+                        continue;
+                    }
+
+                    ranges.Add((rawString.start, rawString.end));
+
+                    var value = sourceLine.Substring(rawString.contentStart, rawString.contentLength);
+                    if (!TextHeuristics.ContainsTranslatableText(value))
+                    {
+                        continue;
+                    }
+
+                    if (LooksLikeHtml(value))
+                    {
+                        ExtractHtmlSegments(htmlSegmentType, value, rawString.contentStart);
+                        continue;
+                    }
+
+                    if (ContainsScriptSyntaxToken(value)
+                        && !ShouldKeepWholeCodeMixedText(value)
+                        && TryAddCodeMixedTextSpans("raw-string-fragment", value, rawString.contentStart))
+                    {
+                        continue;
+                    }
+
+                    AddSegment("raw-string", rawString.contentStart, value);
+                }
+
+                return ranges;
             }
 
             void AddSegment(string type, int relativeStart, string value)
             {
                 if (!TextHeuristics.ContainsTranslatableText(value)
                     || TextHeuristics.LooksLikeCodeOnly(value)
-                    || TextHeuristics.LooksLikeErbSymbolExpression(value))
+                    || LooksLikeErbSymbolExpression(value))
                 {
                     return;
                 }
@@ -354,11 +480,92 @@ public sealed partial class ErbExtractor
         }
 
         return segments;
+
+        static bool ShouldContinueDirective(string sourceLine, int endingParenDepth)
+        {
+            if (endingParenDepth > 0)
+            {
+                return true;
+            }
+
+            var trimmed = sourceLine.TrimEnd();
+            return trimmed.EndsWith('=') || trimmed.EndsWith(',');
+        }
+
+        static (List<(int relativeStart, string value)> quotedStrings, int endingParenDepth) ScanDirectiveQuotedStrings(
+            string sourceLine,
+            int startingParenDepth)
+        {
+            var quotedStrings = new List<(int relativeStart, string value)>();
+            var parenDepth = startingParenDepth;
+            var inQuote = false;
+            var contentStart = -1;
+
+            for (var index = 0; index < sourceLine.Length; index++)
+            {
+                var ch = sourceLine[index];
+                if (ch == '"' && (index == 0 || sourceLine[index - 1] != '\\'))
+                {
+                    if (inQuote)
+                    {
+                        if (parenDepth == 0 && contentStart >= 0 && index >= contentStart)
+                        {
+                            quotedStrings.Add((contentStart, sourceLine[contentStart..index]));
+                        }
+
+                        inQuote = false;
+                        contentStart = -1;
+                    }
+                    else
+                    {
+                        inQuote = true;
+                        contentStart = index + 1;
+                    }
+
+                    continue;
+                }
+
+                if (inQuote)
+                {
+                    continue;
+                }
+
+                if (ch == '(')
+                {
+                    parenDepth++;
+                }
+                else if (ch == ')' && parenDepth > 0)
+                {
+                    parenDepth--;
+                }
+            }
+
+            return (quotedStrings, parenDepth);
+        }
     }
 
     private static bool LooksLikeHtml(string value)
     {
-        return value.Contains('<') && value.Contains('>');
+        return HtmlTagPattern().IsMatch(value);
+    }
+
+    private static bool LooksLikeImageResourceContext(string sourceLine)
+    {
+        if (string.IsNullOrWhiteSpace(sourceLine))
+        {
+            return false;
+        }
+
+        return sourceLine.Contains("EXIST画像FILE(", StringComparison.Ordinal)
+            || sourceLine.Contains("ENUMFILES(", StringComparison.OrdinalIgnoreCase)
+            || sourceLine.Contains("顔グラ表示用文字列関数(", StringComparison.Ordinal)
+            || sourceLine.Contains("任意顔グラ表示用文字列関数(", StringComparison.Ordinal)
+            || sourceLine.Contains("GCREATE_拡張子(", StringComparison.Ordinal)
+            || sourceLine.Contains("GCREATE_拡張子F(", StringComparison.Ordinal)
+            || sourceLine.Contains("IMAGEPATH_", StringComparison.Ordinal)
+            || sourceLine.Contains(":画像フォルダ%/", StringComparison.Ordinal)
+            || sourceLine.Contains("\"ダンジョン用_", StringComparison.Ordinal)
+            || sourceLine.Contains("/ダンジョン用_", StringComparison.Ordinal);
     }
 
     private static bool TryGetAssignmentExpression(
@@ -389,12 +596,12 @@ public sealed partial class ErbExtractor
         return true;
     }
 
-    private static bool LooksLikeBareAssignmentText(string value)
+    private bool LooksLikeBareAssignmentText(string value)
     {
         if (string.IsNullOrWhiteSpace(value)
             || !TextHeuristics.ContainsTranslatableText(value)
             || TextHeuristics.LooksLikeCodeOnly(value)
-            || TextHeuristics.LooksLikeErbSymbolExpression(value)
+            || LooksLikeErbSymbolExpression(value)
             || TextHeuristics.IsNumericLike(value))
         {
             return false;
@@ -424,7 +631,7 @@ public sealed partial class ErbExtractor
         return value;
     }
 
-    private static List<(int relativeStart, string value)> ExtractAssignmentFragments(string expression, int expressionLineStart)
+    private List<(int relativeStart, string value)> ExtractAssignmentFragments(string expression, int expressionLineStart)
     {
         var fragments = new List<(int relativeStart, string value)>();
         CollectAssignmentFragments(expression, expressionLineStart, fragments);
@@ -433,7 +640,7 @@ public sealed partial class ErbExtractor
             .ToList();
     }
 
-    private static void CollectAssignmentFragments(
+    private void CollectAssignmentFragments(
         string expression,
         int expressionLineStart,
         ICollection<(int relativeStart, string value)> fragments)
@@ -490,7 +697,7 @@ public sealed partial class ErbExtractor
         }
     }
 
-    private static IEnumerable<(int relativeStart, string value)> ExtractCodeMixedTextSpans(string value, int relativeStart)
+    private IEnumerable<(int relativeStart, string value)> ExtractCodeMixedTextSpans(string value, int relativeStart)
     {
         var protectedRanges = CollectScriptSyntaxRanges(value);
         var spans = new List<(int relativeStart, string value)>();
@@ -518,7 +725,7 @@ public sealed partial class ErbExtractor
             .ToList();
     }
 
-    private static void AddMeaningfulSpan(
+    private void AddMeaningfulSpan(
         string source,
         int relativeStart,
         int start,
@@ -556,19 +763,19 @@ public sealed partial class ErbExtractor
         spans.Add((relativeStart + spanStart, span));
     }
 
-    private static bool ContainsScriptSyntaxToken(string value)
+    private bool ContainsScriptSyntaxToken(string value)
     {
-        return ScriptSyntaxTokenPattern().IsMatch(value);
+        return _scriptSyntaxTokenPattern.IsMatch(value);
     }
 
-    private static bool ShouldKeepWholeCodeMixedText(string value)
+    private bool ShouldKeepWholeCodeMixedText(string value)
     {
         if (!ContainsScriptSyntaxToken(value))
         {
             return false;
         }
 
-        var visibleText = ScriptSyntaxTokenPattern().Replace(value, string.Empty).Trim();
+        var visibleText = _scriptSyntaxTokenPattern.Replace(value, string.Empty).Trim();
         if (!TextHeuristics.ContainsTranslatableText(visibleText))
         {
             return false;
@@ -578,10 +785,10 @@ public sealed partial class ErbExtractor
             || CodeMixedPredicateEndingPattern().IsMatch(visibleText);
     }
 
-    private static List<(int start, int end)> CollectScriptSyntaxRanges(string value)
+    private List<(int start, int end)> CollectScriptSyntaxRanges(string value)
     {
         var ranges = new List<(int start, int end)>();
-        foreach (Match match in ScriptSyntaxTokenPattern().Matches(value))
+        foreach (Match match in _scriptSyntaxTokenPattern.Matches(value))
         {
             if (match.Length == 0)
             {
@@ -624,14 +831,14 @@ public sealed partial class ErbExtractor
             or >= '\u4E00' and <= '\u9FFF';
     }
 
-    private static bool IsMeaningfulTextSpan(string value)
+    private bool IsMeaningfulTextSpan(string value)
     {
         var trimmed = value.Trim();
         return trimmed.Length > 0
             && trimmed.Any(IsJapaneseTextCharacter)
             && !IsStandaloneJapaneseParticle(trimmed)
             && !TextHeuristics.LooksLikeCodeOnly(trimmed)
-            && !TextHeuristics.LooksLikeErbSymbolExpression(trimmed)
+            && !LooksLikeErbSymbolExpression(trimmed)
             && !TextHeuristics.IsNumericLike(trimmed);
     }
 
@@ -926,8 +1133,319 @@ public sealed partial class ErbExtractor
         }
     }
 
+    private bool LooksLikeErbSymbolExpression(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var sanitized = _scriptSyntaxTokenPattern.Replace(value, string.Empty);
+        if (string.Equals(sanitized, value, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        sanitized = Regex.Replace(sanitized, @"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", string.Empty, RegexOptions.CultureInvariant);
+        sanitized = Regex.Replace(sanitized, @"[A-Za-z_][A-Za-z0-9_]*", string.Empty, RegexOptions.CultureInvariant);
+        sanitized = new string(sanitized.Where(static character =>
+                !char.IsWhiteSpace(character)
+                && !char.IsDigit(character)
+                && !char.IsPunctuation(character)
+                && !char.IsSymbol(character))
+            .ToArray());
+        return sanitized.Length == 0;
+    }
+
+    private static Regex BuildScriptSyntaxTokenPattern(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        var namespacePattern = BuildNamespaceAlternation(namespaceRegistry);
+        var headPattern = string.IsNullOrWhiteSpace(namespacePattern)
+            ? string.Join("|", ReservedScriptVariables)
+            : $"{namespacePattern}|{string.Join("|", ReservedScriptVariables)}";
+        var pattern =
+            $@"(%[^%\r\n]+%|\{{[^{{}}\r\n]+\}}|<[^\r\n<>]+>|(?<![\p{{L}}\p{{N}}_])(?:{headPattern}):(?:\{{[^{{}}\r\n]+\}}|[\p{{L}}_][\p{{L}}\p{{N}}_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)|(?<![\p{{L}}\p{{N}}_])[\p{{L}}_][\p{{L}}\p{{N}}_]*\s*\([^()\r\n]*\)|(?<![\p{{L}}\p{{N}}_])[\p{{L}}_][\p{{L}}\p{{N}}_]*(?::[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)+)";
+        return new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    }
+
+    private static string BuildNamespaceAlternation(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        return string.Join("|", namespaceRegistry.OrderedNamespaces.Select(Regex.Escape));
+    }
+
+    private static bool IsQuotedStringProtectedCodeArgument(string sourceLine, int quoteStart, int quoteLength)
+    {
+        return IsRangeInsidePercentExpression(sourceLine, quoteStart, quoteLength)
+            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, ProtectedCodeArgumentFunctionNames)
+            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, PaletteLookupFunctionNames)
+            || IsRangeInsideCommandArgument(sourceLine, quoteStart, quoteLength, ["LOADTEXT", "SAVETEXT"])
+            || IsQuotedComparisonLiteral(sourceLine, quoteStart, quoteLength);
+    }
+
+    private static bool IsCaseLabelLine(string sourceLine)
+    {
+        var trimmed = sourceLine.TrimStart();
+        return trimmed.Length > "CASE".Length
+            && trimmed.StartsWith("CASE", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed["CASE".Length]);
+    }
+
+    private static bool TryReadFunctionName(string trimmedLine, out string functionName)
+    {
+        functionName = string.Empty;
+        if (trimmedLine.Length < 2 || trimmedLine[0] != '@')
+        {
+            return false;
+        }
+
+        var index = 1;
+        if (index >= trimmedLine.Length || (!char.IsLetter(trimmedLine[index]) && trimmedLine[index] != '_'))
+        {
+            return false;
+        }
+
+        var start = index;
+        while (index < trimmedLine.Length && (char.IsLetterOrDigit(trimmedLine[index]) || trimmedLine[index] == '_'))
+        {
+            index++;
+        }
+
+        functionName = trimmedLine[start..index];
+        return true;
+    }
+
+    private static bool IsPaletteLookupFunction(string functionName)
+    {
+        return PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsRangeInsidePercentExpression(string value, int start, int length)
+    {
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '%')
+            {
+                continue;
+            }
+
+            var end = value.IndexOf('%', index + 1);
+            if (end < 0)
+            {
+                return false;
+            }
+
+            if (RangeContains(index, end - index + 1, start, length))
+            {
+                return true;
+            }
+
+            index = end;
+        }
+
+        return false;
+    }
+
+    private static bool IsRangeInsideCommandArgument(string value, int start, int length, IReadOnlyCollection<string> commandNames)
+    {
+        foreach (var commandName in commandNames)
+        {
+            var commandIndex = value.IndexOf(commandName, StringComparison.OrdinalIgnoreCase);
+            if (commandIndex < 0)
+            {
+                continue;
+            }
+
+            var prefix = value[..commandIndex].TrimStart();
+            if (prefix.Length > 0 && !prefix.StartsWith(';'))
+            {
+                continue;
+            }
+
+            var afterCommand = commandIndex + commandName.Length;
+            if (afterCommand < value.Length && (char.IsLetterOrDigit(value[afterCommand]) || value[afterCommand] == '_'))
+            {
+                continue;
+            }
+
+            if (start >= afterCommand && start + length <= value.Length)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRangeInsideFunctionArgument(string value, int start, int length, IReadOnlyCollection<string> functionNames)
+    {
+        foreach (var functionName in functionNames)
+        {
+            var searchIndex = 0;
+            while ((searchIndex = value.IndexOf(functionName, searchIndex, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                var parenIndex = value.IndexOf('(', searchIndex + functionName.Length);
+                if (parenIndex < 0)
+                {
+                    break;
+                }
+
+                if (value[(searchIndex + functionName.Length)..parenIndex].Any(static ch => !char.IsWhiteSpace(ch)))
+                {
+                    searchIndex += functionName.Length;
+                    continue;
+                }
+
+                var closeIndex = FindMatchingParen(value, parenIndex);
+                if (closeIndex > parenIndex
+                    && RangeContains(parenIndex + 1, closeIndex - parenIndex - 1, start, length))
+                {
+                    return true;
+                }
+
+                searchIndex = parenIndex + 1;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsQuotedComparisonLiteral(string value, int quoteStart, int quoteLength)
+    {
+        var prefix = value[..quoteStart];
+        var suffixStart = Math.Min(value.Length, quoteStart + quoteLength);
+        var suffix = value[suffixStart..];
+        return EndsWithComparisonOperator(prefix) || StartsWithComparisonOperator(suffix);
+    }
+
+    private static bool EndsWithComparisonOperator(string value)
+    {
+        var trimmed = value.TrimEnd();
+        return trimmed.EndsWith("==", StringComparison.Ordinal)
+            || trimmed.EndsWith("!=", StringComparison.Ordinal)
+            || trimmed.EndsWith("<>", StringComparison.Ordinal)
+            || trimmed.EndsWith(">=", StringComparison.Ordinal)
+            || trimmed.EndsWith("<=", StringComparison.Ordinal);
+    }
+
+    private static bool StartsWithComparisonOperator(string value)
+    {
+        var trimmed = value.TrimStart();
+        return trimmed.StartsWith("==", StringComparison.Ordinal)
+            || trimmed.StartsWith("!=", StringComparison.Ordinal)
+            || trimmed.StartsWith("<>", StringComparison.Ordinal)
+            || trimmed.StartsWith(">=", StringComparison.Ordinal)
+            || trimmed.StartsWith("<=", StringComparison.Ordinal);
+    }
+
+    private static int FindMatchingParen(string value, int openParenIndex)
+    {
+        var depth = 0;
+        var inQuote = false;
+        for (var index = openParenIndex; index < value.Length; index++)
+        {
+            var ch = value[index];
+            if (ch == '"')
+            {
+                inQuote = !inQuote;
+                continue;
+            }
+
+            if (inQuote)
+            {
+                continue;
+            }
+
+            if (ch == '(')
+            {
+                depth++;
+            }
+            else if (ch == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool RangeContains(int outerStart, int outerLength, int innerStart, int innerLength)
+    {
+        var outerEnd = outerStart + outerLength;
+        var innerEnd = innerStart + innerLength;
+        return innerStart >= outerStart && innerEnd <= outerEnd;
+    }
+
+    private static IEnumerable<(int start, int end, int contentStart, int contentLength)> EnumerateRawStringsWithScriptExpressions(string sourceLine)
+    {
+        for (var index = 0; index < sourceLine.Length - 1; index++)
+        {
+            if (sourceLine[index] != '@' || sourceLine[index + 1] != '"')
+            {
+                continue;
+            }
+
+            var contentStart = index + 2;
+            var insidePercentExpression = false;
+            var braceDepth = 0;
+            var containsScriptExpression = false;
+
+            for (var scan = contentStart; scan < sourceLine.Length; scan++)
+            {
+                var ch = sourceLine[scan];
+                if (ch == '%')
+                {
+                    insidePercentExpression = !insidePercentExpression;
+                    containsScriptExpression = true;
+                    continue;
+                }
+
+                if (!insidePercentExpression)
+                {
+                    if (ch == '{')
+                    {
+                        braceDepth++;
+                        containsScriptExpression = true;
+                        continue;
+                    }
+
+                    if (ch == '}' && braceDepth > 0)
+                    {
+                        braceDepth--;
+                        continue;
+                    }
+                }
+
+                if (ch != '"' || insidePercentExpression || braceDepth > 0)
+                {
+                    continue;
+                }
+
+                if (scan + 1 < sourceLine.Length && sourceLine[scan + 1] == '"')
+                {
+                    scan++;
+                    continue;
+                }
+
+                if (containsScriptExpression)
+                {
+                    yield return (index, scan + 1, contentStart, scan - contentStart);
+                }
+
+                index = scan;
+                break;
+            }
+        }
+    }
+
     [GeneratedRegex(@"@?""(?<content>(?:[^""]|"""")*)""", RegexOptions.Compiled)]
     private static partial Regex QuotedStringPattern();
+
+    [GeneratedRegex(@"@""(?<content><.*>)""(?=\s*(?:,|\+|$))", RegexOptions.Compiled)]
+    private static partial Regex RawHtmlStringPattern();
 
     [GeneratedRegex(@"^\s*PRINT[A-Z_]*\s+(?<tail>.+)$", RegexOptions.Compiled)]
     private static partial Regex PrintCommandPattern();
@@ -956,7 +1474,10 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"\btitle\s*=\s*(['""])(?<content>.*?)\1", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex HtmlTitleAttributePattern();
 
-    [GeneratedRegex(@"^\s*(?<var>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<tail>.+?)\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"<[/!\p{L}A-Za-z][^>]*>", RegexOptions.Compiled)]
+    private static partial Regex HtmlTagPattern();
+
+    [GeneratedRegex(@"^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*)\s*=\s*(?<tail>.+?)\s*$", RegexOptions.Compiled)]
     private static partial Regex AssignmentPattern();
 
     [GeneratedRegex(@"[(){}\[\]=<>!&|+\-*/%:,\\@#?]", RegexOptions.Compiled)]
@@ -965,8 +1486,11 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"^\s*#DIMS?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex DimDirectivePattern();
 
-    [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>|(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|BASE|ABL|PALAM|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|SAVESTR|LOCAL|LOCALS|ARG|ARGS|RESULT|RESULTS):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)|(?<![\p{L}\p{N}_])[A-Za-z_][A-Za-z0-9_]*\s*\([^()\r\n]*\)|(?<![\p{L}\p{N}_])[A-Za-z_][A-Za-z0-9_]*(?::[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)+)", RegexOptions.Compiled)]
-    private static partial Regex ScriptSyntaxTokenPattern();
+    [GeneratedRegex(@"^\s*PRINT_IMG\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex PrintImageCommandPattern();
+
+    [GeneratedRegex(@"キャラ検索\s*\(\s*""(?<name>(?:[^""]|"""")*)""\s*\)", RegexOptions.Compiled)]
+    private static partial Regex CharacterSearchArgumentPattern();
 
     [GeneratedRegex(@"[「」『』（）()、。！？!?…‥]", RegexOptions.Compiled)]
     private static partial Regex CodeMixedSentenceMarkerPattern();

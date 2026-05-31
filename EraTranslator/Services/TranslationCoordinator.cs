@@ -25,7 +25,7 @@ public sealed class TranslationCoordinator : IDisposable
         ProviderSettings settings,
         IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
         IProgress<(double value, string status, string detail)> progress,
-        Action? persistState,
+        Action<IReadOnlyList<ExtractedTextItem>>? persistState,
         CancellationToken cancellationToken)
     {
         await TranslateAsync(
@@ -45,7 +45,7 @@ public sealed class TranslationCoordinator : IDisposable
         ProviderSettings settings,
         IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
         IProgress<(double value, string status, string detail)> progress,
-        Action? persistState,
+        Action<IReadOnlyList<ExtractedTextItem>>? persistState,
         CancellationToken cancellationToken)
     {
         await TranslateAsync(
@@ -66,7 +66,7 @@ public sealed class TranslationCoordinator : IDisposable
         IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
         IReadOnlyList<GlossaryHint> glossaryHints,
         IProgress<(double value, string status, string detail)> progress,
-        Action? persistState,
+        Action<IReadOnlyList<ExtractedTextItem>>? persistState,
         CancellationToken cancellationToken)
     {
         var activeItems = items.ToList();
@@ -101,7 +101,7 @@ public sealed class TranslationCoordinator : IDisposable
         processedCount = seededCount;
         if (seededCount > 0)
         {
-            persistState?.Invoke();
+            PersistChangedItems(persistState, seededItems);
         }
 
         var representatives = activeItems
@@ -113,9 +113,10 @@ public sealed class TranslationCoordinator : IDisposable
         var targetLanguageRepresentatives = representatives
             .Where(item => ShouldReuseOriginalAsTranslation(item.OriginalText, settings))
             .ToList();
+        var targetLanguageResolvedItems = new List<ExtractedTextItem>();
         foreach (var item in targetLanguageRepresentatives)
         {
-            processedCount += MarkProcessed(ApplyResolvedTranslationToGroup(
+            var affectedItems = ApplyResolvedTranslationToGroup(
                 activeGroupedByOriginal,
                 propagationGroupedByOriginal,
                 activeSegmentIds,
@@ -125,18 +126,21 @@ public sealed class TranslationCoordinator : IDisposable
                 settings.TargetLanguage,
                 string.Empty,
                 forceReview: false,
-                reviewReason: string.Empty));
+                reviewReason: string.Empty);
+            processedCount += MarkProcessed(affectedItems);
+            targetLanguageResolvedItems.AddRange(affectedItems);
         }
 
         if (targetLanguageRepresentatives.Count > 0)
         {
-            persistState?.Invoke();
+            PersistChangedItems(persistState, targetLanguageResolvedItems);
             representatives = representatives
                 .Except(targetLanguageRepresentatives)
                 .ToList();
         }
 
         var dictionaryResolvedRepresentatives = new List<ExtractedTextItem>();
+        var dictionaryResolvedItems = new List<ExtractedTextItem>();
         foreach (var item in representatives)
         {
             var dictionaryMatch = await _dictionaryFirstTranslationService.TryResolveAsync(item, settings, cancellationToken).ConfigureAwait(false);
@@ -158,12 +162,13 @@ public sealed class TranslationCoordinator : IDisposable
                 dictionaryMatch.Value.ForceReview,
                 dictionaryMatch.Value.ReviewReason);
             processedCount += MarkProcessed(affectedItems);
+            dictionaryResolvedItems.AddRange(affectedItems);
             LogDictionaryHitIfEnabled(settings, item, dictionaryMatch.Value, affectedItems.Count);
         }
 
         if (dictionaryResolvedRepresentatives.Count > 0)
         {
-            persistState?.Invoke();
+            PersistChangedItems(persistState, dictionaryResolvedItems);
             representatives = representatives
                 .Except(dictionaryResolvedRepresentatives)
                 .ToList();
@@ -249,7 +254,6 @@ public sealed class TranslationCoordinator : IDisposable
             {
                 ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkTranslating());
             }
-            persistState?.Invoke();
 
             var remaining = batch.ToDictionary(item => item.SegmentId, StringComparer.Ordinal);
 
@@ -281,6 +285,7 @@ public sealed class TranslationCoordinator : IDisposable
                         cancellationToken,
                         batchGlossaryHints);
                     var nextRemaining = new Dictionary<string, ExtractedTextItem>(StringComparer.Ordinal);
+                    var changedItems = new List<ExtractedTextItem>();
 
                     foreach (var item in currentBatch)
                     {
@@ -293,12 +298,14 @@ public sealed class TranslationCoordinator : IDisposable
                             }
                             else
                             {
-                                processedCount += MarkProcessed(ApplyFailureToGroup(
+                                var failureItems = ApplyFailureToGroup(
                                     activeGroupedByOriginal,
                                     item.OriginalText,
                                     "번역 실패",
                                     MapErrorKind(providerError.Kind, providerError.HttpStatusCode),
-                                    providerError.Message));
+                                    providerError.Message);
+                                processedCount += MarkProcessed(failureItems);
+                                changedItems.AddRange(failureItems);
                             }
 
                             continue;
@@ -314,12 +321,14 @@ public sealed class TranslationCoordinator : IDisposable
                             }
                             else
                             {
-                                processedCount += MarkProcessed(ApplyFailureToGroup(
+                                var missingResultItems = ApplyFailureToGroup(
                                     activeGroupedByOriginal,
                                     item.OriginalText,
                                     "번역 실패",
                                     "응답 누락",
-                                    "번역 결과가 반환되지 않았습니다."));
+                                    "번역 결과가 반환되지 않았습니다.");
+                                processedCount += MarkProcessed(missingResultItems);
+                                changedItems.AddRange(missingResultItems);
                             }
 
                             continue;
@@ -341,21 +350,25 @@ public sealed class TranslationCoordinator : IDisposable
                             {
                                 if (IsPlaceholderCountMismatch(tokenError))
                                 {
-                                    processedCount += MarkProcessed(ApplyReviewToGroup(
+                                    var reviewItems = ApplyReviewToGroup(
                                         activeGroupedByOriginal,
                                         item.OriginalText,
                                         normalizedTranslated,
                                         "토큰 검토 필요",
-                                        tokenError));
+                                        tokenError);
+                                    processedCount += MarkProcessed(reviewItems);
+                                    changedItems.AddRange(reviewItems);
                                 }
                                 else
                                 {
-                                    processedCount += MarkProcessed(ApplyReviewToGroup(
+                                    var reviewItems = ApplyReviewToGroup(
                                         activeGroupedByOriginal,
                                         item.OriginalText,
                                         normalizedTranslated,
                                         validationLabel,
-                                        tokenError));
+                                        tokenError);
+                                    processedCount += MarkProcessed(reviewItems);
+                                    changedItems.AddRange(reviewItems);
                                 }
                             }
 
@@ -363,7 +376,7 @@ public sealed class TranslationCoordinator : IDisposable
                         }
 
                         var restoredTranslation = protector.Restore(normalizedTranslated, protectedSegment.Placeholders);
-                        processedCount += MarkProcessed(ApplyResolvedTranslationToGroup(
+                        var affectedItems = ApplyResolvedTranslationToGroup(
                             activeGroupedByOriginal,
                             propagationGroupedByOriginal,
                             activeSegmentIds,
@@ -373,26 +386,29 @@ public sealed class TranslationCoordinator : IDisposable
                             settings.TargetLanguage,
                             string.Empty,
                             forceReview: false,
-                            reviewReason: string.Empty));
+                            reviewReason: string.Empty);
+                        processedCount += MarkProcessed(affectedItems);
+                        changedItems.AddRange(affectedItems);
                     }
 
                     remaining = nextRemaining;
-                    persistState?.Invoke();
+                    PersistChangedItems(persistState, changedItems);
                 }
                 catch (OperationCanceledException)
                 {
+                    var changedItems = new List<ExtractedTextItem>();
                     foreach (var item in currentBatch)
                     {
-                        ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem =>
+                        changedItems.AddRange(ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem =>
                         {
                             if (groupItem.NeedsTranslation)
                             {
                                 groupItem.MarkStopped();
                             }
-                        });
+                        }));
                     }
 
-                    persistState?.Invoke();
+                    PersistChangedItems(persistState, changedItems);
                     throw;
                 }
                 catch (TranslationProviderException ex)
@@ -402,16 +418,19 @@ public sealed class TranslationCoordinator : IDisposable
                         continue;
                     }
 
+                    var changedItems = new List<ExtractedTextItem>();
                     foreach (var item in currentBatch)
                     {
-                        processedCount += MarkProcessed(ApplyFailureToGroup(
+                        var affectedItems = ApplyFailureToGroup(
                             activeGroupedByOriginal,
                             item.OriginalText,
                             "번역 실패",
                             MapErrorKind(ex.Kind, ex.StatusCode is null ? null : (int)ex.StatusCode.Value),
-                            ex.Message));
+                            ex.Message);
+                        processedCount += MarkProcessed(affectedItems);
+                        changedItems.AddRange(affectedItems);
                     }
-                    persistState?.Invoke();
+                    PersistChangedItems(persistState, changedItems);
                 }
                 catch (Exception ex)
                 {
@@ -420,16 +439,19 @@ public sealed class TranslationCoordinator : IDisposable
                         continue;
                     }
 
+                    var changedItems = new List<ExtractedTextItem>();
                     foreach (var item in currentBatch)
                     {
-                        processedCount += MarkProcessed(ApplyFailureToGroup(
+                        var affectedItems = ApplyFailureToGroup(
                             activeGroupedByOriginal,
                             item.OriginalText,
                             "번역 실패",
                             "배치 실패",
-                            ex.Message));
+                            ex.Message);
+                        processedCount += MarkProcessed(affectedItems);
+                        changedItems.AddRange(affectedItems);
                     }
-                    persistState?.Invoke();
+                    PersistChangedItems(persistState, changedItems);
                 }
             }
 
@@ -476,6 +498,27 @@ public sealed class TranslationCoordinator : IDisposable
             match.PersistedToNaverDictionary,
             match.SourceUrl,
             match.ReviewRequired));
+    }
+
+    private static void PersistChangedItems(
+        Action<IReadOnlyList<ExtractedTextItem>>? persistState,
+        IReadOnlyList<ExtractedTextItem> changedItems)
+    {
+        if (persistState is null || changedItems.Count == 0)
+        {
+            return;
+        }
+
+        var distinctItems = changedItems
+            .GroupBy(item => item.SegmentId, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToList();
+        if (distinctItems.Count == 0)
+        {
+            return;
+        }
+
+        persistState(distinctItems);
     }
 
     private static IReadOnlyList<ExtractedTextItem> ApplyExistingSharedTranslations(

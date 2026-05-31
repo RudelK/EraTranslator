@@ -4,8 +4,6 @@ namespace EraTranslator.Services;
 
 public sealed class InlineSymbolReferenceRewriter
 {
-    private readonly ErbReferenceExtractor _erbReferenceExtractor = new();
-
     public string Rewrite(
         string text,
         IReadOnlyDictionary<(string Namespace, string OriginalKey), string> renameMap,
@@ -17,7 +15,9 @@ public sealed class InlineSymbolReferenceRewriter
             return text;
         }
 
-        var extracted = _erbReferenceExtractor.Extract("inline", text);
+        var erbReferenceExtractor = new ErbReferenceExtractor(
+            SymbolNamespaceRegistry.CreateFromReferenceMaps(renameMap, stringLookupRenameMap));
+        var extracted = erbReferenceExtractor.Extract("inline", text);
         var directReferences = extracted.references
             .Where(reference => reference.Kind == ErbSymbolReferenceKind.DirectLiteral
                 && GetReplacementMap(text, reference, renameMap, stringLookupRenameMap).ContainsKey((reference.Namespace, reference.OriginalKey)))

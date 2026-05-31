@@ -1,4 +1,5 @@
 using System.Text;
+using EraTranslator.Models;
 using EraTranslator.Services;
 
 namespace EraTranslator.Tests;
@@ -50,6 +51,94 @@ PRINTFORMW GETNUM(CFLAG,"外見年齢")
             Assert.Equal(ProjectSessionSummary(sequential), ProjectSessionSummary(parallel));
             Assert.Equal(ProjectDocumentSummary(sequential), ProjectDocumentSummary(parallel));
             Assert.Equal(ProjectItemSummary(sequential), ProjectItemSummary(parallel));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Scan_DataDirectoryCollectsSupportedFilesWithoutDuplicates()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var dataDir = Path.Combine(tempRoot, "data");
+        var nestedCsvDir = Path.Combine(dataDir, "CSV");
+        var nestedErbDir = Path.Combine(dataDir, "ERB");
+        Directory.CreateDirectory(nestedCsvDir);
+        Directory.CreateDirectory(nestedErbDir);
+        File.WriteAllText(Path.Combine(nestedCsvDir, "OPTION変数.csv"), "3,妊娠切り替え\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(nestedErbDir, "Test.ERB"), "SIF OPTION変数:妊娠切り替え\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(dataDir, "Ignored.txt"), "무시", Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(tempRoot);
+
+            Assert.Equal(2, session.Documents.Count);
+            Assert.Contains(session.Documents.Keys, key => key.EndsWith("OPTION変数.csv", StringComparison.Ordinal));
+            Assert.Contains(session.Documents.Keys, key => key.EndsWith("Test.ERB", StringComparison.Ordinal));
+            Assert.DoesNotContain(session.Documents.Keys, key => key.EndsWith("Ignored.txt", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Scan_AnalyzesJosaPatternsForErbOnly()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var erbDir = Path.Combine(tempRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(Path.Combine(erbDir, "Main.ERB"), "PRINTFORMW %플레이어은%\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(erbDir, "Common.ERH"), "PRINTFORMW %플레이어은%\r\n", Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(tempRoot);
+
+            Assert.True(session.Documents["ERB/Main.ERB"].JosaAnalysis.PatternCount > 0);
+            Assert.Equal(0, session.Documents["ERB/Common.ERH"].JosaAnalysis.PatternCount);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Scan_ErbDirectoryErdFilesUseCsvExtractionAndNamespaceWithoutDimensionSuffix()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var erbDir = Path.Combine(tempRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(Path.Combine(erbDir, "BATTLE_STATE@2.ERD"), "0,ＨＰ\r\n1,攻撃力\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), "SIF BATTLE_STATE:TARGET:ＨＰ > 0\r\n", Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(tempRoot);
+            var document = session.Documents["ERB/BATTLE_STATE@2.ERD"];
+            var item = Assert.Single(session.Items, item => item.OriginalText == "ＨＰ");
+
+            Assert.Equal(DocumentFileTypes.Erd, document.FileType);
+            Assert.True(DocumentFileTypes.IsCsvLike(document.FileType));
+            Assert.Equal(CsvDocumentKind.IdFirstTable, document.CsvKind);
+            Assert.Equal("BATTLE_STATE", item.SymbolNamespace);
+            Assert.Equal("ＨＰ", item.OriginalSymbolKey);
+            Assert.True(item.IsReferenceBearingKey);
+            Assert.True(item.ReferenceImpactCount > 0);
         }
         finally
         {

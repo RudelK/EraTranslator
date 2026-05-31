@@ -179,7 +179,7 @@ public sealed class DictionaryFirstTranslationService(
 
     private static bool IsCharacterSheetNameValue(ExtractedTextItem item)
     {
-        return string.Equals(item.FileType, "CSV", StringComparison.OrdinalIgnoreCase)
+        return DocumentFileTypes.IsCsvLike(item.FileType)
             && string.Equals(item.SegmentType, "csv-CharacterSheet-field-1", StringComparison.Ordinal)
             && item.CsvFieldRole == CsvFieldRole.TranslatableValue
             && CharacterNameValueSourceKeys.Contains((item.SourceKey ?? string.Empty).Trim());

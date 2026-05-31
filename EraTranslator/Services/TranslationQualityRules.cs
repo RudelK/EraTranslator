@@ -8,7 +8,7 @@ public static partial class TranslationQualityRules
 
     public static string NormalizeTranslatedText(string fileType, string text, bool preserveWhitespace = false)
     {
-        if (string.Equals(fileType, "CSV", StringComparison.OrdinalIgnoreCase))
+        if (DocumentFileTypes.IsCsvLike(fileType))
         {
             var normalizedCsv = NormalizeCsvPunctuation(text);
             normalizedCsv = NormalizeProtectedCharacterSpacing(normalizedCsv);

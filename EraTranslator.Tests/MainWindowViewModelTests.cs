@@ -41,7 +41,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_ExposesErhInFileTypeFilters()
+    public void Constructor_ExposesErhAndErdInFileTypeFilters()
     {
         var viewModel = new MainWindowViewModel(
             appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
@@ -49,6 +49,7 @@ public sealed class MainWindowViewModelTests : IDisposable
             restoreLastSessionOnStartup: false);
 
         Assert.Contains("ERH", viewModel.FileTypeFilters);
+        Assert.Contains("ERD", viewModel.FileTypeFilters);
     }
 
     [Fact]
@@ -120,6 +121,7 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         var sessionStateService = new ScanSessionStateService();
         sessionStateService.Save(BuildSessionWithSameOriginalInDifferentFiles(gameDirectory), gameDirectory);
+        var recordingStore = new RecordingSqliteProjectStateStore();
         var provider = new RecordingProvider(requests =>
         {
             var result = new TranslationProviderResult();
@@ -133,12 +135,14 @@ public sealed class MainWindowViewModelTests : IDisposable
             userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
             scanSessionStateService: sessionStateService,
             translationProgressStateService: new TranslationProgressStateService(),
+            sqliteProjectStateStore: recordingStore,
             detectSampleDirectory: false,
             restoreLastSessionOnStartup: false);
 
         viewModel.GameDirectory = gameDirectory;
         viewModel.FilterText = "Visible.ERB";
         viewModel.EnableBundledDictionaryFirstPass = false;
+        recordingStore.ResetCounts();
 
         var completed = await viewModel.TranslatePendingAsync();
 
@@ -150,6 +154,8 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal("안녕하세요", visible.TranslatedText);
         Assert.Equal("안녕하세요", hidden.TranslatedText);
         Assert.Equal("번역 완료", hidden.Status);
+        Assert.Equal(1, recordingStore.UpsertItemsCallCount);
+        Assert.Equal(2, Assert.Single(recordingStore.UpsertBatchSizes));
     }
 
     [Fact]
@@ -207,7 +213,9 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal(["快楽"], provider.GlossaryHistory[1].Select(static hint => hint.Source).ToList());
         Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[2].Select(static hint => hint.Source).ToList());
         Assert.Equal(["快楽値ゲージ", "快楽値", "快楽"], provider.GlossaryHistory[3].Select(static hint => hint.Source).ToList());
-        Assert.True(recordingStore.SnapshotSaveCount >= 4);
+        Assert.Equal(4, recordingStore.UpsertItemsCallCount);
+        Assert.Equal(new[] { 1, 1, 1, 1 }, recordingStore.UpsertBatchSizes);
+        Assert.Equal(5, recordingStore.SnapshotSaveCount);
     }
 
     [Fact]

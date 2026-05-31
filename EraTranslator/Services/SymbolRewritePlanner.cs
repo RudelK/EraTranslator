@@ -53,7 +53,7 @@ public sealed class SymbolRewritePlanner
             {
                 if (unresolvedNamespaces.Contains(entry.Namespace))
                 {
-                    BlockEntry(plan, entry, $"동적 {entry.Namespace} 참조를 해석하지 못해 자동 저장을 막았습니다.");
+                    ReviewEntry(plan, entry, $"동적 {entry.Namespace} 참조 중 일부를 해석하지 못했습니다. 자동 저장은 진행하지만 사용처를 확인하세요.");
                     continue;
                 }
             }
@@ -262,10 +262,17 @@ public sealed class SymbolRewritePlanner
     {
         return symbolNamespace switch
         {
-            "BASE" => ["BASE", "MAXBASE"],
+            "BASE" => ["BASE", "MAXBASE", "DOWNBASE"],
+            "DOWNBASE" => ["DOWNBASE", "BASE", "MAXBASE"],
+            "STRNAME" => ["STRNAME", "STR"],
+            "STR" => ["STR", "STRNAME"],
             "ITEM" => ["ITEM", "ITEMPRICE"],
-            "PALAM" => ["PALAM", "JUEL"],
-            "JUEL" => ["JUEL", "PALAM"],
+            "PALAM" => ["PALAM", "JUEL", "CUP", "CDOWN"],
+            "JUEL" => ["JUEL", "PALAM", "CUP", "CDOWN"],
+            "SOURCE" => ["SOURCE", "CUP", "CDOWN"],
+            "CDOWN" => ["CDOWN", "PALAM", "JUEL", "CUP"],
+            "EX" => ["EX", "NOWEX"],
+            "NOWEX" => ["NOWEX", "EX"],
             _ => [symbolNamespace],
         };
     }

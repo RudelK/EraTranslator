@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace EraTranslator.Services;
@@ -8,6 +9,8 @@ public sealed class OutputWriter
     private static readonly UTF8Encoding Utf8NoBomEncoding = new(false);
     private static readonly UnicodeEncoding Utf16LeBomEncoding = new(false, true, true);
     private static readonly UnicodeEncoding Utf16LeNoBomEncoding = new(false, false, true);
+    private static readonly string[] ProtectedCodeArgumentFunctionNames = ["GETCONFIG", "VARSIZE", "LOADTEXT", "SAVETEXT"];
+    private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
     private readonly SymbolRewritePlanner _rewritePlanner = new();
     private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
     private readonly JosaPatternAnalyzer _josaPatternAnalyzer = new();
@@ -20,17 +23,33 @@ public sealed class OutputWriter
         IProgress<(double value, string detail)>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        var result = new OutputWriteResult
+        {
+            StartedAt = DateTimeOffset.Now,
+        };
+        var totalStopwatch = Stopwatch.StartNew();
+        var refreshStopwatch = Stopwatch.StartNew();
         ErbReferenceSessionRefresher.Refresh(session);
+        refreshStopwatch.Stop();
+        result.RefreshElapsed = refreshStopwatch.Elapsed;
+
+        var rewritePlanStopwatch = Stopwatch.StartNew();
         var rewritePlan = _rewritePlanner.CreatePlan(session);
+        rewritePlanStopwatch.Stop();
+        result.RewritePlanElapsed = rewritePlanStopwatch.Elapsed;
         var packageInfo = session.JosaPackageInfo.ErbExists || session.JosaPackageInfo.ErhExists
             ? session.JosaPackageInfo
             : _josaSupportPackageService.InspectProject(session.GameRoot);
-        return saveMode switch
+        var completed = saveMode switch
         {
-            SaveMode.ExportCopy => SaveToExportDirectory(session, outputDirectory, rewritePlan, packageInfo, progress, cancellationToken),
-            SaveMode.InPlaceWithBackup => SaveInPlaceWithBackup(session, rewritePlan, packageInfo, progress, cancellationToken),
+            SaveMode.ExportCopy => SaveToExportDirectory(session, outputDirectory, rewritePlan, packageInfo, progress, cancellationToken, result),
+            SaveMode.InPlaceWithBackup => SaveInPlaceWithBackup(session, rewritePlan, packageInfo, progress, cancellationToken, result),
             _ => throw new NotSupportedException($"지원되지 않는 저장 모드입니다: {saveMode}"),
         };
+        totalStopwatch.Stop();
+        completed.CompletedAt = DateTimeOffset.Now;
+        completed.TotalElapsed = totalStopwatch.Elapsed;
+        return completed;
     }
 
     private OutputWriteResult SaveToExportDirectory(
@@ -39,12 +58,17 @@ public sealed class OutputWriter
         SymbolRewritePlan rewritePlan,
         JosaSupportPackageInfo packageInfo,
         IProgress<(double value, string detail)>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        OutputWriteResult result)
     {
+        var copyStopwatch = Stopwatch.StartNew();
         Directory.CreateDirectory(outputDirectory);
         CopyGameRootToExportDirectory(session.GameRoot, outputDirectory, cancellationToken);
-        var result = new OutputWriteResult();
+        copyStopwatch.Stop();
+        result.CopyElapsed = copyStopwatch.Elapsed;
+
         var documents = session.Documents.Values.ToList();
+        var documentWriteStopwatch = Stopwatch.StartNew();
 
         for (var index = 0; index < documents.Count; index++)
         {
@@ -53,7 +77,7 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
-            var josaDocumentReplacements = DocumentFileTypes.IsErbLike(document.FileType)
+            var josaDocumentReplacements = DocumentFileTypes.SupportsJosaRewrite(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
             if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
@@ -70,8 +94,13 @@ public sealed class OutputWriter
             result.WrittenFiles.Add(fullPath);
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
         }
+        documentWriteStopwatch.Stop();
+        result.DocumentWriteElapsed = documentWriteStopwatch.Elapsed;
 
+        var packageStopwatch = Stopwatch.StartNew();
         WriteBundledJosaPackage(outputDirectory, result, backupRoot: null);
+        packageStopwatch.Stop();
+        result.PackageWriteElapsed = packageStopwatch.Elapsed;
         progress?.Report((1.0, result.WrittenFiles.Count == 0 ? "저장할 파일 없음" : $"저장 완료: {result.WrittenFiles.Count}개 파일"));
         return result;
     }
@@ -106,11 +135,13 @@ public sealed class OutputWriter
         SymbolRewritePlan rewritePlan,
         JosaSupportPackageInfo packageInfo,
         IProgress<(double value, string detail)>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        OutputWriteResult result)
     {
-        var result = new OutputWriteResult();
         var backupRoot = Path.Combine(session.GameRoot, ".era-translator-backup", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
         var documents = session.Documents.Values.ToList();
+        var documentWriteStopwatch = Stopwatch.StartNew();
+        var backupElapsed = TimeSpan.Zero;
 
         for (var index = 0; index < documents.Count; index++)
         {
@@ -119,7 +150,7 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
-            var josaDocumentReplacements = DocumentFileTypes.IsErbLike(document.FileType)
+            var josaDocumentReplacements = DocumentFileTypes.SupportsJosaRewrite(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
             if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
@@ -130,8 +161,11 @@ public sealed class OutputWriter
             }
 
             var backupPath = Path.Combine(backupRoot, document.RelativePath);
+            var backupStopwatch = Stopwatch.StartNew();
             Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
             File.Copy(document.FullPath, backupPath, overwrite: false);
+            backupStopwatch.Stop();
+            backupElapsed += backupStopwatch.Elapsed;
             result.BackupFiles.Add(backupPath);
 
             var content = ApplyTranslations(document, translatedMap, rewritePlan, josaDocumentReplacements, packageInfo);
@@ -139,8 +173,14 @@ public sealed class OutputWriter
             result.WrittenFiles.Add(document.FullPath);
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
         }
+        documentWriteStopwatch.Stop();
+        result.BackupElapsed = backupElapsed;
+        result.DocumentWriteElapsed = documentWriteStopwatch.Elapsed;
 
+        var packageStopwatch = Stopwatch.StartNew();
         WriteBundledJosaPackage(session.GameRoot, result, backupRoot);
+        packageStopwatch.Stop();
+        result.PackageWriteElapsed = packageStopwatch.Elapsed;
         progress?.Report((1.0, result.WrittenFiles.Count == 0 ? "저장할 파일 없음" : $"저장 완료: {result.WrittenFiles.Count}개 파일"));
         return result;
     }
@@ -163,7 +203,7 @@ public sealed class OutputWriter
         IReadOnlyList<PlannedTextReplacement> josaDocumentReplacements,
         JosaSupportPackageInfo packageInfo)
     {
-        return document.FileType == "CSV"
+        return DocumentFileTypes.IsCsvLike(document.FileType)
             ? ApplyCsvTranslations(document, translatedItems, rewritePlan)
             : ApplyErbTranslations(document, translatedItems, rewritePlan, josaDocumentReplacements, packageInfo);
     }
@@ -176,19 +216,29 @@ public sealed class OutputWriter
         JosaSupportPackageInfo packageInfo)
     {
         var replacements = new List<PlannedTextReplacement>();
+        var appliedSegmentIds = new HashSet<string>(StringComparer.Ordinal);
         string? previousTranslatedValue = null;
+        rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var plannedReplacements);
+        plannedReplacements ??= [];
 
         foreach (var segment in document.Segments
                      .Where(segment => translatedItems.ContainsKey(segment.SegmentId))
                      .OrderBy(segment => segment.AbsoluteStart))
         {
+            if (ShouldPreserveOriginalErbSegment(document, segment, plannedReplacements))
+            {
+                previousTranslatedValue = null;
+                continue;
+            }
+
             var translatedValue = RewriteTranslatedSegmentText(
                 translatedItems[segment.SegmentId],
                 rewritePlan,
                 rewritePlan.RenameMap,
                 packageInfo);
 
-            if (!string.IsNullOrWhiteSpace(previousTranslatedValue))
+            if (DocumentFileTypes.SupportsJosaRewrite(document.FileType)
+                && !string.IsNullOrWhiteSpace(previousTranslatedValue))
             {
                 translatedValue = _josaPatternAnalyzer.RewriteLeadingSplitParticle(previousTranslatedValue, translatedValue);
             }
@@ -197,15 +247,16 @@ public sealed class OutputWriter
                 segment.AbsoluteStart,
                 segment.Length,
                 translatedValue));
+            appliedSegmentIds.Add(segment.SegmentId);
             previousTranslatedValue = translatedValue;
         }
 
-        if (rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var plannedReplacements))
+        if (plannedReplacements.Count > 0)
         {
             foreach (var replacement in plannedReplacements)
             {
                 if (document.Segments.Any(segment =>
-                        translatedItems.ContainsKey(segment.SegmentId)
+                        appliedSegmentIds.Contains(segment.SegmentId)
                         && RangesOverlap(segment.AbsoluteStart, segment.Length, replacement.Start, replacement.Length)))
                 {
                     continue;
@@ -223,7 +274,7 @@ public sealed class OutputWriter
         foreach (var replacement in josaDocumentReplacements)
         {
             if (document.Segments.Any(segment =>
-                    translatedItems.ContainsKey(segment.SegmentId)
+                    appliedSegmentIds.Contains(segment.SegmentId)
                     && RangesOverlap(segment.AbsoluteStart, segment.Length, replacement.Start, replacement.Length)))
             {
                 continue;
@@ -240,6 +291,405 @@ public sealed class OutputWriter
         }
 
         return buffer;
+    }
+
+    private static bool ShouldPreserveOriginalErbSegment(
+        SourceFileDocument document,
+        TextSegment segment,
+        IReadOnlyList<PlannedTextReplacement> plannedReplacements)
+    {
+        if (plannedReplacements.Any(replacement =>
+                RangeContains(replacement.Start, replacement.Length, segment.AbsoluteStart, segment.Length)))
+        {
+            return true;
+        }
+
+        if (IsCodeFragmentSegment(segment)
+            && (IsRangeInsidePercentExpression(document.OriginalText, segment.AbsoluteStart, segment.Length)
+                || IsRangeInsideRawStringScriptExpression(document.OriginalText, segment.AbsoluteStart, segment.Length)
+                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ProtectedCodeArgumentFunctionNames)
+                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, PaletteLookupFunctionNames)
+                || IsRangeInsideCommandArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ["LOADTEXT", "SAVETEXT"])
+                || IsPaletteCaseLabelLiteral(document.OriginalText, segment)
+                || IsQuotedComparisonLiteral(document.OriginalText, segment)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsCodeFragmentSegment(TextSegment segment)
+    {
+        return segment.SegmentType.Contains("quoted", StringComparison.OrdinalIgnoreCase)
+            || segment.SegmentType.Contains("assignment", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRangeInsidePercentExpression(string text, int start, int length)
+    {
+        foreach (var range in EnumerateDelimitedRanges(text, '%', '%'))
+        {
+            if (RangeContains(range.start, range.length, start, length))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRangeInsideRawStringScriptExpression(string text, int start, int length)
+    {
+        foreach (var range in EnumerateRawStringScriptExpressionRanges(text))
+        {
+            if (RangeContains(range.start, range.length, start, length))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsPaletteCaseLabelLiteral(string text, TextSegment segment)
+    {
+        if (!segment.SegmentType.Contains("quoted", StringComparison.OrdinalIgnoreCase)
+            || !IsInsidePaletteLookupFunction(text, segment.AbsoluteStart))
+        {
+            return false;
+        }
+
+        var lineStart = text.LastIndexOf('\n', Math.Max(0, segment.AbsoluteStart - 1));
+        lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        var lineEnd = text.IndexOf('\n', segment.AbsoluteStart);
+        if (lineEnd < 0)
+        {
+            lineEnd = text.Length;
+        }
+
+        return IsCaseLabelLine(text[lineStart..lineEnd]);
+    }
+
+    private static bool IsInsidePaletteLookupFunction(string text, int start)
+    {
+        var lineStart = text.LastIndexOf('\n', Math.Max(0, start - 1));
+        lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        while (lineStart >= 0)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            if (lineEnd < 0)
+            {
+                lineEnd = text.Length;
+            }
+
+            var line = text[lineStart..lineEnd].TrimStart();
+            if (TryReadFunctionName(line, out var functionName))
+            {
+                return IsPaletteLookupFunction(functionName);
+            }
+
+            if (lineStart == 0)
+            {
+                break;
+            }
+
+            var previousEnd = lineStart - 1;
+            lineStart = text.LastIndexOf('\n', Math.Max(0, previousEnd - 1));
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        }
+
+        return false;
+    }
+
+    private static bool IsCaseLabelLine(string sourceLine)
+    {
+        var trimmed = sourceLine.TrimStart();
+        return trimmed.Length > "CASE".Length
+            && trimmed.StartsWith("CASE", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed["CASE".Length]);
+    }
+
+    private static bool TryReadFunctionName(string trimmedLine, out string functionName)
+    {
+        functionName = string.Empty;
+        if (trimmedLine.Length < 2 || trimmedLine[0] != '@')
+        {
+            return false;
+        }
+
+        var index = 1;
+        if (index >= trimmedLine.Length || (!char.IsLetter(trimmedLine[index]) && trimmedLine[index] != '_'))
+        {
+            return false;
+        }
+
+        var start = index;
+        while (index < trimmedLine.Length && (char.IsLetterOrDigit(trimmedLine[index]) || trimmedLine[index] == '_'))
+        {
+            index++;
+        }
+
+        functionName = trimmedLine[start..index];
+        return true;
+    }
+
+    private static bool IsPaletteLookupFunction(string functionName)
+    {
+        return PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsRangeInsideCommandArgument(string text, int start, int length, IReadOnlyCollection<string> commandNames)
+    {
+        var lineStart = text.LastIndexOf('\n', Math.Max(0, start - 1));
+        lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        var lineEnd = text.IndexOf('\n', start);
+        if (lineEnd < 0)
+        {
+            lineEnd = text.Length;
+        }
+
+        var line = text[lineStart..lineEnd];
+        var relativeStart = start - lineStart;
+        foreach (var commandName in commandNames)
+        {
+            var commandIndex = line.IndexOf(commandName, StringComparison.OrdinalIgnoreCase);
+            if (commandIndex < 0)
+            {
+                continue;
+            }
+
+            var prefix = line[..commandIndex].TrimStart();
+            if (prefix.Length > 0 && !prefix.StartsWith(';'))
+            {
+                continue;
+            }
+
+            var afterCommand = commandIndex + commandName.Length;
+            if (afterCommand < line.Length && (char.IsLetterOrDigit(line[afterCommand]) || line[afterCommand] == '_'))
+            {
+                continue;
+            }
+
+            if (relativeStart >= afterCommand && relativeStart + length <= line.Length)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRangeInsideFunctionArgument(string text, int start, int length, IReadOnlyCollection<string> functionNames)
+    {
+        foreach (var functionName in functionNames)
+        {
+            var searchIndex = 0;
+            while ((searchIndex = text.IndexOf(functionName, searchIndex, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                var parenIndex = text.IndexOf('(', searchIndex + functionName.Length);
+                if (parenIndex < 0)
+                {
+                    break;
+                }
+
+                if (text[(searchIndex + functionName.Length)..parenIndex].Any(static ch => !char.IsWhiteSpace(ch)))
+                {
+                    searchIndex += functionName.Length;
+                    continue;
+                }
+
+                var closeIndex = FindMatchingParen(text, parenIndex);
+                if (closeIndex > parenIndex
+                    && RangeContains(parenIndex + 1, closeIndex - parenIndex - 1, start, length))
+                {
+                    return true;
+                }
+
+                searchIndex = parenIndex + 1;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsQuotedComparisonLiteral(string text, TextSegment segment)
+    {
+        if (!segment.SegmentType.Contains("quoted", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var lineStart = text.LastIndexOf('\n', Math.Max(0, segment.AbsoluteStart - 1));
+        lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        var lineEnd = text.IndexOf('\n', segment.AbsoluteStart);
+        if (lineEnd < 0)
+        {
+            lineEnd = text.Length;
+        }
+
+        var prefix = text[lineStart..segment.AbsoluteStart];
+        var suffix = text[(segment.AbsoluteStart + segment.Length)..lineEnd];
+        return EndsWithComparisonOperator(prefix) || StartsWithComparisonOperator(suffix);
+    }
+
+    private static bool EndsWithComparisonOperator(string value)
+    {
+        var trimmed = value.TrimEnd();
+        return trimmed.EndsWith("==", StringComparison.Ordinal)
+            || trimmed.EndsWith("!=", StringComparison.Ordinal)
+            || trimmed.EndsWith("<>", StringComparison.Ordinal)
+            || trimmed.EndsWith(">=", StringComparison.Ordinal)
+            || trimmed.EndsWith("<=", StringComparison.Ordinal);
+    }
+
+    private static bool StartsWithComparisonOperator(string value)
+    {
+        var trimmed = value.TrimStart();
+        return trimmed.StartsWith("==", StringComparison.Ordinal)
+            || trimmed.StartsWith("!=", StringComparison.Ordinal)
+            || trimmed.StartsWith("<>", StringComparison.Ordinal)
+            || trimmed.StartsWith(">=", StringComparison.Ordinal)
+            || trimmed.StartsWith("<=", StringComparison.Ordinal);
+    }
+
+    private static int FindMatchingParen(string text, int openParenIndex)
+    {
+        var depth = 0;
+        var inQuote = false;
+        for (var index = openParenIndex; index < text.Length; index++)
+        {
+            var ch = text[index];
+            if (ch == '"')
+            {
+                inQuote = !inQuote;
+                continue;
+            }
+
+            if (inQuote)
+            {
+                continue;
+            }
+
+            if (ch == '(')
+            {
+                depth++;
+            }
+            else if (ch == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static IEnumerable<(int start, int length)> EnumerateDelimitedRanges(string text, char open, char close)
+    {
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] != open)
+            {
+                continue;
+            }
+
+            var end = text.IndexOf(close, index + 1);
+            if (end < 0)
+            {
+                yield break;
+            }
+
+            yield return (index, end - index + 1);
+            index = end;
+        }
+    }
+
+    private static IEnumerable<(int start, int length)> EnumerateRawStringScriptExpressionRanges(string text)
+    {
+        for (var index = 0; index < text.Length - 1; index++)
+        {
+            if (text[index] != '@' || text[index + 1] != '"')
+            {
+                continue;
+            }
+
+            var contentStart = index + 2;
+            var percentStart = -1;
+            var braceStart = -1;
+            var percentOpen = false;
+            var braceDepth = 0;
+
+            for (var scan = contentStart; scan < text.Length; scan++)
+            {
+                var ch = text[scan];
+                if (ch == '%')
+                {
+                    if (!percentOpen)
+                    {
+                        percentStart = scan;
+                        percentOpen = true;
+                    }
+                    else
+                    {
+                        yield return (percentStart, scan - percentStart + 1);
+                        percentStart = -1;
+                        percentOpen = false;
+                    }
+
+                    continue;
+                }
+
+                if (!percentOpen)
+                {
+                    if (ch == '{')
+                    {
+                        if (braceDepth == 0)
+                        {
+                            braceStart = scan;
+                        }
+
+                        braceDepth++;
+                        continue;
+                    }
+
+                    if (ch == '}' && braceDepth > 0)
+                    {
+                        braceDepth--;
+                        if (braceDepth == 0)
+                        {
+                            yield return (braceStart, scan - braceStart + 1);
+                            braceStart = -1;
+                        }
+
+                        continue;
+                    }
+                }
+
+                if (ch != '"' || percentOpen || braceDepth > 0)
+                {
+                    continue;
+                }
+
+                if (scan + 1 < text.Length && text[scan + 1] == '"')
+                {
+                    scan++;
+                    continue;
+                }
+
+                index = scan;
+                break;
+            }
+        }
+    }
+
+    private static bool RangeContains(int outerStart, int outerLength, int innerStart, int innerLength)
+    {
+        var outerEnd = outerStart + outerLength;
+        var innerEnd = innerStart + innerLength;
+        return innerStart >= outerStart && innerEnd <= outerEnd;
     }
 
     private static string ApplyCsvTranslations(
@@ -291,10 +741,13 @@ public sealed class OutputWriter
             rewritePlan.GetOutputTranslatedText(item),
             renameMap,
             rewritePlan.StringLookupRenameMap);
+        if (!DocumentFileTypes.SupportsJosaRewrite(item.FileType))
+        {
+            return symbolRewritten;
+        }
+
         var josaRewritten = _josaPatternAnalyzer.RewriteText(symbolRewritten, renameMap, packageInfo);
-        return DocumentFileTypes.IsErbLike(item.FileType)
-            ? TranslationQualityRules.NormalizeErbFunctionArgumentSeparators(josaRewritten.Text)
-            : josaRewritten.Text;
+        return TranslationQualityRules.NormalizeErbFunctionArgumentSeparators(josaRewritten.Text);
     }
 
     private void WriteBundledJosaPackage(string rootDirectory, OutputWriteResult result, string? backupRoot)

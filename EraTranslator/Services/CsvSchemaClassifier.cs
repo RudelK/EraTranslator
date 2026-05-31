@@ -2,29 +2,6 @@ namespace EraTranslator.Services;
 
 public sealed class CsvSchemaClassifier
 {
-    private static readonly Dictionary<string, string> CsvNamespaceByFileName = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Cflag.csv"] = "CFLAG",
-        ["Tflag.csv"] = "TFLAG",
-        ["Flag.csv"] = "FLAG",
-        ["Cstr.csv"] = "CSTR",
-        ["Str.csv"] = "STR",
-        ["Savestr.csv"] = "SAVESTR",
-        ["Item.csv"] = "ITEM",
-        ["Base.csv"] = "BASE",
-        ["Abl.csv"] = "ABL",
-        ["Palam.csv"] = "PALAM",
-        ["Exp.csv"] = "EXP",
-        ["Mark.csv"] = "MARK",
-        ["Talent.csv"] = "TALENT",
-        ["Source.csv"] = "SOURCE",
-        ["Juel.csv"] = "JUEL",
-        ["Tequip.csv"] = "TEQUIP",
-        ["Nowex.csv"] = "NOWEX",
-        ["Ex.csv"] = "EX",
-        ["Tcvar.csv"] = "TCVAR",
-    };
-
     private static readonly HashSet<string> CharacterValueKeys =
     [
         "呼び名",
@@ -65,6 +42,18 @@ public sealed class CsvSchemaClassifier
         ["欲情"] = "PALAM",
         ["源"] = "SOURCE",
     };
+
+    private readonly SymbolNamespaceRegistry _namespaceRegistry;
+
+    public CsvSchemaClassifier()
+        : this(SymbolNamespaceRegistry.Default)
+    {
+    }
+
+    public CsvSchemaClassifier(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        _namespaceRegistry = namespaceRegistry;
+    }
 
     public CsvDocumentKind DetectKind(string relativePath, IReadOnlyList<string> lines)
     {
@@ -351,10 +340,9 @@ public sealed class CsvSchemaClassifier
         };
     }
 
-    private static string ResolveFileNamespace(string relativePath)
+    private string ResolveFileNamespace(string relativePath)
     {
-        var fileName = Path.GetFileName(relativePath);
-        return CsvNamespaceByFileName.GetValueOrDefault(fileName, string.Empty);
+        return _namespaceRegistry.ResolveFileNamespace(relativePath);
     }
 
     private static string ResolveCharacterContainerNamespace(string container)

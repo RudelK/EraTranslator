@@ -77,10 +77,17 @@ public sealed class SymbolReferenceAnalyzer
     {
         return symbolNamespace switch
         {
-            "BASE" => ["BASE", "MAXBASE"],
+            "BASE" => ["BASE", "MAXBASE", "DOWNBASE"],
+            "DOWNBASE" => ["DOWNBASE", "BASE", "MAXBASE"],
+            "STRNAME" => ["STRNAME", "STR"],
+            "STR" => ["STR", "STRNAME"],
             "ITEM" => ["ITEM", "ITEMPRICE"],
-            "PALAM" => ["PALAM", "JUEL"],
-            "JUEL" => ["JUEL", "PALAM"],
+            "PALAM" => ["PALAM", "JUEL", "CUP", "CDOWN"],
+            "JUEL" => ["JUEL", "PALAM", "CUP", "CDOWN"],
+            "SOURCE" => ["SOURCE", "CUP", "CDOWN"],
+            "CDOWN" => ["CDOWN", "PALAM", "JUEL", "CUP"],
+            "EX" => ["EX", "NOWEX"],
+            "NOWEX" => ["NOWEX", "EX"],
             _ => [symbolNamespace],
         };
     }

@@ -108,7 +108,7 @@ public sealed class PhaseScopedGlossaryBuilder
 
     private static bool IsAllowedFileType(ExtractedTextItem item, TranslationPhaseKind phase)
     {
-        if (string.Equals(item.FileType, "CSV", StringComparison.OrdinalIgnoreCase))
+        if (DocumentFileTypes.IsCsvLike(item.FileType))
         {
             return phase switch
             {

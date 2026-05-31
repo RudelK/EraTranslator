@@ -5,30 +5,17 @@ namespace EraTranslator.Services;
 
 public sealed partial class ErbReferenceExtractor
 {
-    private static readonly string[] SupportedNamespaces =
-    [
-        "CALLNAME",
-        "CFLAG",
-        "TFLAG",
-        "FLAG",
-        "CSTR",
-        "STR",
-        "ITEM",
-        "ITEMPRICE",
-        "BASE",
-        "MAXBASE",
-        "ABL",
-        "PALAM",
-        "EXP",
-        "MARK",
-        "TALENT",
-        "SOURCE",
-        "JUEL",
-        "TEQUIP",
-        "NOWEX",
-        "EX",
-        "SAVESTR",
-    ];
+    private readonly SymbolNamespaceRegistry _namespaceRegistry;
+
+    public ErbReferenceExtractor()
+        : this(SymbolNamespaceRegistry.Default)
+    {
+    }
+
+    public ErbReferenceExtractor(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        _namespaceRegistry = namespaceRegistry;
+    }
 
     public (List<ErbSymbolReference> references, List<ErbVariableLiteralOccurrence> variableLiterals) Extract(string documentId, string content)
     {
@@ -131,7 +118,7 @@ public sealed partial class ErbReferenceExtractor
         return occurrences;
     }
 
-    private static List<ErbSymbolReference> ExtractReferences(
+    private List<ErbSymbolReference> ExtractReferences(
         string documentId,
         IReadOnlyList<string> lines,
         IReadOnlyDictionary<string, HashSet<string>> resolvedVariables)
@@ -150,11 +137,11 @@ public sealed partial class ErbReferenceExtractor
                 continue;
             }
 
-            AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+            AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, resolvedVariables, results);
 
             for (var index = 0; index < normalizedLine.Length; index++)
             {
-                foreach (var symbolNamespace in SupportedNamespaces)
+                foreach (var symbolNamespace in _namespaceRegistry.OrderedNamespaces)
                 {
                     if (!MatchesNamespace(normalizedLine, index, symbolNamespace))
                     {
@@ -183,7 +170,13 @@ public sealed partial class ErbReferenceExtractor
                         absoluteOffset,
                         lineIndex + 1,
                         results);
-                    index = components[^1].End - 1;
+
+                    // Keep scanning inside expression components like ABL:ARG:(TCVAR:ARG:部位),
+                    // otherwise nested namespace references are skipped entirely.
+                    if (components.All(component => !component.IsExpression))
+                    {
+                        index = components[^1].End - 1;
+                    }
                 }
             }
 
@@ -249,6 +242,11 @@ public sealed partial class ErbReferenceExtractor
             }
 
             var candidateComponents = components.Skip(startIndex).ToList();
+            if (candidateComponents.Count > 1 && candidateComponents[^1].IsExpression)
+            {
+                continue;
+            }
+
             var candidateKey = line[rangeStart..rangeEnd].Trim();
             if (candidateComponents.Any(component => component.IsExpression)
                 && !LooksLikeLiteralSymbolWithDecorativePunctuation(candidateKey))
@@ -352,11 +350,12 @@ public sealed partial class ErbReferenceExtractor
         });
     }
 
-    private static void AddGetNumReferences(
+    private void AddGetNumReferences(
         string documentId,
         string line,
         int absoluteOffset,
         int lineNumber,
+        IReadOnlyDictionary<string, HashSet<string>> resolvedVariables,
         List<ErbSymbolReference> results)
     {
         var searchIndex = 0;
@@ -384,13 +383,12 @@ public sealed partial class ErbReferenceExtractor
             cursor++;
             SkipWhitespace(line, ref cursor);
             var namespaceStart = cursor;
-            while (cursor < line.Length && (char.IsLetterOrDigit(line[cursor]) || line[cursor] == '_'))
+            while (cursor < line.Length && !char.IsWhiteSpace(line[cursor]) && line[cursor] is not ',' and not ')')
             {
                 cursor++;
             }
 
-            var symbolNamespace = line[namespaceStart..cursor].Trim();
-            if (!SupportedNamespaces.Contains(symbolNamespace, StringComparer.OrdinalIgnoreCase))
+            if (!_namespaceRegistry.TryResolveNamespace(line[namespaceStart..cursor], out var symbolNamespace))
             {
                 continue;
             }
@@ -403,31 +401,164 @@ public sealed partial class ErbReferenceExtractor
 
             cursor++;
             SkipWhitespace(line, ref cursor);
-            if (cursor >= line.Length || line[cursor] != '"')
+            if (!TryReadGetNumKeyArgument(line, ref cursor, out var argumentText, out var argumentStart, out var argumentLength))
             {
                 continue;
             }
 
-            var keyStart = cursor + 1;
-            var keyEnd = line.IndexOf('"', keyStart);
-            if (keyEnd < 0)
+            var resolved = ResolveExpressionValues(argumentText, absoluteOffset + argumentStart, resolvedVariables);
+            var addedDirectReference = false;
+            foreach (var occurrence in resolved.ExactLiteralOccurrences)
             {
-                continue;
-            }
+                if (!ShouldTreatAsSymbolKey(occurrence.LiteralValue))
+                {
+                    continue;
+                }
 
-            var key = line[keyStart..keyEnd];
-            if (ShouldTreatAsSymbolKey(key))
-            {
                 AddDirectReference(
                     documentId,
-                    symbolNamespace.ToUpperInvariant(),
-                    key,
-                    absoluteOffset + keyStart,
-                    key.Length,
+                    symbolNamespace,
+                    occurrence.LiteralValue,
+                    occurrence.AbsoluteStart,
+                    occurrence.Length,
                     lineNumber,
                     results);
+                addedDirectReference = true;
             }
+
+            if (addedDirectReference)
+            {
+                continue;
+            }
+
+            var targetValue = argumentText.Trim();
+            if (targetValue.Length == 0)
+            {
+                continue;
+            }
+
+            var trimmedStart = line.IndexOf(targetValue, argumentStart, StringComparison.Ordinal);
+            var target = new ComponentInfo(
+                targetValue,
+                trimmedStart < 0 ? argumentStart : trimmedStart,
+                targetValue.Length,
+                argumentStart + argumentLength,
+                IsExpressionComponent(targetValue));
+            if (!target.IsExpression && !VariableNamePattern().IsMatch(targetValue))
+            {
+                continue;
+            }
+
+            AddIndirectReference(
+                documentId,
+                symbolNamespace,
+                target,
+                resolvedVariables,
+                absoluteOffset,
+                lineNumber,
+                results);
         }
+    }
+
+    private static bool TryReadGetNumKeyArgument(
+        string line,
+        ref int cursor,
+        out string argumentText,
+        out int argumentStart,
+        out int argumentLength)
+    {
+        argumentText = string.Empty;
+        argumentStart = 0;
+        argumentLength = 0;
+        if (cursor >= line.Length)
+        {
+            return false;
+        }
+
+        var start = cursor;
+        var quote = false;
+        var parenDepth = 0;
+        var braceDepth = 0;
+        var bracketDepth = 0;
+        var verbatimQuote = false;
+
+        while (cursor < line.Length)
+        {
+            var ch = line[cursor];
+            if (ch == '"' && cursor > start && line[cursor - 1] == '@' && !quote)
+            {
+                verbatimQuote = true;
+                quote = true;
+                cursor++;
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                if (verbatimQuote && quote && cursor + 1 < line.Length && line[cursor + 1] == '"')
+                {
+                    cursor += 2;
+                    continue;
+                }
+
+                quote = !quote;
+                if (!quote)
+                {
+                    verbatimQuote = false;
+                }
+
+                cursor++;
+                continue;
+            }
+
+            if (!quote)
+            {
+                switch (ch)
+                {
+                    case '(':
+                        parenDepth++;
+                        break;
+                    case ')':
+                        if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+                        {
+                            goto Done;
+                        }
+
+                        parenDepth = Math.Max(parenDepth - 1, 0);
+                        break;
+                    case '{':
+                        braceDepth++;
+                        break;
+                    case '}':
+                        braceDepth = Math.Max(braceDepth - 1, 0);
+                        break;
+                    case '[':
+                        bracketDepth++;
+                        break;
+                    case ']':
+                        bracketDepth = Math.Max(bracketDepth - 1, 0);
+                        break;
+                    case ',' when parenDepth == 0 && braceDepth == 0 && bracketDepth == 0:
+                        goto Done;
+                }
+            }
+
+            cursor++;
+        }
+
+Done:
+        var rawText = line[start..cursor];
+        var trimmed = rawText.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        var offset = rawText.IndexOf(trimmed, StringComparison.Ordinal);
+        argumentStart = start + Math.Max(offset, 0);
+        argumentLength = trimmed.Length;
+        argumentText = trimmed;
+        return true;
     }
 
     private static ExpressionResolutionResult ResolveExpressionValues(
@@ -611,7 +742,7 @@ public sealed partial class ErbReferenceExtractor
             return false;
         }
 
-        if (!line.AsSpan(index, symbolNamespace.Length).Equals(symbolNamespace, StringComparison.Ordinal))
+        if (!line.AsSpan(index, symbolNamespace.Length).Equals(symbolNamespace, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -830,7 +961,7 @@ Done:
             return true;
         }
 
-        return VariableNamePattern().IsMatch(value);
+        return IndexVariablePattern().IsMatch(value);
     }
 
     private static bool LooksLikeLiteralSymbolWithDecorativePunctuation(string value)
@@ -872,14 +1003,17 @@ Done:
         return match.Success ? match.Value : string.Empty;
     }
 
-    [GeneratedRegex("""^\s*(?<var>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<expr>.+?)\s*$""", RegexOptions.Compiled)]
+    [GeneratedRegex("""^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*)\s*=\s*(?<expr>.+?)\s*$""", RegexOptions.Compiled)]
     private static partial Regex AssignmentPattern();
 
     [GeneratedRegex("""^@?"(?<value>(?:[^"\\]|\\.)*)"$""", RegexOptions.Compiled)]
     private static partial Regex QuotedLiteralPattern();
 
-    [GeneratedRegex("""^[A-Za-z_][A-Za-z0-9_]*$""", RegexOptions.Compiled)]
+    [GeneratedRegex("""^[\p{L}_][\p{L}\p{N}_]*$""", RegexOptions.Compiled)]
     private static partial Regex VariableNamePattern();
+
+    [GeneratedRegex("""^[A-Za-z_][A-Za-z0-9_]*$""", RegexOptions.Compiled)]
+    private static partial Regex IndexVariablePattern();
 
     private readonly record struct AssignmentInfo(string VariableName, string ExpressionText, int ExpressionAbsoluteStart, int LineNumber);
 

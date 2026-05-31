@@ -97,4 +97,24 @@ public sealed class CsvSchemaClassifierTests
         Assert.Equal(CsvFieldRole.NonTranslatableValue, classifier.ClassifyField("CSV\\VariableSize.csv", CsvDocumentKind.GenericTable, fields, 1));
         Assert.Equal(CsvFieldRole.NonTranslatableValue, classifier.ClassifyField("CSV\\VariableSize.csv", CsvDocumentKind.GenericTable, fields, 2));
     }
+
+    [Fact]
+    public void DynamicNamespaceCsv_UsesFileStemAsReferenceNamespace()
+    {
+        var classifier = new CsvSchemaClassifier(new SymbolNamespaceRegistry(["OPTION変数", "プレゼント履歴"]));
+
+        var optionFields = CsvLineParser.ParseFields("3,妊娠切り替え");
+        var optionField = classifier.ClassifyExtractableField("CSV\\OPTION変数.csv", CsvDocumentKind.IdFirstTable, optionFields, 1);
+        Assert.True(optionField.ShouldExtract);
+        Assert.True(optionField.IsReferenceBearingKey);
+        Assert.Equal("OPTION変数", optionField.SymbolNamespace);
+        Assert.Equal("妊娠切り替え", optionField.OriginalSymbolKey);
+
+        var historyFields = CsvLineParser.ParseFields("0,はじめての贈り物");
+        var historyField = classifier.ClassifyExtractableField("DATA\\プレゼント履歴.csv", CsvDocumentKind.IdFirstTable, historyFields, 1);
+        Assert.True(historyField.ShouldExtract);
+        Assert.True(historyField.IsReferenceBearingKey);
+        Assert.Equal("プレゼント履歴", historyField.SymbolNamespace);
+        Assert.Equal("はじめての贈り物", historyField.OriginalSymbolKey);
+    }
 }

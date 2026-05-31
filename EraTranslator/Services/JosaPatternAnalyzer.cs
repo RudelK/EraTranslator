@@ -359,18 +359,15 @@ public sealed class JosaPatternAnalyzer
     private string BuildMacroOrGenericFromExpression(string expression, JosaRule rule)
     {
         var canonicalExpression = NormalizeExpression(expression);
-        if (!rule.SupportsMacroShorthand)
+        if (!rule.SupportsMacroShorthand
+            || canonicalExpression.Equals("CALLNAME", StringComparison.OrdinalIgnoreCase)
+            || canonicalExpression.StartsWith("CALLNAME:", StringComparison.OrdinalIgnoreCase))
         {
             return $"%조사처리({expression},\"{rule.FunctionParticle}\")%";
         }
 
         return canonicalExpression switch
         {
-            "CALLNAME" or "CALLNAME:TARGET" => $"%타겟{rule.MacroSuffix}%",
-            "CALLNAME:MASTER" => $"%플레이어{rule.MacroSuffix}%",
-            "CALLNAME:PLAYER" => $"%조교자{rule.MacroSuffix}%",
-            "CALLNAME:ARG" => $"%ARG{rule.MacroSuffix}%",
-            "CALLNAME:ASSI" => $"%조수{rule.MacroSuffix}%",
             _ => $"%조사처리({expression},\"{rule.FunctionParticle}\")%",
         };
     }

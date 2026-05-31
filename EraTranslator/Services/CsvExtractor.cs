@@ -2,7 +2,17 @@ namespace EraTranslator.Services;
 
 public sealed class CsvExtractor
 {
-    private readonly CsvSchemaClassifier _classifier = new();
+    private readonly CsvSchemaClassifier _classifier;
+
+    public CsvExtractor()
+        : this(SymbolNamespaceRegistry.Default)
+    {
+    }
+
+    public CsvExtractor(SymbolNamespaceRegistry namespaceRegistry)
+    {
+        _classifier = new CsvSchemaClassifier(namespaceRegistry);
+    }
 
     public (CsvDocumentKind kind, List<TextSegment> segments, List<string> warnings) Extract(string documentId, string relativePath, string content)
     {

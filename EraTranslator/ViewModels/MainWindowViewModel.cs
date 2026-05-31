@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Threading;
@@ -127,7 +128,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
         SearchFieldFilters = ["전체", "파일", "원문", "번역문", "참조 상태", "함수/표현식"];
-        FileTypeFilters = ["전체", "ERB", "ERH", "CSV"];
+        FileTypeFilters = ["전체", "ERB", "ERH", "CSV", "ERD"];
         StatusFilters = ["전체", "번역 대기", "제외됨", "중지됨", "수동 수정", "번역 완료", "검수 필요", "번역 실패"];
         SaveModeOptions = [SaveMode.ExportCopy, SaveMode.InPlaceWithBackup];
         ItemsView = CollectionViewSource.GetDefaultView(Items);
@@ -790,7 +791,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             }
 
             if (selectedDocument is not null
-                && DocumentFileTypes.IsErbLike(selectedDocument.FileType)
+                && DocumentFileTypes.SupportsJosaRewrite(selectedDocument.FileType)
                 && selectedDocument.JosaAnalysis.PatternCount > 0)
             {
                 lines.Add($"조사 문법 유형: {selectedDocument.JosaAnalysis.SyntaxType}");
@@ -1199,6 +1200,15 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                             ["WrittenFiles"] = writeResult.WrittenFiles.Count.ToString(),
                             ["BackupFiles"] = writeResult.BackupFiles.Count.ToString(),
                             ["SkippedFiles"] = writeResult.SkippedFiles.Count.ToString(),
+                            ["StartedAt"] = writeResult.StartedAt.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"),
+                            ["CompletedAt"] = writeResult.CompletedAt.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"),
+                            ["Elapsed"] = FormatDuration(writeResult.TotalElapsed),
+                            ["RefreshElapsedMs"] = Math.Round(writeResult.RefreshElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                            ["RewritePlanElapsedMs"] = Math.Round(writeResult.RewritePlanElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                            ["CopyElapsedMs"] = Math.Round(writeResult.CopyElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                            ["BackupElapsedMs"] = Math.Round(writeResult.BackupElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                            ["DocumentWriteElapsedMs"] = Math.Round(writeResult.DocumentWriteElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                            ["PackageWriteElapsedMs"] = Math.Round(writeResult.PackageWriteElapsed.TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
                         });
                 }
                 finally
@@ -1525,12 +1535,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
 
         var scope = GetCurrentTranslationScope()
-            .Where(item => DocumentFileTypes.IsErbLike(item.FileType))
+            .Where(item => DocumentFileTypes.SupportsJosaRewrite(item.FileType))
             .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText))
             .ToList();
         if (scope.Count == 0)
         {
-            StatusText = "현재 필터 범위에 조사처리할 ERB/ERH 번역문이 없습니다.";
+            StatusText = "현재 필터 범위에 조사처리할 ERB 번역문이 없습니다.";
             CurrentOperationDetail = "조사처리 대상 0개";
             return;
         }
@@ -2588,15 +2598,15 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 CurrentOperationDetail = BuildTranslationProgressDetail(combinedDetail, overallValue);
             });
 
-            await _translationCoordinator.TranslateAsync(
-                phasePlan.Items,
-                Items.ToList(),
-                settings,
-                dictionaryEntries,
-                glossaryHints,
-                phaseProgress,
-                () => SaveTranslationProgressSnapshotIfDue($"TranslatePendingAsync {phaseLabel} progress callback"),
-                cancellationToken);
+                await _translationCoordinator.TranslateAsync(
+                    phasePlan.Items,
+                    Items.ToList(),
+                    settings,
+                    dictionaryEntries,
+                    glossaryHints,
+                    phaseProgress,
+                    changedItems => SaveTranslationProgressItems(changedItems, $"TranslatePendingAsync {phaseLabel} progress callback"),
+                    cancellationToken);
 
             overallProcessedCount += phasePlan.PendingCount;
             SaveTranslationProgressSnapshot(force: true, reason: $"TranslatePendingAsync {phaseLabel} completed");
@@ -2649,7 +2659,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private static TranslationPhaseKind GetTranslationPhaseForItem(ExtractedTextItem item)
     {
-        if (string.Equals(item.FileType, "CSV", StringComparison.OrdinalIgnoreCase))
+        if (DocumentFileTypes.IsCsvLike(item.FileType))
         {
             return item.IsReferenceBearingKey
                 ? TranslationPhaseKind.CsvReferenceKeys

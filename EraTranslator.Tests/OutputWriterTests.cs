@@ -888,6 +888,77 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
     }
 
     [Fact]
+    public void ExportCopy_DoesNotApplyJosaRewriteToErhSegments()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        var originalValue = "사과은";
+        var erhText = $"PRINTFORMW \"{originalValue}\"\r\n";
+        var valueStart = erhText.IndexOf(originalValue, StringComparison.Ordinal);
+        var erhDocument = new SourceFileDocument
+        {
+            DocumentId = "ERB/Common.ERH",
+            FullPath = Path.Combine(erbDir, "Common.ERH"),
+            RelativePath = Path.Combine("ERB", "Common.ERH"),
+            FileType = "ERH",
+            OriginalText = erhText,
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+        erhDocument.Segments.Add(new TextSegment
+        {
+            SegmentId = "ERB/Common.ERH:0",
+            DocumentId = erhDocument.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = valueStart,
+            Length = originalValue.Length,
+            LineNumber = 1,
+            OriginalText = originalValue,
+        });
+
+        var session = new ScanSession
+        {
+            GameRoot = gameRoot,
+            JosaPackageInfo = new JosaSupportPackageService().InspectProject(gameRoot),
+        };
+        session.Documents[erhDocument.DocumentId] = erhDocument;
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = "ERB/Common.ERH:0",
+            DocumentId = erhDocument.DocumentId,
+            FileType = "ERH",
+            RelativePath = erhDocument.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = originalValue,
+            TranslatedText = originalValue,
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        var result = writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErh = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Common.ERH"), Encoding.UTF8);
+        Assert.Contains("PRINTFORMW \"사과은\"", writtenErh, StringComparison.Ordinal);
+        Assert.True(result.CompletedAt >= result.StartedAt);
+        Assert.True(result.TotalElapsed >= TimeSpan.Zero);
+    }
+
+    [Fact]
     public void Save_ManuallyExcludedItemWritesOriginalText()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -1114,13 +1185,15 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
     }
 
     [Fact]
-    public void Save_UnresolvedReferenceBlocksOutputWithoutMutatingItems()
+    public void Save_UnresolvedReferenceKeepsCsvOutputAndLeavesErbUntouched()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
         var gameRoot = Path.Combine(tempRoot, "game");
         var exportRoot = Path.Combine(tempRoot, "out");
         Directory.CreateDirectory(Path.Combine(gameRoot, "CSV"));
         Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+        File.WriteAllText(Path.Combine(gameRoot, "CSV", "Cflag.csv"), "1,依存度,\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(gameRoot, "ERB", "Test.ERB"), "IF CFLAG:{flagName}\r\n", Encoding.UTF8);
 
         var csvDocument = new SourceFileDocument
         {
@@ -1194,8 +1267,12 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         var writer = new OutputWriter();
         var result = writer.Save(session, exportRoot, SaveMode.ExportCopy);
 
-        Assert.Contains(csvDocument.RelativePath, result.SkippedFiles);
-        Assert.False(File.Exists(Path.Combine(exportRoot, "CSV", "Cflag.csv")));
+        var writtenCsv = File.ReadAllText(Path.Combine(exportRoot, "CSV", "Cflag.csv"), Encoding.UTF8);
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.DoesNotContain(csvDocument.RelativePath, result.SkippedFiles);
+        Assert.Contains("1,의존도,", writtenCsv, StringComparison.Ordinal);
+        Assert.Equal("IF CFLAG:{flagName}\r\n", writtenErb);
+        Assert.Contains(erbDocument.RelativePath, result.SkippedFiles);
 
         Assert.Equal("의존도", item.TranslatedText);
         Assert.Equal("번역 완료", item.Status);
@@ -1435,6 +1512,102 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         Assert.Contains("CSTR,남자친구성씨,テスト", writtenCsv, StringComparison.Ordinal);
         Assert.Contains("%CSTR:남자친구성씨%", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("남자친구 성씨", writtenCsv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SymbolRewritePlanner_MarksCustomNamespaceWithUnresolvedDynamicReferenceAsReviewOnly()
+    {
+        var csvItem = CreateReferenceBearingItem("CSV/OPTION変数.csv:0", "CSV/OPTION変数.csv", "OPTION変数", "妊娠切り替え", "임신전환");
+        var session = new ScanSession
+        {
+            GameRoot = "D:\\dummy",
+        };
+        session.Items.Add(csvItem);
+        session.Documents["ERB/Test.ERB"] = new SourceFileDocument
+        {
+            DocumentId = "ERB/Test.ERB",
+            FullPath = "D:\\dummy\\ERB\\Test.ERB",
+            RelativePath = Path.Combine("ERB", "Test.ERB"),
+            FileType = "ERB",
+            OriginalText = "IF GETNUM(OPTION変数, keyName) > 0\r\n",
+            EncodingInfo = new DetectedEncodingInfo
+            {
+                Encoding = Encoding.UTF8,
+                Name = "UTF-8",
+                Kind = DetectedEncodingKind.Utf8,
+                HasBom = false,
+            },
+            NewLineSequence = "\r\n",
+            CsvKind = CsvDocumentKind.None,
+        };
+
+        var registry = new SymbolNamespaceRegistry(["OPTION変数"]);
+        var extractedReferences = new ErbReferenceExtractor(registry).Extract("ERB/Test.ERB", "IF GETNUM(OPTION変数, keyName) > 0\r\n");
+        session.Documents["ERB/Test.ERB"].SymbolReferences.AddRange(extractedReferences.references);
+        session.Documents["ERB/Test.ERB"].VariableLiteralOccurrences.AddRange(extractedReferences.variableLiterals);
+
+        var plan = new SymbolRewritePlanner().CreatePlan(session);
+        var itemOverride = plan.GetOverride(csvItem.SegmentId);
+
+        Assert.Equal("임신전환", itemOverride.TranslatedText);
+        Assert.True(itemOverride.CanSave);
+        Assert.Equal("통과", itemOverride.ValidationStatus);
+        Assert.Equal("검수 필요", itemOverride.Status);
+        Assert.Contains("동적 OPTION変数 참조", itemOverride.TranslationError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCustomCsvNamespaceReferences()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(Path.Combine(gameRoot, "CSV"));
+        Directory.CreateDirectory(Path.Combine(gameRoot, "ERB"));
+
+        File.WriteAllText(Path.Combine(gameRoot, "CSV", "OPTION変数.csv"), "3,妊娠切り替え\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(gameRoot, "ERB", "Test.ERB"), "SIF OPTION変数:妊娠切り替え\r\n", Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var optionItem = Assert.Single(
+            session.Items,
+            item => item.SymbolNamespace == "OPTION変数" && item.OriginalSymbolKey == "妊娠切り替え");
+        optionItem.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "임신전환");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenCsv = File.ReadAllText(Path.Combine(exportRoot, "CSV", "OPTION変数.csv"), Encoding.UTF8);
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("3,임신전환", writtenCsv, StringComparison.Ordinal);
+        Assert.Contains("OPTION変数:임신전환", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesErdCsvLikeNamespaceReferences()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(erbDir, "BATTLE_STATE@2.ERD"), "0,ＨＰ\r\n1,攻撃力\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), "SIF BATTLE_STATE:TARGET:ＨＰ > 0\r\n", Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var stateItem = Assert.Single(
+            session.Items,
+            item => item.SymbolNamespace == "BATTLE_STATE" && item.OriginalSymbolKey == "ＨＰ");
+        stateItem.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "체력");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErd = File.ReadAllText(Path.Combine(exportRoot, "ERB", "BATTLE_STATE@2.ERD"), Encoding.UTF8);
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("0,체력", writtenErd, StringComparison.Ordinal);
+        Assert.Contains("BATTLE_STATE:TARGET:체력", writtenErb, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1694,7 +1867,7 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         writer.Save(session, exportRoot, SaveMode.ExportCopy);
 
         var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "LiteralJosa.ERB"), Encoding.UTF8);
-        Assert.Contains("%플레이어는% 사과는 좋아하고 길로 간다.", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("%조사처리(CALLNAME:MASTER,\"는\")% 사과는 좋아하고 길로 간다.", writtenErb, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1818,6 +1991,34 @@ PRINTFORMW %NAME:TARGET%(을)를 본다
         Assert.DoesNotContain("PRINTFORMW 고등학생", writtenErb, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ExportCopy_PreservesRawHtmlFunctionAndImageKeysWhileReplacingVisibleText()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(
+            Path.Combine(erbDir, "HtmlMixed.ERB"),
+            "LOCALS += @\"<font color='#%カラーパレット_HTML(\"黄\")%'>特濃</font><img src='えっちハート'>\"\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var item = Assert.Single(session.Items, item => item.OriginalText == "特濃");
+        item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "진한");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "HtmlMixed.ERB"), Encoding.UTF8);
+        Assert.Contains("%カラーパレット_HTML(\"黄\")%", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("<img src='えっちハート'>", writtenErb, StringComparison.Ordinal);
+        Assert.Contains(">진한</font>", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("컬러 팔레트_HTML", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("img src='진한'", writtenErb, StringComparison.Ordinal);
+    }
+
     private static ExtractedTextItem CreateReferenceBearingItem(
         string segmentId,
         string documentId,
@@ -1894,7 +2095,7 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
 
         var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test2.ERB"), Encoding.UTF8);
         Assert.DoesNotContain("#INCLUDE \"ZNAME.ERH\"", writtenErb, StringComparison.Ordinal);
-        Assert.Contains("%플레이어는%", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("%조사처리(CALLNAME:MASTER,\"는\")%", writtenErb, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(exportRoot, "ERB", "ZNAME.ERB")));
         Assert.True(File.Exists(Path.Combine(exportRoot, "ERB", "ZNAME.ERH")));
     }
@@ -1993,6 +2194,430 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
         Assert.Contains("GETNUM(EXP,\"분유경험\")", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("관심:학업", writtenErb, StringComparison.Ordinal);
         Assert.DoesNotContain("귀갑묶기", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesNowexReferencesUsingExCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Ex.csv"), "0,Ｃ絶頂\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "IF NOWEX:TARGET:Ｃ絶頂\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "EX" && item.OriginalSymbolKey == "Ｃ絶頂"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "C절정");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("IF NOWEX:TARGET:C절정", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("IF NOWEX:TARGET:Ｃ絶頂", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCupReferencesUsingSourceCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Source.csv"), "0,快Ｃ\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "SELECTCASE CUP:TARGET:快Ｃ\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "SOURCE" && item.OriginalSymbolKey == "快Ｃ"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "쾌C");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("SELECTCASE CUP:TARGET:쾌C", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECTCASE CUP:TARGET:快Ｃ", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCupReferencesUsingPalamCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Palam.csv"), "0,快Ｃ\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "IF CUP:ARG:快Ｃ > 0\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "PALAM" && item.OriginalSymbolKey == "快Ｃ"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "쾌C");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("IF CUP:ARG:쾌C > 0", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("IF CUP:ARG:快Ｃ > 0", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCdownReferencesUsingPalamCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Palam.csv"), "0,快Ｃ\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "IF CDOWN:ARG:快Ｃ > 0\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "PALAM" && item.OriginalSymbolKey == "快Ｃ"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "쾌C");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("IF CDOWN:ARG:쾌C > 0", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("IF CDOWN:ARG:快Ｃ > 0", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesDownbaseReferencesUsingBaseCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Base.csv"), "0,体力\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "IF DOWNBASE:TARGET:体力 > 0\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "BASE" && item.OriginalSymbolKey == "体力"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "체력");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("IF DOWNBASE:TARGET:체력 > 0", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("IF DOWNBASE:TARGET:体力 > 0", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesStrReferencesUsingStrnameCsvAliases()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "strname.csv"), "2,セーブコメント保存\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            "IF STR:セーブコメント保存 != \"\"\r\n",
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "STRNAME" && item.OriginalSymbolKey == "セーブコメント保存"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "세이브코멘트보존");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("IF STR:세이브코멘트보존 != \"\"", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("STR:セーブコメント保存", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_LetsSymbolRewriteWinOverStaleQuotedStringTranslation()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "CFLAG.csv"), "328,招待不可フラグ\r\n", Encoding.UTF8);
+        var erbText = "SIF CFLAG:GETCHARA(136):招待不可フラグ == CSVCFLAG(136, GETNUM(CFLAG, \"招待不可フラグ\"))\r\n";
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), erbText, Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "CFLAG" && item.OriginalSymbolKey == "招待不可フラグ"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "초대불가플래그");
+        }
+
+        var document = session.Documents.Values.Single(document => document.RelativePath.EndsWith("Test.ERB", StringComparison.Ordinal));
+        var staleStart = document.OriginalText.LastIndexOf("招待不可フラグ", StringComparison.Ordinal);
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = $"{document.DocumentId}:stale-getnum",
+            DocumentId = document.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = staleStart,
+            Length = "招待不可フラグ".Length,
+            LineNumber = 1,
+            OriginalText = "招待不可フラグ",
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = $"{document.DocumentId}:stale-getnum",
+            DocumentId = document.DocumentId,
+            FileType = "ERB",
+            RelativePath = document.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "招待不可フラグ",
+            TranslatedText = "초대 불가 플래그",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("CFLAG:GETCHARA(136):초대불가플래그", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("GETNUM(CFLAG, \"초대불가플래그\")", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("초대 불가 플래그", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_IgnoresStaleTranslationsInsideRawStringScriptExpressions()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        var erbText = "SIF STRCOUNT(削除番号, @\"_{DT_CELL_GET(\"ミルクデータベース\", ミルク番号, \"id\")}_\")\r\n";
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), erbText, Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var document = session.Documents.Values.Single(document => document.RelativePath.EndsWith("Test.ERB", StringComparison.Ordinal));
+        var staleText = ", ミルク番号, ";
+        var staleStart = document.OriginalText.IndexOf(staleText, StringComparison.Ordinal);
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = $"{document.DocumentId}:stale-raw",
+            DocumentId = document.DocumentId,
+            SegmentType = "quoted-string",
+            AbsoluteStart = staleStart,
+            Length = staleText.Length,
+            LineNumber = 1,
+            OriginalText = staleText,
+        });
+        session.Items.Add(new ExtractedTextItem
+        {
+            SegmentId = $"{document.DocumentId}:stale-raw",
+            DocumentId = document.DocumentId,
+            FileType = "ERB",
+            RelativePath = document.RelativePath,
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = staleText,
+            TranslatedText = ", 밀크 번호,",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        });
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains(staleText, writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("밀크 번호", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_IgnoresStaleLoadTextAndSaveTextPathTranslations()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        var erbText = "LOADTEXT \"dat/人物DT_XML.txt\"\r\nSAVETEXT RESULTS:0, \"dat/素材DT_schema.txt\"\r\n";
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), erbText, Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var document = session.Documents.Values.Single(document => document.RelativePath.EndsWith("Test.ERB", StringComparison.Ordinal));
+        AddStaleItem(session, document, "dat/人物DT_XML.txt", "dat/인물 DT_XML.txt", "loadtext");
+        AddStaleItem(session, document, "dat/素材DT_schema.txt", "dat/소재 DT_schema.txt", "savetext");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("LOADTEXT \"dat/人物DT_XML.txt\"", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("SAVETEXT RESULTS:0, \"dat/素材DT_schema.txt\"", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("dat/인물", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("dat/소재", writtenErb, StringComparison.Ordinal);
+
+        static void AddStaleItem(ScanSession session, SourceFileDocument document, string original, string translated, string suffix)
+        {
+            var start = document.OriginalText.IndexOf(original, StringComparison.Ordinal);
+            var segmentId = $"{document.DocumentId}:stale-{suffix}";
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                SegmentType = "quoted-string",
+                AbsoluteStart = start,
+                Length = original.Length,
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+            });
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                FileType = "ERB",
+                RelativePath = document.RelativePath,
+                EncodingName = "UTF-8",
+                SegmentType = "quoted-string",
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+                TranslatedText = translated,
+                Status = "번역 완료",
+                ValidationStatus = "통과",
+                WarningText = string.Empty,
+            });
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_IgnoresStalePaletteLookupKeyTranslations()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        var erbText = """
+@カラーパレット(ARGS)
+#FUNCTION
+SELECTCASE ARGS
+    CASE "真っ赤"
+        RETURNF 0xFF3030
+ENDSELECT
+
+SETCOLOR カラーパレット("青緑")
+PRINTFORMW "普通の文章です"
+""";
+        File.WriteAllText(Path.Combine(erbDir, "Palette.ERB"), erbText, Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var document = session.Documents.Values.Single(document => document.RelativePath.EndsWith("Palette.ERB", StringComparison.Ordinal));
+        AddStaleItem(session, document, "真っ赤", "빨강", "case");
+        AddStaleItem(session, document, "青緑", "청록색", "call");
+
+        var item = Assert.Single(session.Items, item => item.OriginalText == "普通の文章です");
+        item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "평범한 문장입니다");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Palette.ERB"), Encoding.UTF8);
+        Assert.Contains("CASE \"真っ赤\"", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("SETCOLOR カラーパレット(\"青緑\")", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("PRINTFORMW \"평범한 문장입니다\"", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("빨강", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("청록색", writtenErb, StringComparison.Ordinal);
+
+        static void AddStaleItem(ScanSession session, SourceFileDocument document, string original, string translated, string suffix)
+        {
+            var start = document.OriginalText.IndexOf(original, StringComparison.Ordinal);
+            var segmentId = $"{document.DocumentId}:stale-palette-{suffix}";
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                SegmentType = "quoted-string",
+                AbsoluteStart = start,
+                Length = original.Length,
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+            });
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                FileType = "ERB",
+                RelativePath = document.RelativePath,
+                EncodingName = "UTF-8",
+                SegmentType = "quoted-string",
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+                TranslatedText = translated,
+                Status = "번역 완료",
+                ValidationStatus = "통과",
+                WarningText = string.Empty,
+            });
+        }
     }
 
     private static int CountOccurrences(string text, string value)

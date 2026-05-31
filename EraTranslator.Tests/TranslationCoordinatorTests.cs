@@ -29,7 +29,7 @@ public sealed class TranslationCoordinatorTests
             BuildItem("id-2", "둘째"),
             BuildCompletedItem("id-3", "셋째", "이미 완료"),
         };
-        var persisted = 0;
+        var persistedBatches = new List<IReadOnlyList<string>>();
 
         await coordinator.TranslateAsync(
             items,
@@ -43,7 +43,7 @@ public sealed class TranslationCoordinatorTests
             },
             [],
             new Progress<(double value, string status, string detail)>(),
-            () => persisted++,
+            changedItems => persistedBatches.Add(changedItems.Select(item => item.SegmentId).OrderBy(id => id, StringComparer.Ordinal).ToList()),
             CancellationToken.None);
 
         Assert.Equal("첫째 번역", items[0].TranslatedText);
@@ -51,7 +51,47 @@ public sealed class TranslationCoordinatorTests
         Assert.Equal("이미 완료", items[2].TranslatedText);
         Assert.Equal(["id-1", "id-2"], provider.RequestHistory[0]);
         Assert.Equal(["id-1"], provider.RequestHistory[1]);
-        Assert.True(persisted >= 2);
+        Assert.Equal(2, persistedBatches.Count);
+        Assert.Equal(["id-2"], persistedBatches[0]);
+        Assert.Equal(["id-1"], persistedBatches[1]);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_PersistsOnlyResolvedOrTerminalItemsDuringAutomaticTranslation()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "공통 번역";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var active = BuildItem("id-1", "같은 문장");
+        var pendingOutsideFilter = BuildItem("id-2", "같은 문장");
+        var persistedBatches = new List<IReadOnlyList<ExtractedTextItem>>();
+
+        await coordinator.TranslateAsync(
+            [active],
+            [active, pendingOutsideFilter],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            changedItems => persistedBatches.Add(changedItems.ToList()),
+            CancellationToken.None);
+
+        var persistedBatch = Assert.Single(persistedBatches);
+        Assert.Equal(["id-1", "id-2"], persistedBatch.Select(item => item.SegmentId).OrderBy(id => id, StringComparer.Ordinal).ToList());
+        Assert.All(persistedBatch, item => Assert.DoesNotContain(item.Status, new[] { "번역 중", "재시도 중" }));
     }
 
     [Fact]

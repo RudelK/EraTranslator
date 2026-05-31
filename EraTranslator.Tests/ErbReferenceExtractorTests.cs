@@ -149,4 +149,101 @@ expUp:GETNUM(EXP,"噴乳経験") += 1
         Assert.DoesNotContain(result.references, reference =>
             string.Equals(reference.OriginalKey, "ARG:関心:学業", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Extract_FindsCustomCsvNamespacesAndVerbatimGetNumKeys()
+    {
+        var extractor = new ErbReferenceExtractor(new SymbolNamespaceRegistry(["OPTION変数", "フレーバー素質", "プレゼント履歴"]));
+        const string content = """
+SIF OPTION変数:妊娠切り替え
+IF フレーバー素質:ARG:素質表示設定 == 1
+IF GETNUM(プレゼント履歴, "花束") >= 0
+IF GETNUM(プレゼント履歴, @"ケーキ") >= 0
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "OPTION変数"
+            && reference.OriginalKey == "妊娠切り替え");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "フレーバー素質"
+            && reference.OriginalKey == "素質表示設定");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "プレゼント履歴"
+            && reference.OriginalKey == "花束");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "プレゼント履歴"
+            && reference.OriginalKey == "ケーキ");
+    }
+
+    [Fact]
+    public void Extract_LeavesDynamicGetNumExpressionAsUnresolvedIndirectReference()
+    {
+        var extractor = new ErbReferenceExtractor(new SymbolNamespaceRegistry(["知識素質"]));
+        const string content = """
+CSTR切り分け文字列格納 = "魔物知識"
+IF GETNUM(知識素質, CSTR切り分け文字列格納:0) > 0
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.IndirectVariable
+            && reference.Namespace == "知識素質"
+            && reference.ResolutionKind == SymbolReferenceResolutionKind.Unresolved
+            && reference.ExpressionText == "CSTR切り分け文字列格納:0");
+    }
+
+    [Fact]
+    public void Extract_FindsNestedNamespaceReferenceInsideParenthesizedIndexExpression()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF ABL:対象キャラ:(TCVAR:対象キャラ:野外オナニー_部位) > 4
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TCVAR"
+            && reference.OriginalKey == "野外オナニー_部位");
+    }
+
+    [Fact]
+    public void Extract_FindsCupNamespaceKeys()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+SELECTCASE CUP:TARGET:快Ａ
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CUP"
+            && reference.OriginalKey == "快Ａ");
+    }
+
+    [Fact]
+    public void Extract_FindsNowexNamespaceKeys()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF NOWEX:対象キャラ:Ｃ絶頂
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "NOWEX"
+            && reference.OriginalKey == "Ｃ絶頂");
+    }
 }

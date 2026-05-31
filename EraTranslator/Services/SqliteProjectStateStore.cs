@@ -349,58 +349,70 @@ public class SqliteProjectStateStore
         IEnumerable<TranslationProgressItemState> items,
         DateTimeOffset savedAtUtc)
     {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO translation_progress (
+                segment_id,
+                status,
+                validation_status,
+                translation_error,
+                translated_text,
+                can_save,
+                reference_original_symbol_key,
+                reference_impact_count,
+                requires_reference_rewrite,
+                reference_resolution_status,
+                updated_at_utc)
+            VALUES (
+                $segment_id,
+                $status,
+                $validation_status,
+                $translation_error,
+                $translated_text,
+                $can_save,
+                $reference_original_symbol_key,
+                $reference_impact_count,
+                $requires_reference_rewrite,
+                $reference_resolution_status,
+                $updated_at_utc)
+            ON CONFLICT(segment_id) DO UPDATE SET
+                status = excluded.status,
+                validation_status = excluded.validation_status,
+                translation_error = excluded.translation_error,
+                translated_text = excluded.translated_text,
+                can_save = excluded.can_save,
+                reference_original_symbol_key = excluded.reference_original_symbol_key,
+                reference_impact_count = excluded.reference_impact_count,
+                requires_reference_rewrite = excluded.requires_reference_rewrite,
+                reference_resolution_status = excluded.reference_resolution_status,
+                updated_at_utc = excluded.updated_at_utc;
+            """;
+        var segmentIdParameter = command.Parameters.Add("$segment_id", SqliteType.Text);
+        var statusParameter = command.Parameters.Add("$status", SqliteType.Text);
+        var validationStatusParameter = command.Parameters.Add("$validation_status", SqliteType.Text);
+        var translationErrorParameter = command.Parameters.Add("$translation_error", SqliteType.Text);
+        var translatedTextParameter = command.Parameters.Add("$translated_text", SqliteType.Text);
+        var canSaveParameter = command.Parameters.Add("$can_save", SqliteType.Integer);
+        var referenceOriginalSymbolKeyParameter = command.Parameters.Add("$reference_original_symbol_key", SqliteType.Text);
+        var referenceImpactCountParameter = command.Parameters.Add("$reference_impact_count", SqliteType.Integer);
+        var requiresReferenceRewriteParameter = command.Parameters.Add("$requires_reference_rewrite", SqliteType.Integer);
+        var referenceResolutionStatusParameter = command.Parameters.Add("$reference_resolution_status", SqliteType.Text);
+        var updatedAtUtcParameter = command.Parameters.Add("$updated_at_utc", SqliteType.Text);
+        updatedAtUtcParameter.Value = savedAtUtc.ToString("O");
+
         foreach (var state in items)
         {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO translation_progress (
-                    segment_id,
-                    status,
-                    validation_status,
-                    translation_error,
-                    translated_text,
-                    can_save,
-                    reference_original_symbol_key,
-                    reference_impact_count,
-                    requires_reference_rewrite,
-                    reference_resolution_status,
-                    updated_at_utc)
-                VALUES (
-                    $segment_id,
-                    $status,
-                    $validation_status,
-                    $translation_error,
-                    $translated_text,
-                    $can_save,
-                    $reference_original_symbol_key,
-                    $reference_impact_count,
-                    $requires_reference_rewrite,
-                    $reference_resolution_status,
-                    $updated_at_utc)
-                ON CONFLICT(segment_id) DO UPDATE SET
-                    status = excluded.status,
-                    validation_status = excluded.validation_status,
-                    translation_error = excluded.translation_error,
-                    translated_text = excluded.translated_text,
-                    can_save = excluded.can_save,
-                    reference_original_symbol_key = excluded.reference_original_symbol_key,
-                    reference_impact_count = excluded.reference_impact_count,
-                    requires_reference_rewrite = excluded.requires_reference_rewrite,
-                    reference_resolution_status = excluded.reference_resolution_status,
-                    updated_at_utc = excluded.updated_at_utc;
-                """;
-            command.Parameters.AddWithValue("$segment_id", state.SegmentId);
-            command.Parameters.AddWithValue("$status", state.Status);
-            command.Parameters.AddWithValue("$validation_status", state.ValidationStatus);
-            command.Parameters.AddWithValue("$translation_error", state.TranslationError);
-            command.Parameters.AddWithValue("$translated_text", state.TranslatedText);
-            command.Parameters.AddWithValue("$can_save", state.CanSave ? 1 : 0);
-            command.Parameters.AddWithValue("$reference_original_symbol_key", state.ReferenceOriginalSymbolKey);
-            command.Parameters.AddWithValue("$reference_impact_count", state.ReferenceImpactCount);
-            command.Parameters.AddWithValue("$requires_reference_rewrite", state.RequiresReferenceRewrite ? 1 : 0);
-            command.Parameters.AddWithValue("$reference_resolution_status", state.ReferenceResolutionStatus);
-            command.Parameters.AddWithValue("$updated_at_utc", savedAtUtc.ToString("O"));
+            segmentIdParameter.Value = state.SegmentId;
+            statusParameter.Value = state.Status;
+            validationStatusParameter.Value = state.ValidationStatus;
+            translationErrorParameter.Value = state.TranslationError;
+            translatedTextParameter.Value = state.TranslatedText;
+            canSaveParameter.Value = state.CanSave ? 1 : 0;
+            referenceOriginalSymbolKeyParameter.Value = state.ReferenceOriginalSymbolKey;
+            referenceImpactCountParameter.Value = state.ReferenceImpactCount;
+            requiresReferenceRewriteParameter.Value = state.RequiresReferenceRewrite ? 1 : 0;
+            referenceResolutionStatusParameter.Value = state.ReferenceResolutionStatus;
             command.ExecuteNonQuery();
         }
     }
