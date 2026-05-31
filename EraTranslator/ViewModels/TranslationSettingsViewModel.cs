@@ -38,7 +38,13 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
+    private bool _enableDictionaryHitLogging = false;
     private bool _excludeNonSourceText = true;
+    private bool _enableBundledDictionaryFirstPass = true;
+    private bool _enableKanaTransliterationFallback = true;
+    private bool _enableNaverJapaneseDictionaryLookup = false;
+    private bool _enableKanjiReadingFallback = true;
+    private int _dictionaryFirstMaxTermLength = 6;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
@@ -49,6 +55,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private string _ezTransEngineText = string.Empty;
     private string _statusText = "공급자와 연결 정보를 확인하세요.";
     private bool _isLoadingModels;
+    private readonly BundledJapaneseLexiconService _bundledJapaneseLexiconService = new();
 
     public TranslationSettingsViewModel(
         IEnumerable<ProviderOption> providerOptions,
@@ -72,6 +79,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     [
         new() { Profile = LmStudioPresetProfile.Auto, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Auto) },
         new() { Profile = LmStudioPresetProfile.Gemma4, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Gemma4) },
+        new() { Profile = LmStudioPresetProfile.Gemma4E4B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Gemma4E4B) },
         new() { Profile = LmStudioPresetProfile.Qwen35_9B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.Qwen35_9B) },
         new() { Profile = LmStudioPresetProfile.TranslateGemma, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.TranslateGemma) },
         new() { Profile = LmStudioPresetProfile.HyMt2_7B, DisplayName = LmStudioSamplingDefaults.GetPresetDisplayName(LmStudioPresetProfile.HyMt2_7B) },
@@ -82,6 +90,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     [
         PromptProfile.Auto,
         PromptProfile.Generic,
+        PromptProfile.Gemma4E4B,
         PromptProfile.HyMt2,
     ];
 
@@ -131,6 +140,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
             {
                 ApplyPromptProfileIfEligible(previousProfile, _model);
                 RaisePropertyChanged(nameof(ProviderHelpText));
+                RaisePropertyChanged(nameof(PromptProfileStatusText));
             }
         }
     }
@@ -156,6 +166,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
             if (SetProperty(ref _model, value))
             {
                 RaisePropertyChanged(nameof(ProviderHelpText));
+                RaisePropertyChanged(nameof(PromptProfileStatusText));
                 ApplyLmStudioPresetIfEligible(previousModel, _disableThinking);
                 ApplyPromptProfileIfEligible(_selectedPromptProfile, previousModel);
             }
@@ -467,10 +478,46 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set => SetProperty(ref _enableResultStateLogging, value);
     }
 
+    public bool EnableDictionaryHitLogging
+    {
+        get => _enableDictionaryHitLogging;
+        set => SetProperty(ref _enableDictionaryHitLogging, value);
+    }
+
     public bool ExcludeNonSourceText
     {
         get => _excludeNonSourceText;
         set => SetProperty(ref _excludeNonSourceText, value);
+    }
+
+    public bool EnableBundledDictionaryFirstPass
+    {
+        get => _enableBundledDictionaryFirstPass;
+        set => SetProperty(ref _enableBundledDictionaryFirstPass, value);
+    }
+
+    public bool EnableKanaTransliterationFallback
+    {
+        get => _enableKanaTransliterationFallback;
+        set => SetProperty(ref _enableKanaTransliterationFallback, value);
+    }
+
+    public bool EnableNaverJapaneseDictionaryLookup
+    {
+        get => _enableNaverJapaneseDictionaryLookup;
+        set => SetProperty(ref _enableNaverJapaneseDictionaryLookup, value);
+    }
+
+    public bool EnableKanjiReadingFallback
+    {
+        get => _enableKanjiReadingFallback;
+        set => SetProperty(ref _enableKanjiReadingFallback, value);
+    }
+
+    public int DictionaryFirstMaxTermLength
+    {
+        get => _dictionaryFirstMaxTermLength;
+        set => SetProperty(ref _dictionaryFirstMaxTermLength, Math.Clamp(value, 1, 12));
     }
 
     public string SystemPromptTemplate
@@ -488,6 +535,14 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public string RequestResponseLogPath => new FileRequestResponseLogger().LogFilePath;
 
     public string ResultStateLogPath => new FileResultStateLogger().LogFilePath;
+
+    public string DictionaryHitLogPath => new FileDictionaryHitLogger().LogFilePath;
+
+    public string BundledDictionarySnapshotText => _bundledJapaneseLexiconService.GetSnapshotSummary();
+
+    public string BundledDictionaryAttributionText => _bundledJapaneseLexiconService.GetAttributionText();
+
+    public string BundledDictionaryNoticePath => _bundledJapaneseLexiconService.NoticeFilePath;
 
     public string PapagoClientId
     {
@@ -591,6 +646,18 @@ public sealed class TranslationSettingsViewModel : BindableBase
         _ => string.Empty,
     };
 
+    public string PromptProfileStatusText
+    {
+        get
+        {
+            var resolvedProfile = ResolvePromptProfile(Model, SelectedPromptProfile);
+            var resolvedLabel = GetPromptProfileDisplayName(resolvedProfile);
+            return SelectedPromptProfile == PromptProfile.Auto
+                ? $"자동 선택 결과: {resolvedLabel}"
+                : $"현재 적용 프롬프트: {resolvedLabel}";
+        }
+    }
+
     public void LoadFrom(MainWindowViewModel source)
     {
         SelectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == source.SelectedProviderType)
@@ -617,7 +684,13 @@ public sealed class TranslationSettingsViewModel : BindableBase
         DisableThinking = source.DisableThinking;
         EnableRequestResponseLogging = source.EnableRequestResponseLogging;
         EnableResultStateLogging = source.EnableResultStateLogging;
+        EnableDictionaryHitLogging = source.EnableDictionaryHitLogging;
         ExcludeNonSourceText = source.ExcludeNonSourceText;
+        EnableBundledDictionaryFirstPass = source.EnableBundledDictionaryFirstPass;
+        EnableKanaTransliterationFallback = source.EnableKanaTransliterationFallback;
+        EnableNaverJapaneseDictionaryLookup = source.EnableNaverJapaneseDictionaryLookup;
+        EnableKanjiReadingFallback = source.EnableKanjiReadingFallback;
+        DictionaryFirstMaxTermLength = source.DictionaryFirstMaxTermLength;
         SystemPromptTemplate = source.SystemPromptTemplate;
         RetryPromptTemplate = source.RetryPromptTemplate;
         PapagoClientId = source.PapagoClientId;
@@ -689,7 +762,13 @@ public sealed class TranslationSettingsViewModel : BindableBase
             MaxTokens = MaxTokens,
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
+            EnableDictionaryHitLogging = EnableDictionaryHitLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
+            EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
+            EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
+            EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
+            EnableKanjiReadingFallback = EnableKanjiReadingFallback,
+            DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
@@ -745,6 +824,11 @@ public sealed class TranslationSettingsViewModel : BindableBase
         RetryCount = 1;
         DisableThinking = true;
         ExcludeNonSourceText = true;
+        EnableBundledDictionaryFirstPass = true;
+        EnableKanaTransliterationFallback = true;
+        EnableNaverJapaneseDictionaryLookup = false;
+        EnableKanjiReadingFallback = true;
+        DictionaryFirstMaxTermLength = 6;
         Seed = null;
 
         if (SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade)
@@ -841,6 +925,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         var familyNote = family switch
         {
             LmStudioModelFamily.Qwen => "Qwen 계열은 thinking 제어와 max_tokens 안전장치를 함께 사용합니다.",
+            LmStudioModelFamily.Gemma4E4B => "Gemma 4 E4B는 짧은 용어/라벨 정확도를 높이기 위해 전용 프롬프트 프로필과 더 보수적인 샘플링 권장값을 사용할 수 있습니다.",
             LmStudioModelFamily.TranslateGemma => "TranslateGemma는 전용 LM Studio 형식을 사용하며 glossary 힌트와 사용자 프롬프트 템플릿을 사용하지 않고, 배치 크기는 실질적으로 1로 동작합니다.",
             LmStudioModelFamily.HyMt2 when LmStudioSamplingDefaults.DetectHyMt2PresetProfile(Model) == LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B는 top_k = -1, max_tokens = 4096 권장값을 사용할 수 있습니다.",
             LmStudioModelFamily.HyMt2 => "Hy-MT2 7B는 기존 LM Studio structured output 경로를 유지하며 HF 권장 inference 값을 사용할 수 있습니다.",
@@ -861,6 +946,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         var promptProfileLabel = GetPromptProfileDisplayName(promptProfile);
         var familyNote = family switch
         {
+            LmStudioModelFamily.Gemma4E4B => "Gemma 4 E4B는 짧은 용어/라벨 정확도를 높이기 위한 전용 프롬프트 프로필과 보수적인 샘플링 권장값을 사용할 수 있습니다.",
             LmStudioModelFamily.TranslateGemma => "TranslateGemma는 전용 요청 형식을 사용하므로 glossary 힌트와 사용자 프롬프트 템플릿을 실제 요청에는 적용하지 않습니다.",
             LmStudioModelFamily.HyMt2 when LmStudioSamplingDefaults.DetectHyMt2PresetProfile(Model) == LmStudioPresetProfile.HyMt2_30B_A3B => "Hy-MT2 30B-A3B는 top_k = -1, max_tokens = 4096 권장값을 사용할 수 있습니다.",
             LmStudioModelFamily.HyMt2 => "Hy-MT2 7B는 HF 권장 inference 값과 Hy-MT2 프롬프트 프로필을 함께 사용할 수 있습니다.",
@@ -1100,6 +1186,11 @@ public sealed class TranslationSettingsViewModel : BindableBase
             return selectedProfile;
         }
 
+        if (model?.Contains("gemma-4-e4b", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return PromptProfile.Gemma4E4B;
+        }
+
         return model?.Contains("hy-mt2", StringComparison.OrdinalIgnoreCase) == true
             ? PromptProfile.HyMt2
             : PromptProfile.Generic;
@@ -1118,6 +1209,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         {
             PromptProfile.Auto => "자동",
             PromptProfile.Generic => "기본",
+            PromptProfile.Gemma4E4B => "Gemma 4 E4B",
             PromptProfile.HyMt2 => "Hy-MT2",
             _ => profile.ToString(),
         };

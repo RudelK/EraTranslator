@@ -11,7 +11,7 @@ public sealed class PhaseScopedGlossaryBuilder
 
     public IReadOnlyList<GlossaryHint> BuildForPhase(IEnumerable<ExtractedTextItem> items, TranslationPhaseKind phase)
     {
-        if (phase == TranslationPhaseKind.Csv)
+        if (phase == TranslationPhaseKind.CsvReferenceKeys)
         {
             return [];
         }
@@ -110,8 +110,13 @@ public sealed class PhaseScopedGlossaryBuilder
     {
         if (string.Equals(item.FileType, "CSV", StringComparison.OrdinalIgnoreCase))
         {
-            return item.CsvFieldRole == CsvFieldRole.TranslatableValue
-                && phase is TranslationPhaseKind.Erh or TranslationPhaseKind.Erb;
+            return phase switch
+            {
+                TranslationPhaseKind.CsvGeneral => item.IsReferenceBearingKey,
+                TranslationPhaseKind.Erh or TranslationPhaseKind.Erb => item.IsReferenceBearingKey
+                    || item.CsvFieldRole == CsvFieldRole.TranslatableValue,
+                _ => false,
+            };
         }
 
         return phase == TranslationPhaseKind.Erb

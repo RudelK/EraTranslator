@@ -6,6 +6,7 @@ internal enum LmStudioModelFamily
 {
     Unknown,
     Gemma,
+    Gemma4E4B,
     Qwen,
     TranslateGemma,
     HyMt2,
@@ -32,6 +33,13 @@ internal static class LmStudioSamplingDefaults
         TopP: 0.9,
         TopK: 40,
         RepeatPenalty: 1.10,
+        PresencePenalty: null);
+
+    public static LmStudioSamplingPreset Gemma4E4BPreset { get; } = new(
+        Temperature: 0.1,
+        TopP: 0.85,
+        TopK: 32,
+        RepeatPenalty: 1.05,
         PresencePenalty: null);
 
     public static LmStudioSamplingPreset QwenNonThinkingPreset { get; } = new(
@@ -77,6 +85,11 @@ internal static class LmStudioSamplingDefaults
         }
 
         var normalized = model.Trim();
+        if (normalized.Contains("gemma-4-e4b", StringComparison.OrdinalIgnoreCase))
+        {
+            return LmStudioModelFamily.Gemma4E4B;
+        }
+
         if (normalized.Contains("translategemma", StringComparison.OrdinalIgnoreCase))
         {
             return LmStudioModelFamily.TranslateGemma;
@@ -105,12 +118,21 @@ internal static class LmStudioSamplingDefaults
         return profile switch
         {
             LmStudioPresetProfile.Gemma4 => LmStudioModelFamily.Gemma,
+            LmStudioPresetProfile.Gemma4E4B => LmStudioModelFamily.Gemma4E4B,
             LmStudioPresetProfile.Qwen35_9B => LmStudioModelFamily.Qwen,
             LmStudioPresetProfile.TranslateGemma => LmStudioModelFamily.TranslateGemma,
             LmStudioPresetProfile.HyMt2_7B => LmStudioModelFamily.HyMt2,
             LmStudioPresetProfile.HyMt2_30B_A3B => LmStudioModelFamily.HyMt2,
             _ => DetectModelFamily(model),
         };
+    }
+
+    public static LmStudioPresetProfile DetectGemmaPresetProfile(string? model)
+    {
+        var normalized = model?.Trim() ?? string.Empty;
+        return normalized.Contains("gemma-4-e4b", StringComparison.OrdinalIgnoreCase)
+            ? LmStudioPresetProfile.Gemma4E4B
+            : LmStudioPresetProfile.Gemma4;
     }
 
     public static LmStudioPresetProfile DetectHyMt2PresetProfile(string? model)
@@ -139,6 +161,7 @@ internal static class LmStudioSamplingDefaults
         {
             LmStudioModelFamily.Qwen => disableThinking ? QwenNonThinkingPreset : QwenThinkingPreset,
             LmStudioModelFamily.Gemma => GemmaPreset,
+            LmStudioModelFamily.Gemma4E4B => Gemma4E4BPreset,
             LmStudioModelFamily.TranslateGemma => TranslateGemmaPreset,
             LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.HyMt2_30B_A3B => HyMt2_30B_A3BPreset,
             LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.HyMt2_7B => HyMt2_7BPreset,
@@ -156,7 +179,7 @@ internal static class LmStudioSamplingDefaults
             return LmStudioThinkingControlMode.None;
         }
 
-        return DetectModelFamily(model) is LmStudioModelFamily.Qwen or LmStudioModelFamily.Gemma
+        return DetectModelFamily(model) is LmStudioModelFamily.Qwen or LmStudioModelFamily.Gemma or LmStudioModelFamily.Gemma4E4B
             ? LmStudioThinkingControlMode.ApiCustomField
             : LmStudioThinkingControlMode.PromptFallback;
     }
@@ -230,8 +253,10 @@ internal static class LmStudioSamplingDefaults
         {
             LmStudioModelFamily.Qwen when profile == LmStudioPresetProfile.Auto => disableThinking ? "Qwen non-thinking (auto)" : "Qwen thinking/general (auto)",
             LmStudioModelFamily.Qwen => disableThinking ? "Qwen 3.5 9B non-thinking" : "Qwen 3.5 9B thinking/general",
-            LmStudioModelFamily.Gemma when profile == LmStudioPresetProfile.Auto => "Gemma (auto)",
+            LmStudioModelFamily.Gemma when profile == LmStudioPresetProfile.Auto => DetectGemmaPresetProfile(model) == LmStudioPresetProfile.Gemma4E4B ? "Gemma 4 E4B (auto)" : "Gemma (auto)",
             LmStudioModelFamily.Gemma => "Gemma 4",
+            LmStudioModelFamily.Gemma4E4B when profile == LmStudioPresetProfile.Auto => "Gemma 4 E4B (auto)",
+            LmStudioModelFamily.Gemma4E4B => "Gemma 4 E4B",
             LmStudioModelFamily.TranslateGemma when profile == LmStudioPresetProfile.Auto => "TranslateGemma (auto)",
             LmStudioModelFamily.TranslateGemma => "TranslateGemma",
             LmStudioModelFamily.HyMt2 when profile == LmStudioPresetProfile.Auto => DetectHyMt2PresetProfile(model) == LmStudioPresetProfile.HyMt2_30B_A3B ? "Hy-MT2 30B-A3B (auto)" : "Hy-MT2 7B (auto)",
@@ -248,6 +273,7 @@ internal static class LmStudioSamplingDefaults
         return profile switch
         {
             LmStudioPresetProfile.Gemma4 => "Gemma 4",
+            LmStudioPresetProfile.Gemma4E4B => "Gemma 4 E4B",
             LmStudioPresetProfile.Qwen35_9B => "Qwen 3.5 9B",
             LmStudioPresetProfile.TranslateGemma => "TranslateGemma",
             LmStudioPresetProfile.HyMt2_7B => "Hy-MT2 7B",

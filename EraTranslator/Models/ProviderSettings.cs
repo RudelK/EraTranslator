@@ -38,7 +38,19 @@ public sealed class ProviderSettings
 
     public bool EnableRequestResponseLogging { get; init; }
 
+    public bool EnableDictionaryHitLogging { get; init; }
+
     public bool ExcludeNonSourceText { get; init; }
+
+    public bool EnableBundledDictionaryFirstPass { get; init; } = true;
+
+    public bool EnableKanaTransliterationFallback { get; init; } = true;
+
+    public bool EnableNaverJapaneseDictionaryLookup { get; init; } = false;
+
+    public bool EnableKanjiReadingFallback { get; init; } = true;
+
+    public int DictionaryFirstMaxTermLength { get; init; } = 6;
 
     public string SystemPromptTemplate { get; init; } = string.Empty;
 

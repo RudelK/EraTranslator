@@ -62,4 +62,20 @@ public sealed class TranslationPromptTemplatesTests
         Assert.Contains("from Japanese into Korean", rendered, StringComparison.Ordinal);
         Assert.Contains("only output the translated result without any additional explanation", rendered, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Render_Gemma4E4BPrompt_UsesTermAccuracyRules()
+    {
+        var rendered = TranslationPromptTemplates.Render(
+            null,
+            "ja",
+            "ko",
+            disableThinking: true,
+            isRetryPrompt: false,
+            promptProfile: PromptProfile.Gemma4E4B);
+
+        Assert.Contains("Treat short labels, glossary entries, item names, skill names, stat names, trait names, and body-part terms as dictionary-style entries.", rendered, StringComparison.Ordinal);
+        Assert.Contains("If semantic translation is uncertain, use a concise Hangul transliteration instead of an explanatory paraphrase.", rendered, StringComparison.Ordinal);
+        Assert.Contains("Target: 후보 비율", rendered, StringComparison.Ordinal);
+    }
 }

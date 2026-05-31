@@ -53,9 +53,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 DisableThinking = loaded.DisableThinking,
                 EnableRequestResponseLogging = loaded.EnableRequestResponseLogging,
                 EnableResultStateLogging = loaded.EnableResultStateLogging,
+                EnableDictionaryHitLogging = loaded.EnableDictionaryHitLogging,
                 SystemPromptTemplate = NormalizePromptPlaceholders(loaded.SystemPromptTemplate),
                 RetryPromptTemplate = NormalizePromptPlaceholders(loaded.RetryPromptTemplate),
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
+                EnableBundledDictionaryFirstPass = loaded.EnableBundledDictionaryFirstPass,
+                EnableKanaTransliterationFallback = loaded.EnableKanaTransliterationFallback,
+                EnableNaverJapaneseDictionaryLookup = loaded.EnableNaverJapaneseDictionaryLookup,
+                EnableKanjiReadingFallback = loaded.EnableKanjiReadingFallback,
+                DictionaryFirstMaxTermLength = loaded.DictionaryFirstMaxTermLength <= 0 ? new AppConfig().DictionaryFirstMaxTermLength : loaded.DictionaryFirstMaxTermLength,
                 RefreshGridDuringTranslatedTextEdit = loaded.RefreshGridDuringTranslatedTextEdit,
                 ProtectedFullWidthCharacters = loaded.ProtectedFullWidthCharacters ?? new AppConfig().ProtectedFullWidthCharacters,
                 PapagoClientId = loaded.PapagoClientId,
@@ -116,9 +122,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
             DisableThinking = config.DisableThinking,
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
             EnableResultStateLogging = config.EnableResultStateLogging,
+            EnableDictionaryHitLogging = config.EnableDictionaryHitLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
+            EnableBundledDictionaryFirstPass = config.EnableBundledDictionaryFirstPass,
+            EnableKanaTransliterationFallback = config.EnableKanaTransliterationFallback,
+            EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup,
+            EnableKanjiReadingFallback = config.EnableKanjiReadingFallback,
+            DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
@@ -180,9 +192,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
             DisableThinking = config.DisableThinking,
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
             EnableResultStateLogging = config.EnableResultStateLogging,
+            EnableDictionaryHitLogging = config.EnableDictionaryHitLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
+            EnableBundledDictionaryFirstPass = config.EnableBundledDictionaryFirstPass,
+            EnableKanaTransliterationFallback = config.EnableKanaTransliterationFallback,
+            EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup,
+            EnableKanjiReadingFallback = config.EnableKanjiReadingFallback,
+            DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
@@ -252,11 +270,23 @@ public sealed class AppConfigService(string? baseDirectory = null)
 
         public bool EnableResultStateLogging { get; init; } = false;
 
+        public bool EnableDictionaryHitLogging { get; init; } = false;
+
         public string SystemPromptTemplate { get; init; } = string.Empty;
 
         public string RetryPromptTemplate { get; init; } = string.Empty;
 
         public bool ExcludeNonSourceText { get; init; } = true;
+
+        public bool EnableBundledDictionaryFirstPass { get; init; } = true;
+
+        public bool EnableKanaTransliterationFallback { get; init; } = true;
+
+        public bool EnableNaverJapaneseDictionaryLookup { get; init; } = false;
+
+        public bool EnableKanjiReadingFallback { get; init; } = true;
+
+        public int DictionaryFirstMaxTermLength { get; init; } = 6;
 
         public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 

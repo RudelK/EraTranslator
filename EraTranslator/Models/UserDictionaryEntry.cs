@@ -2,11 +2,18 @@ using EraTranslator.ViewModels;
 
 namespace EraTranslator.Models;
 
+public enum UserDictionaryApplyMode
+{
+    Replace,
+    Prompting,
+}
+
 public sealed class UserDictionaryEntry : BindableBase
 {
     private bool _isEnabled = true;
     private string _source = string.Empty;
     private string _target = string.Empty;
+    private UserDictionaryApplyMode _applyMode = UserDictionaryApplyMode.Replace;
 
     public bool IsEnabled
     {
@@ -26,6 +33,12 @@ public sealed class UserDictionaryEntry : BindableBase
         set => SetProperty(ref _target, value);
     }
 
+    public UserDictionaryApplyMode ApplyMode
+    {
+        get => _applyMode;
+        set => SetProperty(ref _applyMode, value);
+    }
+
     public UserDictionaryEntry Clone()
     {
         return new UserDictionaryEntry
@@ -33,6 +46,7 @@ public sealed class UserDictionaryEntry : BindableBase
             IsEnabled = IsEnabled,
             Source = Source,
             Target = Target,
+            ApplyMode = ApplyMode,
         };
     }
 }

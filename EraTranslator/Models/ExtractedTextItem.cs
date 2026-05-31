@@ -10,6 +10,7 @@ public sealed class ExtractedTextItem : BindableBase
     private string _translatedText = string.Empty;
     private string _status = PendingStatus;
     private string _translationError = string.Empty;
+    private string _translationSource = string.Empty;
     private string _validationStatus = "검증 전";
     private bool _canSave = true;
 
@@ -71,6 +72,12 @@ public sealed class ExtractedTextItem : BindableBase
         set => SetProperty(ref _translationError, value);
     }
 
+    public string TranslationSource
+    {
+        get => _translationSource;
+        set => SetProperty(ref _translationSource, value);
+    }
+
     public string ValidationStatus
     {
         get => _validationStatus;
@@ -128,6 +135,11 @@ public sealed class ExtractedTextItem : BindableBase
                 parts.Add("경고");
             }
 
+            if (!string.IsNullOrWhiteSpace(_translationSource))
+            {
+                parts.Add(_translationSource);
+            }
+
             return string.Join(" / ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
         }
     }
@@ -136,6 +148,7 @@ public sealed class ExtractedTextItem : BindableBase
     {
         _status = "번역 중";
         _translationError = string.Empty;
+        _translationSource = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
         RaiseStateChangedProperties();
@@ -145,6 +158,7 @@ public sealed class ExtractedTextItem : BindableBase
     {
         _status = "재시도 중";
         _translationError = string.Empty;
+        _translationSource = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
         RaiseStateChangedProperties();
@@ -154,6 +168,7 @@ public sealed class ExtractedTextItem : BindableBase
     {
         _status = "중지됨";
         _translationError = "사용자가 번역을 중지했습니다.";
+        _translationSource = string.Empty;
         _validationStatus = "검증 전";
         _canSave = false;
         RaiseStateChangedProperties();
@@ -171,6 +186,7 @@ public sealed class ExtractedTextItem : BindableBase
         var reviewReason = TranslationQualityRules.GetReviewReason(OriginalText, _translatedText);
         _status = reviewReason is null ? "수동 수정" : "검수 필요";
         _translationError = reviewReason ?? string.Empty;
+        _translationSource = string.Empty;
         _validationStatus = "통과";
         _canSave = true;
         RaiseStateChangedProperties();
@@ -181,6 +197,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translatedText = string.Empty;
         _status = PendingStatus;
         _translationError = string.Empty;
+        _translationSource = string.Empty;
         _validationStatus = "검증 전";
         _canSave = true;
         RaiseStateChangedProperties();
@@ -194,18 +211,21 @@ public sealed class ExtractedTextItem : BindableBase
             case "대기":
                 _status = PendingStatus;
                 _translationError = string.Empty;
+                _translationSource = string.Empty;
                 _validationStatus = "검증 전";
                 _canSave = true;
                 break;
             case "중지됨":
                 _status = "중지됨";
                 _translationError = string.IsNullOrWhiteSpace(_translationError) ? "수동으로 중지 상태로 표시했습니다." : _translationError;
+                _translationSource = string.Empty;
                 _validationStatus = "검증 전";
                 _canSave = false;
                 break;
             case "제외됨":
                 _status = "제외됨";
                 _translationError = "수동으로 제외 상태로 표시했습니다.";
+                _translationSource = string.Empty;
                 _validationStatus = ManualExcludedValidationStatus;
                 _canSave = true;
                 _translatedText = string.Empty;
@@ -213,24 +233,28 @@ public sealed class ExtractedTextItem : BindableBase
             case "수동 수정":
                 _status = "수동 수정";
                 _translationError = string.Empty;
+                _translationSource = string.Empty;
                 _validationStatus = "통과";
                 _canSave = !string.IsNullOrWhiteSpace(_translatedText);
                 break;
             case "검수 필요":
                 _status = "검수 필요";
                 _translationError = string.IsNullOrWhiteSpace(_translationError) ? "원문과 번역문 길이 차이가 커서 검토가 필요합니다." : _translationError;
+                _translationSource = string.Empty;
                 _validationStatus = "통과";
                 _canSave = !string.IsNullOrWhiteSpace(_translatedText);
                 break;
             case "번역 완료":
                 _status = "번역 완료";
                 _translationError = string.Empty;
+                _translationSource = string.Empty;
                 _validationStatus = "통과";
                 _canSave = !string.IsNullOrWhiteSpace(_translatedText);
                 break;
             case "번역 실패":
                 _status = "번역 실패";
                 _validationStatus = "검증 전";
+                _translationSource = string.Empty;
                 _canSave = false;
                 if (string.IsNullOrWhiteSpace(_translationError))
                 {
@@ -240,6 +264,7 @@ public sealed class ExtractedTextItem : BindableBase
             case "검증 실패":
                 _status = "검수 필요";
                 _validationStatus = "검증 실패";
+                _translationSource = string.Empty;
                 _canSave = false;
                 if (string.IsNullOrWhiteSpace(_translationError))
                 {
@@ -263,6 +288,7 @@ public sealed class ExtractedTextItem : BindableBase
         _status = status;
         _validationStatus = validationStatus;
         _translationError = translationError;
+        _translationSource = string.Empty;
         _canSave = canSave;
         _translatedText = translatedText ?? string.Empty;
         RaiseStateChangedProperties();
@@ -354,6 +380,7 @@ public sealed class ExtractedTextItem : BindableBase
         RaisePropertyChanged(nameof(TranslatedText));
         RaisePropertyChanged(nameof(Status));
         RaisePropertyChanged(nameof(TranslationError));
+        RaisePropertyChanged(nameof(TranslationSource));
         RaisePropertyChanged(nameof(ValidationStatus));
         RaisePropertyChanged(nameof(CanSave));
         RaisePropertyChanged(nameof(EditableStatus));

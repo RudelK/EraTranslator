@@ -299,6 +299,8 @@ public sealed class TranslationProviderTests
         var systemPrompt = messages[0].GetProperty("content").GetString();
         Assert.NotNull(systemPrompt);
         Assert.Contains("Glossary hints:", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("If a glossary source exactly matches the full input item, use that glossary target exactly.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("If multiple glossary hints overlap, prefer the longest exact source match.", systemPrompt, StringComparison.Ordinal);
         Assert.Contains("快楽 => 쾌락", systemPrompt, StringComparison.Ordinal);
         Assert.Contains("快楽値 => 쾌락치", systemPrompt, StringComparison.Ordinal);
     }
@@ -371,6 +373,14 @@ public sealed class TranslationProviderTests
         using var json = JsonDocument.Parse(capturedBody!);
         var root = json.RootElement;
         Assert.False(root.GetProperty("enable_thinking").GetBoolean());
+        var systemPrompt = root.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.NotNull(systemPrompt);
+        Assert.Contains("Treat short labels, glossary entries, item names, skill names, stat names, trait names, and body-part terms as dictionary-style entries.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("If semantic translation is uncertain, use a concise Hangul transliteration instead of an explanatory paraphrase.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Short-label accuracy rules for Gemma:", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("For Gemma 4 E4B, prioritize term precision over stylistic variation when translating short glossary-like entries.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Translate single words, short noun phrases, stat labels, item names, trait names, and glossary-like fragments as concise dictionary-style terms, not as sentences.", systemPrompt, StringComparison.Ordinal);
+        Assert.Contains("If no reliable semantic translation is available, prefer a stable Hangul transliteration over an explanatory paraphrase.", systemPrompt, StringComparison.Ordinal);
     }
 
     [Fact]

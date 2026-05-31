@@ -2,8 +2,8 @@ namespace EraTranslator.Services;
 
 public enum TranslationPhaseKind
 {
-    Csv,
+    CsvReferenceKeys,
+    CsvGeneral,
     Erh,
     Erb,
 }
-

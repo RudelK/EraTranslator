@@ -46,11 +46,23 @@ public sealed class AppConfig
 
     public bool EnableResultStateLogging { get; init; } = false;
 
+    public bool EnableDictionaryHitLogging { get; init; } = false;
+
     public string SystemPromptTemplate { get; init; } = string.Empty;
 
     public string RetryPromptTemplate { get; init; } = string.Empty;
 
     public bool ExcludeNonSourceText { get; init; } = true;
+
+    public bool EnableBundledDictionaryFirstPass { get; init; } = true;
+
+    public bool EnableKanaTransliterationFallback { get; init; } = true;
+
+    public bool EnableNaverJapaneseDictionaryLookup { get; init; } = false;
+
+    public bool EnableKanjiReadingFallback { get; init; } = true;
+
+    public int DictionaryFirstMaxTermLength { get; init; } = 6;
 
     public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 

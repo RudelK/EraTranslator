@@ -8,6 +8,13 @@ namespace EraTranslator.ViewModels;
 
 public sealed class UserDictionaryViewModel : BindableBase
 {
+    public sealed class ApplyModeOption
+    {
+        public UserDictionaryApplyMode Mode { get; init; }
+
+        public string DisplayName { get; init; } = string.Empty;
+    }
+
     private readonly UserDictionaryService _dictionaryService;
     private readonly List<UserDictionaryEntry> _originalGlobalEntries;
     private readonly List<UserDictionaryEntry> _originalProjectEntries;
@@ -42,6 +49,12 @@ public sealed class UserDictionaryViewModel : BindableBase
 
     public ObservableCollection<UserDictionaryEntry> ProjectEntries { get; }
 
+    public IReadOnlyList<ApplyModeOption> ApplyModeOptions { get; } =
+    [
+        new() { Mode = UserDictionaryApplyMode.Replace, DisplayName = "치환" },
+        new() { Mode = UserDictionaryApplyMode.Prompting, DisplayName = "프롬프팅" },
+    ];
+
     public UserDictionaryEntry? SelectedGlobalEntry
     {
         get => _selectedGlobalEntry;
@@ -63,6 +76,8 @@ public sealed class UserDictionaryViewModel : BindableBase
     public string ProjectScopeText => CanEditProjectDictionary
         ? "현재 프로젝트에만 적용됩니다. 같은 원문이 있으면 프로젝트 사전이 전역 사전을 덮어씁니다."
         : "프로젝트 사전을 사용하려면 메인 화면에서 게임 폴더를 먼저 지정하세요.";
+
+    public string ApplyModeHelpText => "적용 방식: 치환은 번역 전에 목표 텍스트로 강제로 바꿉니다. 프롬프팅은 LLM 번역기에서만 glossary 힌트처럼 전달되고, DeepL/Papago/EzTransXP 같은 비LLM 번역기에서는 자동으로 치환처럼 처리됩니다.";
 
     public string ProtectedFullWidthCharacters
     {
@@ -136,6 +151,7 @@ public sealed class UserDictionaryViewModel : BindableBase
             IsEnabled = true,
             Source = string.Empty,
             Target = string.Empty,
+            ApplyMode = UserDictionaryApplyMode.Replace,
         };
     }
 

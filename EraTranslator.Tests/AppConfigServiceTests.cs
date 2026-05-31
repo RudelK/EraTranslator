@@ -24,6 +24,7 @@ public sealed class AppConfigServiceTests : IDisposable
         var actual = service.Load();
 
         Assert.False(actual.EnableResultStateLogging);
+        Assert.False(actual.EnableDictionaryHitLogging);
     }
 
     [Fact]
@@ -66,6 +67,8 @@ public sealed class AppConfigServiceTests : IDisposable
             DisableThinking = false,
             EnableRequestResponseLogging = true,
             EnableResultStateLogging = true,
+            EnableDictionaryHitLogging = true,
+            EnableNaverJapaneseDictionaryLookup = true,
             ExcludeNonSourceText = true,
             RefreshGridDuringTranslatedTextEdit = true,
             ProtectedFullWidthCharacters = "（）",
@@ -109,6 +112,8 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.DisableThinking, actual.DisableThinking);
         Assert.Equal(expected.EnableRequestResponseLogging, actual.EnableRequestResponseLogging);
         Assert.Equal(expected.EnableResultStateLogging, actual.EnableResultStateLogging);
+        Assert.Equal(expected.EnableDictionaryHitLogging, actual.EnableDictionaryHitLogging);
+        Assert.Equal(expected.EnableNaverJapaneseDictionaryLookup, actual.EnableNaverJapaneseDictionaryLookup);
         Assert.Equal(expected.ExcludeNonSourceText, actual.ExcludeNonSourceText);
         Assert.Equal(expected.RefreshGridDuringTranslatedTextEdit, actual.RefreshGridDuringTranslatedTextEdit);
         Assert.Equal(expected.ProtectedFullWidthCharacters, actual.ProtectedFullWidthCharacters);

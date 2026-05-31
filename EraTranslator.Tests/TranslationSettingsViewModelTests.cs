@@ -101,6 +101,22 @@ public sealed class TranslationSettingsViewModelTests
     }
 
     [Fact]
+    public void LmStudioModelChange_Gemma4E4BAutoPresetAppliesDedicatedSampling()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+
+        viewModel.Model = "google/gemma-4-e4b";
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(preset.TopK, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
+    }
+
+    [Fact]
     public void LmStudioModelChange_LeavingHyMt2ClearsAutoMaxTokens()
     {
         var viewModel = CreateViewModel();
@@ -152,13 +168,32 @@ public sealed class TranslationSettingsViewModelTests
     }
 
     [Fact]
-    public void LmStudioPresetOptions_IncludeTranslateGemmaAndHyMt2()
+    public void LmStudioPresetOptions_IncludeGemma4E4BTranslateGemmaAndHyMt2()
     {
         var viewModel = CreateViewModel();
 
+        Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.Gemma4E4B);
         Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.TranslateGemma);
         Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.HyMt2_7B);
         Assert.Contains(viewModel.LmStudioPresetOptions, option => option.Profile == LmStudioPresetProfile.HyMt2_30B_A3B);
+    }
+
+    [Fact]
+    public void ApplySelectedLmStudioPreset_UsesExplicitGemma4E4BPreset()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "google/gemma-4-27b";
+        viewModel.SelectedLmStudioPresetOption = viewModel.LmStudioPresetOptions.Single(option => option.Profile == LmStudioPresetProfile.Gemma4E4B);
+
+        viewModel.ApplySelectedLmStudioPreset();
+
+        var preset = LmStudioSamplingDefaults.GetRecommendedPreset(LmStudioPresetProfile.Gemma4E4B, viewModel.Model, viewModel.DisableThinking);
+        Assert.Equal(preset.Temperature, viewModel.Temperature);
+        Assert.Equal(preset.TopP, viewModel.TopP);
+        Assert.Equal(preset.TopK, viewModel.TopK);
+        Assert.Equal(preset.RepeatPenalty, viewModel.RepeatPenalty);
+        Assert.Equal(preset.PresencePenalty, viewModel.PresencePenalty);
     }
 
     [Fact]
@@ -250,6 +285,46 @@ public sealed class TranslationSettingsViewModelTests
     }
 
     [Fact]
+    public void PromptProfile_AutoDetectsGemma4E4BAndResetUsesProfileDefaults()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.Model = "google/gemma-4-e4b";
+        viewModel.SelectedPromptProfile = PromptProfile.Auto;
+
+        viewModel.ResetPromptTemplates();
+
+        Assert.Contains("Treat short labels, glossary entries, item names, skill names, stat names, trait names, and body-part terms as dictionary-style entries.", viewModel.SystemPromptTemplate, StringComparison.Ordinal);
+        Assert.Contains("Prioritize exact short-label, glossary, and term-level accuracy.", viewModel.RetryPromptTemplate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PromptProfile_AutoUpdatesTemplatesWhenModelChangesToGemma4E4B()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.SelectedPromptProfile = PromptProfile.Auto;
+        viewModel.Model = "google/gemma-4-27b";
+
+        viewModel.Model = "google/gemma-4-e4b";
+
+        Assert.Contains("Treat short labels, glossary entries, item names, skill names, stat names, trait names, and body-part terms as dictionary-style entries.", viewModel.SystemPromptTemplate, StringComparison.Ordinal);
+        Assert.Contains("Prioritize exact short-label, glossary, and term-level accuracy.", viewModel.RetryPromptTemplate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PromptProfileStatusText_ShowsResolvedAutoProfileAfterModelChange()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.LmStudio);
+        viewModel.SelectedPromptProfile = PromptProfile.Auto;
+
+        viewModel.Model = "google/gemma-4-e4b";
+
+        Assert.Equal("자동 선택 결과: Gemma 4 E4B", viewModel.PromptProfileStatusText);
+    }
+
+    [Fact]
     public void PromptProfile_ChangeDoesNotOverwriteCustomEditedTemplates()
     {
         var viewModel = CreateViewModel();
@@ -284,6 +359,27 @@ public sealed class TranslationSettingsViewModelTests
         var settings = viewModel.BuildSettings();
 
         Assert.Equal(PromptProfile.HyMt2, settings.PromptProfile);
+    }
+
+    [Fact]
+    public void BuildSettings_IncludesIndependentDictionaryOptions()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.EnableBundledDictionaryFirstPass = false;
+        viewModel.EnableKanaTransliterationFallback = true;
+        viewModel.EnableNaverJapaneseDictionaryLookup = true;
+        viewModel.EnableKanjiReadingFallback = false;
+        viewModel.EnableDictionaryHitLogging = true;
+        viewModel.DictionaryFirstMaxTermLength = 5;
+
+        var settings = viewModel.BuildSettings();
+
+        Assert.False(settings.EnableBundledDictionaryFirstPass);
+        Assert.True(settings.EnableKanaTransliterationFallback);
+        Assert.True(settings.EnableNaverJapaneseDictionaryLookup);
+        Assert.False(settings.EnableKanjiReadingFallback);
+        Assert.True(settings.EnableDictionaryHitLogging);
+        Assert.Equal(5, settings.DictionaryFirstMaxTermLength);
     }
 
     [Fact]

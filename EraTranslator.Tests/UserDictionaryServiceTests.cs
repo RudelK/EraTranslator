@@ -22,7 +22,7 @@ public sealed class UserDictionaryServiceTests : IDisposable
 
         service.SaveGlobal(
             [
-                new UserDictionaryEntry { IsEnabled = true, Source = " 勇者 ", Target = " 용사 " },
+                new UserDictionaryEntry { IsEnabled = true, Source = " 勇者 ", Target = " 용사 ", ApplyMode = UserDictionaryApplyMode.Prompting },
                 new UserDictionaryEntry { IsEnabled = true, Source = "", Target = "skip" },
             ]);
 
@@ -31,6 +31,7 @@ public sealed class UserDictionaryServiceTests : IDisposable
         Assert.Single(loaded);
         Assert.Equal("勇者", loaded[0].Source);
         Assert.Equal("용사", loaded[0].Target);
+        Assert.Equal(UserDictionaryApplyMode.Prompting, loaded[0].ApplyMode);
     }
 
     [Fact]
@@ -51,6 +52,7 @@ public sealed class UserDictionaryServiceTests : IDisposable
         Assert.Single(effective);
         Assert.Equal("勇者", effective[0].Source);
         Assert.Equal("브레이브", effective[0].Target);
+        Assert.Equal(UserDictionaryApplyMode.Replace, effective[0].ApplyMode);
     }
 
     [Fact]

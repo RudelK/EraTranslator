@@ -95,12 +95,14 @@ public sealed class CsvExtractorTests
     public void Extract_CharacterSheetNameLikeFields_PreserveWhitespace()
     {
         var extractor = new CsvExtractor();
-        var content = "番号,0\n名前,メイン ヒロイン\n呼び名,マイ レディ\nCSTR,初回 挨拶,おは よう";
+        var content = "番号,0\n名前,メイン ヒロイン\n呼び名,マイ レディ\n彼氏姓,山 田\n彼氏名,太 郎\nCSTR,初回 挨拶,おは よう";
 
         var result = extractor.Extract("CSV/AnyCharacter.csv", "CSV/AnyCharacter.csv", content);
 
         Assert.Contains(result.segments, segment => segment.OriginalText == "メイン ヒロイン" && segment.PreserveWhitespace);
         Assert.Contains(result.segments, segment => segment.OriginalText == "マイ レディ" && segment.PreserveWhitespace);
+        Assert.Contains(result.segments, segment => segment.OriginalText == "山 田" && segment.PreserveWhitespace && segment.SourceKey == "彼氏姓");
+        Assert.Contains(result.segments, segment => segment.OriginalText == "太 郎" && segment.PreserveWhitespace && segment.SourceKey == "彼氏名");
         Assert.Contains(result.segments, segment => segment.OriginalText == "おは よう" && segment.PreserveWhitespace);
         Assert.Contains(result.segments, segment =>
             segment.OriginalText == "初回 挨拶"

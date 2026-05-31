@@ -6,11 +6,18 @@ public sealed class TranslationCoordinator : IDisposable
 {
     private readonly UserDictionaryApplier _dictionaryApplier = new();
     private readonly PhaseScopedGlossaryBuilder _glossaryBuilder = new();
+    private readonly IDictionaryFirstTranslationService _dictionaryFirstTranslationService;
+    private readonly IDictionaryHitLogger _dictionaryHitLogger;
     private readonly ITranslationProviderFactory _providerFactory;
 
-    public TranslationCoordinator(ITranslationProviderFactory? providerFactory = null)
+    public TranslationCoordinator(
+        ITranslationProviderFactory? providerFactory = null,
+        IDictionaryFirstTranslationService? dictionaryFirstTranslationService = null,
+        IDictionaryHitLogger? dictionaryHitLogger = null)
     {
         _providerFactory = providerFactory ?? new TranslationProviderFactory();
+        _dictionaryFirstTranslationService = dictionaryFirstTranslationService ?? new DictionaryFirstTranslationService();
+        _dictionaryHitLogger = dictionaryHitLogger ?? new FileDictionaryHitLogger();
     }
 
     public async Task TranslateAsync(
@@ -108,14 +115,17 @@ public sealed class TranslationCoordinator : IDisposable
             .ToList();
         foreach (var item in targetLanguageRepresentatives)
         {
-            processedCount += MarkProcessed(ApplySuccessToGroup(
+            processedCount += MarkProcessed(ApplyResolvedTranslationToGroup(
                 activeGroupedByOriginal,
                 propagationGroupedByOriginal,
                 activeSegmentIds,
                 item.OriginalText,
                 item.OriginalText,
                 settings.SourceLanguage,
-                settings.TargetLanguage));
+                settings.TargetLanguage,
+                string.Empty,
+                forceReview: false,
+                reviewReason: string.Empty));
         }
 
         if (targetLanguageRepresentatives.Count > 0)
@@ -123,6 +133,39 @@ public sealed class TranslationCoordinator : IDisposable
             persistState?.Invoke();
             representatives = representatives
                 .Except(targetLanguageRepresentatives)
+                .ToList();
+        }
+
+        var dictionaryResolvedRepresentatives = new List<ExtractedTextItem>();
+        foreach (var item in representatives)
+        {
+            var dictionaryMatch = await _dictionaryFirstTranslationService.TryResolveAsync(item, settings, cancellationToken).ConfigureAwait(false);
+            if (dictionaryMatch is null)
+            {
+                continue;
+            }
+
+            dictionaryResolvedRepresentatives.Add(item);
+            var affectedItems = ApplyResolvedTranslationToGroup(
+                activeGroupedByOriginal,
+                propagationGroupedByOriginal,
+                activeSegmentIds,
+                item.OriginalText,
+                dictionaryMatch.Value.TranslatedText,
+                settings.SourceLanguage,
+                settings.TargetLanguage,
+                dictionaryMatch.Value.TranslationSource,
+                dictionaryMatch.Value.ForceReview,
+                dictionaryMatch.Value.ReviewReason);
+            processedCount += MarkProcessed(affectedItems);
+            LogDictionaryHitIfEnabled(settings, item, dictionaryMatch.Value, affectedItems.Count);
+        }
+
+        if (dictionaryResolvedRepresentatives.Count > 0)
+        {
+            persistState?.Invoke();
+            representatives = representatives
+                .Except(dictionaryResolvedRepresentatives)
                 .ToList();
         }
 
@@ -137,6 +180,16 @@ public sealed class TranslationCoordinator : IDisposable
         }
 
         var provider = _providerFactory.Create(settings);
+        var supportsPromptingDictionary = SupportsPromptingDictionary(settings.ProviderType);
+        var replacementDictionaryEntries = supportsPromptingDictionary
+            ? dictionaryEntries
+                .Where(entry => entry.ApplyMode != UserDictionaryApplyMode.Prompting)
+                .ToList()
+            : dictionaryEntries.ToList();
+        var promptDictionaryHints = supportsPromptingDictionary
+            ? BuildPromptDictionaryHints(dictionaryEntries)
+            : [];
+        var availableGlossaryHints = MergeGlossaryHints(glossaryHints, promptDictionaryHints);
         var protector = new PlaceholderProtector(settings.ProtectedFullWidthCharacters);
         var batchSize = Math.Clamp(
             settings.ProviderType == TranslationProviderType.EzTransXp
@@ -203,7 +256,7 @@ public sealed class TranslationCoordinator : IDisposable
             for (var attempt = 0; attempt <= retryCount && remaining.Count > 0; attempt++)
             {
                 var currentBatch = remaining.Values.ToList();
-                var batchGlossaryHints = _glossaryBuilder.SelectForBatch(glossaryHints, currentBatch);
+                var batchGlossaryHints = _glossaryBuilder.SelectForBatch(availableGlossaryHints, currentBatch);
                 var protectedBatch = currentBatch
                     .Select(item =>
                     {
@@ -211,7 +264,7 @@ public sealed class TranslationCoordinator : IDisposable
                         var dictionaryApplied = _dictionaryApplier.Apply(
                             protectedText.Text,
                             protectedText.Placeholders,
-                            dictionaryEntries);
+                            replacementDictionaryEntries);
                         return new ProtectedSegment(
                             item.SegmentId,
                             dictionaryApplied.Text,
@@ -310,14 +363,17 @@ public sealed class TranslationCoordinator : IDisposable
                         }
 
                         var restoredTranslation = protector.Restore(normalizedTranslated, protectedSegment.Placeholders);
-                        processedCount += MarkProcessed(ApplySuccessToGroup(
+                        processedCount += MarkProcessed(ApplyResolvedTranslationToGroup(
                             activeGroupedByOriginal,
                             propagationGroupedByOriginal,
                             activeSegmentIds,
                             item.OriginalText,
                             restoredTranslation,
                             settings.SourceLanguage,
-                            settings.TargetLanguage));
+                            settings.TargetLanguage,
+                            string.Empty,
+                            forceReview: false,
+                            reviewReason: string.Empty));
                     }
 
                     remaining = nextRemaining;
@@ -390,6 +446,38 @@ public sealed class TranslationCoordinator : IDisposable
         }
     }
 
+    private void LogDictionaryHitIfEnabled(
+        ProviderSettings settings,
+        ExtractedTextItem item,
+        DictionaryFirstTranslationMatch match,
+        int affectedItemCount)
+    {
+        if (!settings.EnableDictionaryHitLogging)
+        {
+            return;
+        }
+
+        _dictionaryHitLogger.LogHit(new DictionaryHitLogEntry(
+            item.SegmentId,
+            item.RelativePath,
+            item.LineNumber,
+            item.OriginalText,
+            match.TranslatedText,
+            match.TranslationSource,
+            match.MatchKind,
+            match.MatchedTerm,
+            item.SourceKey,
+            item.SymbolNamespace,
+            item.OriginalSymbolKey,
+            affectedItemCount,
+            match.ForceReview,
+            match.ReviewReason,
+            match.DictionaryStore,
+            match.PersistedToNaverDictionary,
+            match.SourceUrl,
+            match.ReviewRequired));
+    }
+
     private static IReadOnlyList<ExtractedTextItem> ApplyExistingSharedTranslations(
         IReadOnlyDictionary<string, List<ExtractedTextItem>> groupedByOriginal,
         IReadOnlySet<string> targetOriginals)
@@ -424,14 +512,17 @@ public sealed class TranslationCoordinator : IDisposable
         return affectedItems;
     }
 
-    private static IReadOnlyList<ExtractedTextItem> ApplySuccessToGroup(
+    private static IReadOnlyList<ExtractedTextItem> ApplyResolvedTranslationToGroup(
         IReadOnlyDictionary<string, List<ExtractedTextItem>> activeGroupedByOriginal,
         IReadOnlyDictionary<string, List<ExtractedTextItem>> propagationGroupedByOriginal,
         IReadOnlySet<string> activeSegmentIds,
         string originalText,
         string translatedText,
         string sourceLanguage,
-        string targetLanguage)
+        string targetLanguage,
+        string translationSource,
+        bool forceReview,
+        string reviewReason)
     {
         var affectedItems = ApplyToGroup(
             activeGroupedByOriginal,
@@ -455,13 +546,17 @@ public sealed class TranslationCoordinator : IDisposable
                     return;
                 }
 
-                var reviewReason = TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation);
+                var resolvedReviewReason = MergeReviewReason(
+                    forceReview,
+                    reviewReason,
+                    TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
                 item.ApplyTranslationState(
-                    reviewReason is null ? "번역 완료" : "검수 필요",
+                    resolvedReviewReason is null ? "번역 완료" : "검수 필요",
                     "통과",
-                    reviewReason ?? string.Empty,
+                    resolvedReviewReason ?? string.Empty,
                     true,
                     normalizedTranslation);
+                item.TranslationSource = translationSource;
             });
 
         if (!propagationGroupedByOriginal.TryGetValue(originalText, out var propagationGroup))
@@ -489,17 +584,36 @@ public sealed class TranslationCoordinator : IDisposable
                 continue;
             }
 
-            var reviewReason = TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation);
+            var resolvedReviewReason = MergeReviewReason(
+                forceReview,
+                reviewReason,
+                TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
             item.ApplyTranslationState(
-                reviewReason is null ? "번역 완료" : "검수 필요",
+                resolvedReviewReason is null ? "번역 완료" : "검수 필요",
                 "통과",
-                reviewReason ?? string.Empty,
+                resolvedReviewReason ?? string.Empty,
                 true,
                 normalizedTranslation);
+            item.TranslationSource = translationSource;
             affectedItems.Add(item);
         }
 
         return affectedItems;
+    }
+
+    private static string? MergeReviewReason(bool forceReview, string configuredReason, string? qualityReason)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredReason))
+        {
+            return configuredReason;
+        }
+
+        if (forceReview)
+        {
+            return "사전 fallback 결과입니다. 검토가 필요합니다.";
+        }
+
+        return qualityReason;
     }
 
     private static IReadOnlyList<ExtractedTextItem> ApplyFailureToGroup(
@@ -593,5 +707,66 @@ public sealed class TranslationCoordinator : IDisposable
     private static bool IsPlaceholderCountMismatch(string error)
     {
         return error.Contains("보호 토큰 개수가 일치하지 않습니다", StringComparison.Ordinal);
+    }
+
+    private static bool SupportsPromptingDictionary(TranslationProviderType providerType)
+    {
+        return providerType is TranslationProviderType.OpenAi
+            or TranslationProviderType.XiaomiMiMo
+            or TranslationProviderType.LmStudio
+            or TranslationProviderType.Lemonade;
+    }
+
+    private static IReadOnlyList<GlossaryHint> BuildPromptDictionaryHints(IReadOnlyList<UserDictionaryEntry> dictionaryEntries)
+    {
+        return dictionaryEntries
+            .Where(entry => entry.IsEnabled && entry.ApplyMode == UserDictionaryApplyMode.Prompting)
+            .Select(entry => new GlossaryHint(
+                entry.Source.Trim(),
+                entry.Target.Trim(),
+                "USER"))
+            .Where(static hint =>
+                !string.IsNullOrWhiteSpace(hint.Source)
+                && !string.IsNullOrWhiteSpace(hint.Target)
+                && !hint.Source.Contains('\r')
+                && !hint.Source.Contains('\n')
+                && !hint.Target.Contains('\r')
+                && !hint.Target.Contains('\n'))
+            .GroupBy(static hint => hint.Source, StringComparer.Ordinal)
+            .Select(static group => group.Last())
+            .OrderByDescending(static hint => hint.Source.Length)
+            .ThenBy(static hint => hint.Source, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static IReadOnlyList<GlossaryHint> MergeGlossaryHints(
+        IReadOnlyList<GlossaryHint> glossaryHints,
+        IReadOnlyList<GlossaryHint> promptDictionaryHints)
+    {
+        if (glossaryHints.Count == 0)
+        {
+            return promptDictionaryHints;
+        }
+
+        if (promptDictionaryHints.Count == 0)
+        {
+            return glossaryHints;
+        }
+
+        var merged = new Dictionary<string, GlossaryHint>(StringComparer.Ordinal);
+        foreach (var hint in glossaryHints)
+        {
+            merged[hint.Source] = hint;
+        }
+
+        foreach (var hint in promptDictionaryHints)
+        {
+            merged[hint.Source] = hint;
+        }
+
+        return merged.Values
+            .OrderByDescending(static hint => hint.Source.Length)
+            .ThenBy(static hint => hint.Source, StringComparer.Ordinal)
+            .ToList();
     }
 }

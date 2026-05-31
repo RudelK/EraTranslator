@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -69,7 +70,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _disableThinking = true;
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
+    private bool _enableDictionaryHitLogging = false;
     private bool _excludeNonSourceText = true;
+    private bool _enableBundledDictionaryFirstPass = true;
+    private bool _enableKanaTransliterationFallback = true;
+    private bool _enableNaverJapaneseDictionaryLookup = false;
+    private bool _enableKanjiReadingFallback = true;
+    private int _dictionaryFirstMaxTermLength = 6;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _protectedFullWidthCharacters = PlaceholderProtector.DefaultFullWidthSpecialCharacters;
@@ -141,6 +148,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             {
                 liveShaping.IsLiveGrouping = false;
             }
+        }
+        if (ItemsView is ListCollectionView listCollectionView)
+        {
+            listCollectionView.CustomSort = ExtractedTextItemPriorityComparer.Instance;
         }
         _globalUserDictionary = _userDictionaryService.LoadGlobal();
 
@@ -378,6 +389,83 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
+    public bool EnableDictionaryHitLogging
+    {
+        get => _enableDictionaryHitLogging;
+        set
+        {
+            if (SetProperty(ref _enableDictionaryHitLogging, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableBundledDictionaryFirstPass
+    {
+        get => _enableBundledDictionaryFirstPass;
+        set
+        {
+            if (SetProperty(ref _enableBundledDictionaryFirstPass, value))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableKanaTransliterationFallback
+    {
+        get => _enableKanaTransliterationFallback;
+        set
+        {
+            if (SetProperty(ref _enableKanaTransliterationFallback, value))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableNaverJapaneseDictionaryLookup
+    {
+        get => _enableNaverJapaneseDictionaryLookup;
+        set
+        {
+            if (SetProperty(ref _enableNaverJapaneseDictionaryLookup, value))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableKanjiReadingFallback
+    {
+        get => _enableKanjiReadingFallback;
+        set
+        {
+            if (SetProperty(ref _enableKanjiReadingFallback, value))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
+    public int DictionaryFirstMaxTermLength
+    {
+        get => _dictionaryFirstMaxTermLength;
+        set
+        {
+            if (SetProperty(ref _dictionaryFirstMaxTermLength, Math.Clamp(value, 1, 12)))
+            {
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
     public string SystemPromptTemplate
     {
         get => _systemPromptTemplate;
@@ -570,7 +658,31 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             var providerName = SelectedProviderOption?.DisplayName ?? "공급자 미설정";
             var modelName = string.IsNullOrWhiteSpace(Model) ? "모델 미지정" : Model;
-            return $"{providerName} / {modelName}";
+            var enabledModes = new List<string>();
+            if (EnableBundledDictionaryFirstPass)
+            {
+                enabledModes.Add("exact");
+            }
+
+            if (EnableKanaTransliterationFallback)
+            {
+                enabledModes.Add("카타카나");
+            }
+
+            if (EnableNaverJapaneseDictionaryLookup)
+            {
+                enabledModes.Add("네이버");
+            }
+
+            if (EnableKanjiReadingFallback)
+            {
+                enabledModes.Add("한자");
+            }
+
+            var dictionaryLabel = enabledModes.Count == 0
+                ? "사전 선행 OFF"
+                : $"사전 선행 ({string.Join(", ", enabledModes)}) / {DictionaryFirstMaxTermLength}자";
+            return $"{providerName} / {modelName} / {dictionaryLabel}";
         }
     }
 
@@ -664,6 +776,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             if (!string.IsNullOrWhiteSpace(SelectedItem.TranslatedSymbolKey))
             {
                 lines.Add($"새 심볼 키: {SelectedItem.TranslatedSymbolKey}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(SelectedItem.TranslationSource))
+            {
+                lines.Add($"번역 출처: {SelectedItem.TranslationSource}");
             }
 
             if (SelectedItem.IsReferenceBearingKey)
@@ -1549,7 +1666,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         DisableThinking = settingsViewModel.DisableThinking;
         EnableRequestResponseLogging = settingsViewModel.EnableRequestResponseLogging;
         EnableResultStateLogging = settingsViewModel.EnableResultStateLogging;
+        EnableDictionaryHitLogging = settingsViewModel.EnableDictionaryHitLogging;
         ExcludeNonSourceText = settingsViewModel.ExcludeNonSourceText;
+        EnableBundledDictionaryFirstPass = settingsViewModel.EnableBundledDictionaryFirstPass;
+        EnableKanaTransliterationFallback = settingsViewModel.EnableKanaTransliterationFallback;
+        EnableNaverJapaneseDictionaryLookup = settingsViewModel.EnableNaverJapaneseDictionaryLookup;
+        EnableKanjiReadingFallback = settingsViewModel.EnableKanjiReadingFallback;
+        DictionaryFirstMaxTermLength = settingsViewModel.DictionaryFirstMaxTermLength;
         SystemPromptTemplate = settingsViewModel.SystemPromptTemplate;
         RetryPromptTemplate = settingsViewModel.RetryPromptTemplate;
         PapagoClientId = settingsViewModel.PapagoClientId;
@@ -1592,7 +1715,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             MaxTokens = MaxTokens,
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
+            EnableDictionaryHitLogging = EnableDictionaryHitLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
+            EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
+            EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
+            EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
+            EnableKanjiReadingFallback = EnableKanjiReadingFallback,
+            DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
             ProtectedFullWidthCharacters = ProtectedFullWidthCharacters,
@@ -1732,7 +1861,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             DisableThinking = config.DisableThinking;
             EnableRequestResponseLogging = config.EnableRequestResponseLogging;
             EnableResultStateLogging = config.EnableResultStateLogging;
+            EnableDictionaryHitLogging = config.EnableDictionaryHitLogging;
             ExcludeNonSourceText = config.ExcludeNonSourceText;
+            EnableBundledDictionaryFirstPass = config.EnableBundledDictionaryFirstPass;
+            EnableKanaTransliterationFallback = config.EnableKanaTransliterationFallback;
+            EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup;
+            EnableKanjiReadingFallback = config.EnableKanjiReadingFallback;
+            DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength;
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit;
             if (!string.IsNullOrWhiteSpace(config.SystemPromptTemplate))
             {
@@ -1793,7 +1928,13 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             EnableResultStateLogging = EnableResultStateLogging,
+            EnableDictionaryHitLogging = EnableDictionaryHitLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
+            EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
+            EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
+            EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
+            EnableKanjiReadingFallback = EnableKanjiReadingFallback,
+            DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = RefreshGridDuringTranslatedTextEdit,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
@@ -2012,7 +2153,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             using (ItemsView.DeferRefresh())
             {
-                Items.ReplaceAll(session.Items.OrderBy(item => item.RelativePath).ThenBy(item => item.LineNumber));
+                Items.ReplaceAll(OrderItemsForDisplay(session.Items));
             }
 
             if (restoreProgress)
@@ -2466,9 +2607,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         return new[]
         {
-            CreatePhasePlan(translationScope, TranslationPhaseKind.Csv, "CSV"),
-            CreatePhasePlan(translationScope, TranslationPhaseKind.Erh, "ERH"),
-            CreatePhasePlan(translationScope, TranslationPhaseKind.Erb, "ERB"),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.CsvReferenceKeys),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.CsvGeneral),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.Erh),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.Erb),
         }
         .Where(static plan => plan.Items.Count > 0)
         .ToList();
@@ -2476,11 +2618,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private static TranslationPhasePlan CreatePhasePlan(
         IReadOnlyList<ExtractedTextItem> translationScope,
-        TranslationPhaseKind kind,
-        string fileType)
+        TranslationPhaseKind kind)
     {
         var items = translationScope
-            .Where(item => string.Equals(item.FileType, fileType, StringComparison.OrdinalIgnoreCase))
+            .Where(item => GetTranslationPhaseForItem(item) == kind)
             .ToList();
         return new TranslationPhasePlan(kind, items, items.Count(item => item.NeedsTranslation));
     }
@@ -2489,10 +2630,49 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         return kind switch
         {
-            TranslationPhaseKind.Csv => "CSV",
+            TranslationPhaseKind.CsvReferenceKeys => "CSV-참조키",
+            TranslationPhaseKind.CsvGeneral => "CSV-일반",
             TranslationPhaseKind.Erh => "ERH",
             TranslationPhaseKind.Erb => "ERB",
             _ => "번역",
+        };
+    }
+
+    private static IOrderedEnumerable<ExtractedTextItem> OrderItemsForDisplay(IEnumerable<ExtractedTextItem> items)
+    {
+        return items
+            .OrderBy(GetTranslationPhaseSortOrder)
+            .ThenBy(item => item.RelativePath, StringComparer.Ordinal)
+            .ThenBy(item => item.LineNumber)
+            .ThenBy(item => item.SegmentId, StringComparer.Ordinal);
+    }
+
+    private static TranslationPhaseKind GetTranslationPhaseForItem(ExtractedTextItem item)
+    {
+        if (string.Equals(item.FileType, "CSV", StringComparison.OrdinalIgnoreCase))
+        {
+            return item.IsReferenceBearingKey
+                ? TranslationPhaseKind.CsvReferenceKeys
+                : TranslationPhaseKind.CsvGeneral;
+        }
+
+        if (string.Equals(item.FileType, "ERH", StringComparison.OrdinalIgnoreCase))
+        {
+            return TranslationPhaseKind.Erh;
+        }
+
+        return TranslationPhaseKind.Erb;
+    }
+
+    private static int GetTranslationPhaseSortOrder(ExtractedTextItem item)
+    {
+        return GetTranslationPhaseForItem(item) switch
+        {
+            TranslationPhaseKind.CsvReferenceKeys => 0,
+            TranslationPhaseKind.CsvGeneral => 1,
+            TranslationPhaseKind.Erh => 2,
+            TranslationPhaseKind.Erb => 3,
+            _ => int.MaxValue,
         };
     }
 
@@ -2840,4 +3020,47 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         TranslationPhaseKind Kind,
         IReadOnlyList<ExtractedTextItem> Items,
         int PendingCount);
+
+    private sealed class ExtractedTextItemPriorityComparer : IComparer
+    {
+        public static ExtractedTextItemPriorityComparer Instance { get; } = new();
+
+        public int Compare(object? x, object? y)
+        {
+            if (ReferenceEquals(x, y))
+            {
+                return 0;
+            }
+
+            if (x is not ExtractedTextItem left)
+            {
+                return -1;
+            }
+
+            if (y is not ExtractedTextItem right)
+            {
+                return 1;
+            }
+
+            var phaseComparison = GetTranslationPhaseSortOrder(left).CompareTo(GetTranslationPhaseSortOrder(right));
+            if (phaseComparison != 0)
+            {
+                return phaseComparison;
+            }
+
+            var pathComparison = StringComparer.Ordinal.Compare(left.RelativePath, right.RelativePath);
+            if (pathComparison != 0)
+            {
+                return pathComparison;
+            }
+
+            var lineComparison = left.LineNumber.CompareTo(right.LineNumber);
+            if (lineComparison != 0)
+            {
+                return lineComparison;
+            }
+
+            return StringComparer.Ordinal.Compare(left.SegmentId, right.SegmentId);
+        }
+    }
 }

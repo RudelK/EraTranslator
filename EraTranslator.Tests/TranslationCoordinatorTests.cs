@@ -88,6 +88,9 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             progress,
@@ -138,6 +141,84 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_UsesDictionaryFirstTranslationBeforeCallingProvider()
+    {
+        var provider = new SequencedProvider();
+        var coordinator = new TranslationCoordinator(
+            new FakeTranslationProviderFactory(provider),
+            new StubDictionaryFirstTranslationService(new Dictionary<string, DictionaryFirstTranslationMatch>(StringComparer.Ordinal)
+            {
+                ["快楽"] = new DictionaryFirstTranslationMatch("쾌락", "사전 번역", false, string.Empty),
+            }));
+        var item = BuildItem("id-1", "快楽", fileType: "CSV");
+
+        await coordinator.TranslateAsync(
+            [item],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = true,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Empty(provider.RequestHistory);
+        Assert.Equal("쾌락", item.TranslatedText);
+        Assert.Equal("사전 번역", item.TranslationSource);
+        Assert.Equal("번역 완료", item.Status);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_LogsDictionaryHitWhenEnabled()
+    {
+        var provider = new SequencedProvider();
+        var logger = new RecordingDictionaryHitLogger();
+        var coordinator = new TranslationCoordinator(
+            new FakeTranslationProviderFactory(provider),
+            new StubDictionaryFirstTranslationService(new Dictionary<string, DictionaryFirstTranslationMatch>(StringComparer.Ordinal)
+            {
+                ["快楽"] = new DictionaryFirstTranslationMatch("쾌락", "사전 번역", false, string.Empty, "surface", "快楽"),
+            }),
+            logger);
+        var first = BuildItem("id-1", "快楽", fileType: "CSV");
+        var duplicate = BuildItem("id-2", "快楽", fileType: "CSV");
+
+        await coordinator.TranslateAsync(
+            [first, duplicate],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = true,
+                EnableDictionaryHitLogging = true,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Empty(provider.RequestHistory);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("id-1", entry.SegmentId);
+        Assert.Equal("快楽", entry.OriginalText);
+        Assert.Equal("쾌락", entry.TranslatedText);
+        Assert.Equal("surface", entry.MatchKind);
+        Assert.Equal("快楽", entry.MatchedTerm);
+        Assert.Equal(2, entry.AffectedItemCount);
+    }
+
+    [Fact]
     public async Task TranslateAsync_ReusesCompletedTranslationFromPropagationScopeWithoutApiRequest()
     {
         var provider = new SequencedProvider();
@@ -156,6 +237,9 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             progress,
@@ -194,6 +278,9 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             progress,
@@ -232,6 +319,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -270,6 +358,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -306,6 +395,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -343,6 +433,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -415,6 +506,9 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -451,6 +545,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -489,6 +584,9 @@ public sealed class TranslationCoordinatorTests
                 ApiKey = "test",
                 SourceLanguage = "ja",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -526,6 +624,9 @@ public sealed class TranslationCoordinatorTests
                 ApiKey = "test",
                 SourceLanguage = "ja",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -563,6 +664,9 @@ public sealed class TranslationCoordinatorTests
                 ApiKey = "test",
                 SourceLanguage = "ja",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
             },
             [],
             new Progress<(double value, string status, string detail)>(),
@@ -796,6 +900,7 @@ public sealed class TranslationCoordinatorTests
                 RetryCount = 0,
                 ApiKey = "test",
                 TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
             },
             [],
             glossaryHints,
@@ -805,6 +910,97 @@ public sealed class TranslationCoordinatorTests
 
         Assert.Single(provider.GlossaryHistory);
         Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_UsesPromptingDictionaryAsGlossaryHintForLlmProviders()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "주인님";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var item = BuildItem("id-1", "ご主人さま");
+
+        await coordinator.TranslateAsync(
+            [item],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+            },
+            [
+                new UserDictionaryEntry
+                {
+                    IsEnabled = true,
+                    Source = "ご主人さま",
+                    Target = "주인님",
+                    ApplyMode = UserDictionaryApplyMode.Prompting,
+                },
+            ],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Single(provider.RequestTextsHistory);
+        Assert.Equal(["ご主人さま"], provider.RequestTextsHistory[0]);
+        Assert.Single(provider.GlossaryHistory);
+        Assert.Equal(["ご主人さま"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
+        Assert.Equal(["주인님"], provider.GlossaryHistory[0].Select(static hint => hint.Target).ToList());
+    }
+
+    [Theory]
+    [InlineData(TranslationProviderType.DeepLFree)]
+    [InlineData(TranslationProviderType.Papago)]
+    [InlineData(TranslationProviderType.EzTransXp)]
+    public async Task TranslateAsync_TreatsPromptingDictionaryAsReplacementForNonLlmProviders(TranslationProviderType providerType)
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "__PH0__";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var item = BuildItem("id-1", "勇者");
+
+        await coordinator.TranslateAsync(
+            [item],
+            new ProviderSettings
+            {
+                ProviderType = providerType,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
+            },
+            [
+                new UserDictionaryEntry
+                {
+                    IsEnabled = true,
+                    Source = "勇者",
+                    Target = "용사",
+                    ApplyMode = UserDictionaryApplyMode.Prompting,
+                },
+            ],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Single(provider.RequestTextsHistory);
+        Assert.Equal(["__PH0__"], provider.RequestTextsHistory[0]);
+        Assert.Single(provider.GlossaryHistory);
+        Assert.Empty(provider.GlossaryHistory[0]);
+        Assert.Equal("용사", item.TranslatedText);
     }
 
     private static ExtractedTextItem BuildItem(string segmentId, string originalText, string fileType = "ERB")
@@ -840,6 +1036,7 @@ public sealed class TranslationCoordinatorTests
         private readonly Queue<Func<IReadOnlyList<ProtectedSegment>, TranslationProviderResult>> _steps = new(steps);
 
         public List<IReadOnlyList<string>> RequestHistory { get; } = [];
+        public List<IReadOnlyList<string>> RequestTextsHistory { get; } = [];
         public List<IReadOnlyList<GlossaryHint>> GlossaryHistory { get; } = [];
 
         public Task<TranslationProviderResult> TranslateAsync(
@@ -849,9 +1046,34 @@ public sealed class TranslationCoordinatorTests
             IReadOnlyList<GlossaryHint>? glossaryHints = null)
         {
             RequestHistory.Add(requests.Select(request => request.Id).ToList());
+            RequestTextsHistory.Add(requests.Select(request => request.Text).ToList());
             GlossaryHistory.Add((glossaryHints ?? []).ToList());
             var step = _steps.Dequeue();
             return Task.FromResult(step(requests));
+        }
+    }
+
+    private sealed class StubDictionaryFirstTranslationService(
+        IReadOnlyDictionary<string, DictionaryFirstTranslationMatch> matches) : IDictionaryFirstTranslationService
+    {
+        public Task<DictionaryFirstTranslationMatch?> TryResolveAsync(
+            ExtractedTextItem item,
+            ProviderSettings settings,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(matches.TryGetValue(item.OriginalText, out var match)
+                ? match
+                : (DictionaryFirstTranslationMatch?)null);
+        }
+    }
+
+    private sealed class RecordingDictionaryHitLogger : IDictionaryHitLogger
+    {
+        public List<DictionaryHitLogEntry> Entries { get; } = [];
+
+        public void LogHit(DictionaryHitLogEntry entry)
+        {
+            Entries.Add(entry);
         }
     }
 

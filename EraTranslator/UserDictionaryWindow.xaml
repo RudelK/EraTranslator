@@ -37,6 +37,12 @@
                                TextWrapping="Wrap" />
 
                     <DockPanel Grid.Row="2">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Margin="0,0,0,8"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Text="{Binding ApplyModeHelpText}"
+                                   TextWrapping="Wrap" />
+
                         <StackPanel DockPanel.Dock="Top"
                                     Margin="0,0,0,8"
                                     Orientation="Horizontal">
@@ -60,12 +66,23 @@
                                 <DataGridCheckBoxColumn Width="64"
                                                         Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}"
                                                         Header="사용" />
+                                <DataGridTemplateColumn Width="120"
+                                                        Header="적용 방식">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding DataContext.ApplyModeOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      DisplayMemberPath="DisplayName"
+                                                      SelectedValue="{Binding ApplyMode, UpdateSourceTrigger=PropertyChanged}"
+                                                      SelectedValuePath="Mode" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Width="*"
                                                     Binding="{Binding Source, UpdateSourceTrigger=PropertyChanged}"
                                                     Header="원문" />
                                 <DataGridTextColumn Width="*"
                                                     Binding="{Binding Target, UpdateSourceTrigger=PropertyChanged}"
-                                                    Header="치환 번역" />
+                                                    Header="번역" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </DockPanel>
@@ -92,6 +109,12 @@
 
                     <DockPanel Grid.Row="2"
                                IsEnabled="{Binding CanEditProjectDictionary}">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Margin="0,0,0,8"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Text="{Binding ApplyModeHelpText}"
+                                   TextWrapping="Wrap" />
+
                         <StackPanel DockPanel.Dock="Top"
                                     Margin="0,0,0,8"
                                     Orientation="Horizontal">
@@ -115,12 +138,23 @@
                                 <DataGridCheckBoxColumn Width="64"
                                                         Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}"
                                                         Header="사용" />
+                                <DataGridTemplateColumn Width="120"
+                                                        Header="적용 방식">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding DataContext.ApplyModeOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      DisplayMemberPath="DisplayName"
+                                                      SelectedValue="{Binding ApplyMode, UpdateSourceTrigger=PropertyChanged}"
+                                                      SelectedValuePath="Mode" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Width="*"
                                                     Binding="{Binding Source, UpdateSourceTrigger=PropertyChanged}"
                                                     Header="원문" />
                                 <DataGridTextColumn Width="*"
                                                     Binding="{Binding Target, UpdateSourceTrigger=PropertyChanged}"
-                                                    Header="치환 번역" />
+                                                    Header="번역" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </DockPanel>

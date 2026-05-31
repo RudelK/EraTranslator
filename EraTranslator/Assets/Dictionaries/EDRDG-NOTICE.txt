@@ -1,0 +1,16 @@
+Bundled dictionary notice
+
+This application ships a compact application snapshot derived for in-app term assistance from:
+- JMdict
+- JMnedict
+- KANJIDIC2
+
+Original project pages:
+- https://www.edrdg.org/jmdict/j_jmdict.html
+- https://ftp.edrdg.org/pub/Nihongo/enamdict_doc.html
+- https://www.edrdg.org/kanjidic/kanjidic2_ov_legacy.html
+
+Licence / attribution:
+- https://www.edrdg.org/edrdg/licence.html
+
+The bundled SQLite file is a reduced application asset for short-term matching and reading fallback, not a raw source distribution.

@@ -30,6 +30,8 @@ public sealed class CsvSchemaClassifier
         "呼び名",
         "ニックネーム",
         "名前",
+        "彼氏姓",
+        "彼氏名",
     ];
 
     private static readonly HashSet<string> CharacterMetaContainers =

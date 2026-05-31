@@ -122,6 +122,7 @@ public sealed class UserDictionaryService(
                 IsEnabled = entry.IsEnabled,
                 Source = source,
                 Target = target,
+                ApplyMode = entry.ApplyMode,
             };
         }
     }

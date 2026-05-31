@@ -4,6 +4,7 @@ public enum LmStudioPresetProfile
 {
     Auto,
     Gemma4,
+    Gemma4E4B,
     Qwen35_9B,
     TranslateGemma,
     HyMt2_7B,

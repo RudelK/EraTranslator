@@ -59,7 +59,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             ThinkingControlMode: thinkingControlMode,
             MaxTokens: effectiveMaxTokens,
             FallbackUsed: responseMode is ResponseMode.JsonTextRetry or ResponseMode.JsonSchemaRetry or ResponseMode.TokenizedFallback);
-        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol, requests, thinkingControlMode, glossaryHints, promptProfile);
+        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol, requests, thinkingControlMode, glossaryHints, promptProfile, modelFamily);
         var payload = new Dictionary<string, object?>
         {
             ["model"] = model,
@@ -139,7 +139,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             MaxTokens: effectiveMaxTokens,
             FallbackUsed: responseMode == ResponseMode.JsonTextRetry,
             MaxTokensFieldName: effectiveMaxTokens.HasValue ? "max_completion_tokens" : null);
-        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol: false, requests, thinkingControlMode, glossaryHints, promptProfile);
+        var systemPrompt = BuildSystemPrompt(settings, useRetryPrompt, useTokenizedProtocol: false, requests, thinkingControlMode, glossaryHints, promptProfile, LmStudioModelFamily.Unknown);
         var payload = new Dictionary<string, object?>
         {
             ["model"] = model,
@@ -278,7 +278,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         IReadOnlyList<ProtectedSegment> requests,
         LmStudioThinkingControlMode thinkingControlMode,
         IReadOnlyList<GlossaryHint>? glossaryHints,
-        PromptProfile promptProfile)
+        PromptProfile promptProfile,
+        LmStudioModelFamily modelFamily)
     {
         var targetLanguageLabel = GetPromptLanguageLabel(settings.TargetLanguage, promptProfile);
         var rendered = TranslationPromptTemplates.Render(
@@ -289,7 +290,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider
             useRetryPrompt,
             thinkingControlMode,
             promptProfile);
-        var commonInstruction = BuildCommonTranslationInstruction(requests, targetLanguageLabel);
+        var commonInstruction = BuildCommonTranslationInstruction(requests, targetLanguageLabel, modelFamily);
         var glossaryInstruction = BuildGlossaryInstruction(glossaryHints, promptProfile);
         var formatInstruction = useTokenizedProtocol
             ? BuildTokenizedFormatInstruction(requests, targetLanguageLabel)
@@ -303,7 +304,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
 
     private static string BuildCommonTranslationInstruction(
         IReadOnlyList<ProtectedSegment> requests,
-        string targetLanguageLabel)
+        string targetLanguageLabel,
+        LmStudioModelFamily modelFamily)
     {
         var hasProtectedPlaceholders = requests.Any(request => request.Placeholders.Count > 0);
         var builder = new StringBuilder();
@@ -326,6 +328,20 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         builder.AppendLine("Do not append explanatory parentheses, glosses, or notes unless the source text already contains them.");
         builder.AppendLine("Do not include the source text, romanization, translator comments, metadata, or extra annotation inside the final translated content.");
         builder.AppendLine($"For kanji-heavy labels, glossary entries, item names, and stat names translated into {targetLanguageLabel}, prefer a Hangul reading of the Japanese term over an explanatory replacement when uncertain.");
+        if (modelFamily is LmStudioModelFamily.Gemma or LmStudioModelFamily.Gemma4E4B)
+        {
+            builder.AppendLine("Short-label accuracy rules for Gemma:");
+            builder.AppendLine("Translate single words, short noun phrases, stat labels, item names, trait names, and glossary-like fragments as concise dictionary-style terms, not as sentences.");
+            builder.AppendLine("Prefer the most specific in-game equivalent for the source term. Do not broaden, soften, summarize, or explain it.");
+            builder.AppendLine("If no reliable semantic translation is available, prefer a stable Hangul transliteration over an explanatory paraphrase.");
+            builder.AppendLine("When short labels are separated by ／, |, /, or similar delimiters, translate each label independently and preserve the separator structure.");
+            builder.AppendLine("Do not output context disclaimers such as \"depending on context\" or attach multiple candidate terms.");
+            if (modelFamily == LmStudioModelFamily.Gemma4E4B)
+            {
+                builder.AppendLine("For Gemma 4 E4B, prioritize term precision over stylistic variation when translating short glossary-like entries.");
+            }
+        }
+
         return builder.ToString().TrimEnd();
     }
 
@@ -394,6 +410,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         if (promptProfile == PromptProfile.HyMt2)
         {
             builder.AppendLine("Reference the following translations:");
+            builder.AppendLine("If a source entry exactly matches the current item, use the referenced target wording exactly.");
+            builder.AppendLine("If multiple source entries overlap, prefer the longest exact source match.");
             foreach (var hint in glossaryHints)
             {
                 builder.AppendLine($"`{hint.Source}` translates to `{hint.Target}`");
@@ -403,6 +421,8 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         {
             builder.AppendLine("Glossary hints:");
             builder.AppendLine("Prefer these pairs when they fit the current script context.");
+            builder.AppendLine("If a glossary source exactly matches the full input item, use that glossary target exactly.");
+            builder.AppendLine("If multiple glossary hints overlap, prefer the longest exact source match.");
             builder.AppendLine("Do not copy them mechanically if they would make the line unnatural.");
             foreach (var hint in glossaryHints)
             {
@@ -503,6 +523,11 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         if (settings.PromptProfile != PromptProfile.Auto)
         {
             return settings.PromptProfile;
+        }
+
+        if (model?.Contains("gemma-4-e4b", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return PromptProfile.Gemma4E4B;
         }
 
         return model?.Contains("hy-mt2", StringComparison.OrdinalIgnoreCase) == true

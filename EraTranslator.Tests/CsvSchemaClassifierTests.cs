@@ -30,6 +30,11 @@ public sealed class CsvSchemaClassifierTests
         Assert.Equal(CsvFieldRole.NonTranslatableValue, classifier.ClassifyField(CsvDocumentKind.CharacterSheet, nameFields, 0));
         Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField(CsvDocumentKind.CharacterSheet, nameFields, 1));
 
+        var boyfriendSurnameFields = CsvLineParser.ParseFields("彼氏姓,山田");
+        var boyfriendNameFields = CsvLineParser.ParseFields("彼氏名,太郎");
+        Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField(CsvDocumentKind.CharacterSheet, boyfriendSurnameFields, 1));
+        Assert.Equal(CsvFieldRole.TranslatableValue, classifier.ClassifyField(CsvDocumentKind.CharacterSheet, boyfriendNameFields, 1));
+
         var cstrFields = CsvLineParser.ParseFields("CSTR,種族,魔界人");
         var cstrMetaField = classifier.ClassifyExtractableField("CSV\\Chara3.csv", CsvDocumentKind.CharacterSheet, cstrFields, 1);
         Assert.Equal(CsvFieldRole.NonTranslatableValue, classifier.ClassifyField(CsvDocumentKind.CharacterSheet, cstrFields, 0));
