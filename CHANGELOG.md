@@ -11,6 +11,17 @@
 - 사용자 사전에 `치환`과 `프롬프팅` 적용 방식을 추가해, LLM 번역기에서는 glossary 힌트처럼 쓰고 비LLM 번역기에서는 치환처럼 처리할 수 있게 했다.
 - `CSV`/ERH/ERB glossary 재사용 흐름과 프롬프트 구성을 사전 우선 번역과 함께 정리해, 짧은 용어는 사전 우선, 문장형은 기존 자동 번역 흐름을 유지하도록 분리했다.
 - LM Studio/Lemonade/OpenAI 호환 경로의 프롬프트, 프리셋, 테스트를 사전 우선 번역 흐름에 맞게 보강했다.
+- 스캔 대상을 지원 폴더(`erb`, `csv/cvs`, `data`) 기준으로 정리하고, `ERD` 파일을 CSV-like 데이터로 추출/검색/저장 흐름에 포함했다.
+- 지원 폴더 아래 CSV/ERD 파일명 stem을 동적 namespace로 등록해 `OPTION変数`, `フレーバー素質`, `プレゼント履歴` 같은 커스텀 참조를 자동 추적한다.
+- `GETNUM(namespace, "key")`, `namespace:ARG:key`, `namespace:(expr):key` 등 직접/해결 가능한 간접 참조 rewrite를 보강하고, 해석 불가능한 동적 참조는 저장 차단 대신 경고로 낮췄다.
+- `BASE/MAXBASE`, `ITEM/ITEMPRICE/ITEMSALES`, `PALAM/JUEL`, `CDOWN/DOWNBASE` 같은 alias와 `CUP`, `NOWEX` 심볼 참조를 보강했다.
+- ERB/ERH 함수명과 변수명을 별도 identifier 항목으로 추출하고, `ERB-식별자` 번역 phase에서 공백 없는 코드 식별자로 검증한 뒤 정의/참조 위치에 일괄 rewrite하도록 추가했다.
+- `TCVAR`, `CSTR`, CSV/ERD namespace, `LOADTEXT`/`SAVETEXT`, 리소스 파일명, 팔레트 키, DIMS lookup, CSV-name `SELECTCASE` 같은 코드성 구간을 일반 번역과 identifier rewrite에서 보호하도록 보강했다.
+- 표시 라벨, inline conditional, `%... + "문자열"%`, 다중 필드 `PRINT` 출력문 등 ERB print-tail 추출을 확장하면서 placeholder와 코드 포맷을 보존하도록 개선했다.
+- `#DIMS` lookup 배열과 CSV-name `SELECTCASE`의 CASE literal을 키 참조로 추적해 번역된 CSV/DIMS 키가 코드 참조와 정확히 맞도록 보강했다.
+- 자동 번역 진행 저장을 변경 항목 incremental upsert 중심으로 바꾸고, phase 경계와 완료/취소 시점에만 full snapshot을 사용하도록 최적화했다.
+- 번역 결과의 `__PH0__` 보호 토큰 개수나 순서가 깨진 경우 저장 가능한 검수 상태가 아니라 `번역 실패`로 되돌려 재번역 대상에 남기도록 수정했다.
+- 팀 단위 번역 지원을 위한 패키지 export/import 계획을 `docs/plans/team-translation-support-plan.md`에 저장했다.
 
 ## 0.6 - 2026-05-29
 
