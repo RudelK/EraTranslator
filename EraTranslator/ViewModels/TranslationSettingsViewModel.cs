@@ -41,9 +41,9 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private bool _enableDictionaryHitLogging = false;
     private bool _excludeNonSourceText = true;
     private bool _enableBundledDictionaryFirstPass = true;
-    private bool _enableKanaTransliterationFallback = true;
+    private bool _enableKanaTransliterationFallback = false;
     private bool _enableNaverJapaneseDictionaryLookup = false;
-    private bool _enableKanjiReadingFallback = true;
+    private bool _enableKanjiReadingFallback = false;
     private int _dictionaryFirstMaxTermLength = 6;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
@@ -825,9 +825,9 @@ public sealed class TranslationSettingsViewModel : BindableBase
         DisableThinking = true;
         ExcludeNonSourceText = true;
         EnableBundledDictionaryFirstPass = true;
-        EnableKanaTransliterationFallback = true;
+        EnableKanaTransliterationFallback = false;
         EnableNaverJapaneseDictionaryLookup = false;
-        EnableKanjiReadingFallback = true;
+        EnableKanjiReadingFallback = false;
         DictionaryFirstMaxTermLength = 6;
         Seed = null;
 

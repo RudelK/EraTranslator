@@ -258,8 +258,13 @@
                 <StackPanel Grid.Column="1"
                             Orientation="Horizontal"
                             HorizontalAlignment="Right">
-                    <Button Width="92"
+                    <Button Width="104"
                             Margin="8,0,8,0"
+                            IsEnabled="{Binding CanStartActions}"
+                            Click="ApplySameOriginalCorrection_Click"
+                            Content="동일원문교정" />
+                    <Button Width="92"
+                            Margin="0,0,8,0"
                             IsEnabled="{Binding CanStartActions}"
                             Click="ApplyJosaRewrite_Click"
                             Content="조사처리" />

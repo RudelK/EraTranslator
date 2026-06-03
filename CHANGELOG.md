@@ -22,6 +22,7 @@
 - `#DIMS` lookup 배열, `SPLIT_STRING` 기반 split lookup 배열, CSV-name `SELECTCASE`, key-list 함수, 인접 `"namespace","key"` 함수 인자를 심볼 참조로 추적하도록 추가했다.
 - 색상명처럼 단독 짧은 CASE literal도 lookup 문맥이 아니면 번역 대상으로 추출하도록 보강했다.
 - `PRINT <愛液>`처럼 꺾쇠 안에 자연어가 있는 출력 토큰은 HTML 태그로 보지 않고 내부 텍스트를 추출하도록 추가했다.
+- 조사처리 옆에 `동일원문교정` 버튼을 추가해, 동일 원문 번역을 `CSV/ERD -> ERH -> ERB 식별자` 우선순위 기준으로 일괄 교정할 수 있게 했다.
 - 자동 번역 진행 저장을 변경 항목 incremental upsert 중심으로 바꾸고, phase 경계와 완료/취소 시점에만 full snapshot을 사용하도록 최적화했다.
 - 팀 단위 번역 지원을 위한 패키지 export/import 계획을 `docs/plans/team-translation-support-plan.md`에 저장했다.
 
@@ -36,6 +37,9 @@
 - 자동 번역 결과가 확정되면 수동 수정/수동 제외 항목을 제외한 동일 원문 항목에도 필터 범위 밖까지 일관되게 전파되도록 수정했다.
 - 주석, 규칙 문자열, 코드-only 표현식, `SAVETEXT`/`LOADTEXT`, 이미지 리소스 경로, `%...%` placeholder 보존 범위가 번역/저장 중 깨지지 않도록 보호 규칙을 보강했다.
 - `%...%` placeholder 보호 범위가 줄을 넘어 누수되어 저장 결과를 잘못 검증하거나 치환하는 문제를 수정했다.
+- `STR:0 = 手淫終了`처럼 colon index가 붙은 문자열 변수 대입도 ERB 텍스트로 추출되도록 수정했다.
+- `%CALLNAME:MASTER%の`처럼 보호 placeholder 뒤에 단독 조사가 붙은 출력 조각도 번역 대상으로 잡히도록 보강했다.
+- 카타카나 음독 fallback과 한자 음독 fallback의 새 설정 기본값을 `꺼짐`으로 바꿔, 사용자가 명시적으로 켰을 때만 음독 기반 자동 대체가 적용되도록 수정했다.
 
 ## 0.6 - 2026-05-29
 

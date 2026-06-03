@@ -56,11 +56,11 @@ public sealed class AppConfig
 
     public bool EnableBundledDictionaryFirstPass { get; init; } = true;
 
-    public bool EnableKanaTransliterationFallback { get; init; } = true;
+    public bool EnableKanaTransliterationFallback { get; init; } = false;
 
     public bool EnableNaverJapaneseDictionaryLookup { get; init; } = false;
 
-    public bool EnableKanjiReadingFallback { get; init; } = true;
+    public bool EnableKanjiReadingFallback { get; init; } = false;
 
     public int DictionaryFirstMaxTermLength { get; init; } = 6;
 

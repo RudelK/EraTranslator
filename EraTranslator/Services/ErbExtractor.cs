@@ -986,6 +986,7 @@ public sealed partial class ErbExtractor
     {
         var protectedRanges = CollectScriptSyntaxRanges(value);
         var spans = new List<(int relativeStart, string value)>();
+        AddStandaloneParticleAttachedToProtectedToken(value, relativeStart, protectedRanges, spans);
         var index = 0;
 
         while (index < value.Length)
@@ -1008,6 +1009,71 @@ public sealed partial class ErbExtractor
         return spans
             .Distinct()
             .ToList();
+    }
+
+    private static void AddStandaloneParticleAttachedToProtectedToken(
+        string value,
+        int relativeStart,
+        IReadOnlyList<(int start, int end)> protectedRanges,
+        ICollection<(int relativeStart, string value)> spans)
+    {
+        foreach (var range in protectedRanges)
+        {
+            if (range.end >= value.Length || !IsProtectedInlineToken(value[range.start..range.end]))
+            {
+                continue;
+            }
+
+            var cursor = range.end;
+            var particleStart = cursor;
+            while (cursor < value.Length && IsHiragana(value[cursor]))
+            {
+                cursor++;
+            }
+
+            if (cursor == particleStart)
+            {
+                continue;
+            }
+
+            var particle = value[particleStart..cursor];
+            if (!IsStandaloneJapaneseParticle(particle)
+                || value[range.start..cursor].Any(static ch => ch is '\r' or '\n')
+                || HasTextSpanAfterStandaloneParticle(value, cursor, protectedRanges))
+            {
+                continue;
+            }
+
+            spans.Add((relativeStart + range.start, value[range.start..cursor]));
+        }
+    }
+
+    private static bool IsProtectedInlineToken(string value)
+    {
+        return value.Length >= 2
+            && ((value[0] == '%' && value[^1] == '%')
+                || (value[0] == '{' && value[^1] == '}'));
+    }
+
+    private static bool HasTextSpanAfterStandaloneParticle(
+        string value,
+        int start,
+        IReadOnlyList<(int start, int end)> protectedRanges)
+    {
+        for (var index = start; index < value.Length; index++)
+        {
+            if (IsInsideRange(index, protectedRanges))
+            {
+                continue;
+            }
+
+            if (IsTextSpanCharacter(value[index]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void AddMeaningfulSpan(
@@ -2062,7 +2128,7 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"<[/!\p{L}A-Za-z][^>]*>", RegexOptions.Compiled)]
     private static partial Regex HtmlTagPattern();
 
-    [GeneratedRegex(@"^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*)\s*=\s*(?<tail>.+?)\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*(?::(?:\{[^{}\r\n]+\}|[^\s=+\-*/<>!&|,()""']+))*)\s*=\s*(?<tail>.+?)\s*$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex AssignmentPattern();
 
     [GeneratedRegex(@"[(){}\[\]=<>!&|+\-*/%:,\\@#?]", RegexOptions.Compiled)]

@@ -894,6 +894,51 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public void ApplySameOriginalCorrection_UsesCsvThenErhThenIdentifierPriorityAcrossAllItems()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithSameOriginalPrioritySources(gameDirectory), gameDirectory);
+        var recordingStore = new RecordingSqliteProjectStateStore();
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            sqliteProjectStateStore: recordingStore,
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        var csv = viewModel.Items.Single(item => item.SegmentId == "CSV/Talent.csv:0");
+        var erh = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERH:0");
+        var identifier = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:identifier:0");
+        var erbText = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:0");
+        var excluded = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:1");
+        csv.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기개");
+        erh.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골");
+        identifier.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골식별자");
+        erbText.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골본문");
+        excluded.ApplyManualStatusOverride("제외됨");
+        recordingStore.ResetCounts();
+
+        viewModel.ApplySameOriginalCorrection();
+
+        Assert.Equal("기개", csv.TranslatedText);
+        Assert.Equal("기개", erh.TranslatedText);
+        Assert.Equal("기개", identifier.TranslatedText);
+        Assert.Equal("기개", erbText.TranslatedText);
+        Assert.Equal(string.Empty, excluded.TranslatedText);
+        Assert.Equal("제외됨", excluded.Status);
+        Assert.Equal(0, recordingStore.SnapshotSaveCount);
+        Assert.Equal(1, recordingStore.UpsertItemsCallCount);
+        Assert.Equal(3, recordingStore.UpsertBatchSizes.Single());
+    }
+
+    [Fact]
     public void ApplyJosaRewriteToCurrentScope_UpdatesFilteredItemsAndUsesSnapshotSave()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");
@@ -1950,6 +1995,135 @@ public sealed class MainWindowViewModelTests : IDisposable
         session.Metrics["Warnings"] = 0;
         session.Metrics["JosaPatterns"] = 0;
         return session;
+    }
+
+    private static ScanSession BuildSessionWithSameOriginalPrioritySources(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+
+        AddItem(
+            documentId: "CSV/Talent.csv",
+            relativePath: Path.Combine("CSV", "Talent.csv"),
+            fileType: DocumentFileTypes.Csv,
+            segmentId: "CSV/Talent.csv:0",
+            segmentType: "csv-idfirst-field-1",
+            originalText: "気骨",
+            csvKind: CsvDocumentKind.IdFirstTable,
+            sourceKey: "100",
+            symbolNamespace: "TALENT",
+            originalSymbolKey: "気骨",
+            isReferenceBearingKey: true);
+        AddItem(
+            documentId: "ERB/Test.ERH",
+            relativePath: Path.Combine("ERB", "Test.ERH"),
+            fileType: DocumentFileTypes.Erh,
+            segmentId: "ERB/Test.ERH:0",
+            segmentType: "directive-string",
+            originalText: "気骨");
+        AddItem(
+            documentId: "ERB/Test.ERB",
+            relativePath: Path.Combine("ERB", "Test.ERB"),
+            fileType: DocumentFileTypes.Erb,
+            segmentId: "ERB/Test.ERB:identifier:0",
+            segmentType: IdentifierSegmentTypes.Variable,
+            originalText: "気骨",
+            sourceKey: "identifier:variable:気骨");
+        AddItem(
+            documentId: "ERB/Test.ERB",
+            relativePath: Path.Combine("ERB", "Test.ERB"),
+            fileType: DocumentFileTypes.Erb,
+            segmentId: "ERB/Test.ERB:0",
+            segmentType: "print-tail",
+            originalText: "気骨");
+        AddItem(
+            documentId: "ERB/Test.ERB",
+            relativePath: Path.Combine("ERB", "Test.ERB"),
+            fileType: DocumentFileTypes.Erb,
+            segmentId: "ERB/Test.ERB:1",
+            segmentType: "quoted-string",
+            originalText: "気骨");
+
+        session.Metrics["Documents"] = session.Documents.Count;
+        session.Metrics["Items"] = session.Items.Count;
+        session.Metrics["ErbItems"] = 4;
+        session.Metrics["CsvItems"] = 1;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+
+        void AddItem(
+            string documentId,
+            string relativePath,
+            string fileType,
+            string segmentId,
+            string segmentType,
+            string originalText,
+            CsvDocumentKind csvKind = CsvDocumentKind.None,
+            string? sourceKey = null,
+            string symbolNamespace = "",
+            string originalSymbolKey = "",
+            bool isReferenceBearingKey = false)
+        {
+            if (!session.Documents.TryGetValue(documentId, out var document))
+            {
+                document = new SourceFileDocument
+                {
+                    DocumentId = documentId,
+                    FullPath = Path.Combine(gameDirectory, relativePath),
+                    RelativePath = relativePath,
+                    FileType = fileType,
+                    OriginalText = originalText,
+                    EncodingInfo = new DetectedEncodingInfo
+                    {
+                        Encoding = new UTF8Encoding(true),
+                        Name = "UTF-8 BOM",
+                        Kind = DetectedEncodingKind.Utf8Bom,
+                        HasBom = true,
+                    },
+                    NewLineSequence = "\n",
+                    CsvKind = csvKind,
+                };
+                session.Documents[documentId] = document;
+            }
+
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = segmentId,
+                DocumentId = documentId,
+                SegmentType = segmentType,
+                AbsoluteStart = 0,
+                Length = originalText.Length,
+                LineNumber = document.Segments.Count + 1,
+                OriginalText = originalText,
+                FieldIndex = DocumentFileTypes.IsCsvLike(fileType) ? 1 : null,
+                SourceKey = sourceKey,
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+                SymbolNamespace = symbolNamespace,
+                OriginalSymbolKey = originalSymbolKey,
+                IsReferenceBearingKey = isReferenceBearingKey,
+            });
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = segmentId,
+                DocumentId = documentId,
+                FileType = fileType,
+                RelativePath = relativePath,
+                EncodingName = "UTF-8 BOM",
+                SegmentType = segmentType,
+                LineNumber = document.Segments.Count,
+                OriginalText = originalText,
+                SourceKey = sourceKey,
+                FieldIndex = DocumentFileTypes.IsCsvLike(fileType) ? 1 : null,
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+                WarningText = string.Empty,
+                SymbolNamespace = symbolNamespace,
+                OriginalSymbolKey = originalSymbolKey,
+                IsReferenceBearingKey = isReferenceBearingKey,
+            });
+        }
     }
 
     private static ScanSession BuildCsvNamespacePrioritySession(string gameDirectory)

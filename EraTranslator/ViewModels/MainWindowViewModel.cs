@@ -74,9 +74,9 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _enableDictionaryHitLogging = false;
     private bool _excludeNonSourceText = true;
     private bool _enableBundledDictionaryFirstPass = true;
-    private bool _enableKanaTransliterationFallback = true;
+    private bool _enableKanaTransliterationFallback = false;
     private bool _enableNaverJapaneseDictionaryLookup = false;
-    private bool _enableKanjiReadingFallback = true;
+    private bool _enableKanjiReadingFallback = false;
     private int _dictionaryFirstMaxTermLength = 6;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
@@ -1520,10 +1520,134 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             .Replace('\r', '\n');
     }
 
+    private static bool IsSameOriginalCorrectionSource(ExtractedTextItem item)
+    {
+        return item.IsTranslatedSuccessfully
+            && !item.IsExcluded
+            && !string.IsNullOrWhiteSpace(item.TranslatedText);
+    }
+
+    private static int GetSameOriginalCorrectionSourcePriority(ExtractedTextItem item)
+    {
+        if (DocumentFileTypes.IsCsvLike(item.FileType))
+        {
+            return 0;
+        }
+
+        if (string.Equals(item.FileType, DocumentFileTypes.Erh, StringComparison.OrdinalIgnoreCase)
+            && !IdentifierSegmentTypes.IsIdentifier(item.SegmentType))
+        {
+            return 1;
+        }
+
+        if (IdentifierSegmentTypes.IsIdentifier(item.SegmentType))
+        {
+            return 2;
+        }
+
+        return int.MaxValue;
+    }
+
+    private static int GetSameOriginalCorrectionStatusPriority(ExtractedTextItem item)
+    {
+        return item.Status switch
+        {
+            "수동 수정" => 0,
+            "번역 완료" => 1,
+            "검수 필요" => 2,
+            _ => 3,
+        };
+    }
+
     public void RefreshItemsView()
     {
         RebuildVisibleItemSnapshot();
         ItemsView.Refresh();
+    }
+
+    public void ApplySameOriginalCorrection()
+    {
+        if (_session is null)
+        {
+            StatusText = "먼저 텍스트를 추출하세요.";
+            return;
+        }
+
+        var groups = Items
+            .Where(item => !string.IsNullOrWhiteSpace(item.OriginalText))
+            .GroupBy(item => NormalizeOriginalTextForPropagation(item.OriginalText), StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .ToList();
+        if (groups.Count == 0)
+        {
+            StatusText = "동일 원문을 가진 항목을 찾지 못했습니다.";
+            CurrentOperationDetail = "동일원문교정 대상 0개";
+            return;
+        }
+
+        var changedItems = new List<ExtractedTextItem>();
+        var correctedGroupCount = 0;
+        _suppressItemStatePersistence = true;
+        try
+        {
+            foreach (var group in groups)
+            {
+                var candidates = group
+                    .Where(IsSameOriginalCorrectionSource)
+                    .Select(item => new
+                    {
+                        Item = item,
+                        SourcePriority = GetSameOriginalCorrectionSourcePriority(item),
+                        StatusPriority = GetSameOriginalCorrectionStatusPriority(item),
+                    })
+                    .Where(candidate => candidate.SourcePriority < int.MaxValue)
+                    .OrderBy(candidate => candidate.SourcePriority)
+                    .ThenBy(candidate => candidate.StatusPriority)
+                    .ThenBy(candidate => candidate.Item.RelativePath, StringComparer.Ordinal)
+                    .ThenBy(candidate => candidate.Item.LineNumber)
+                    .ThenBy(candidate => candidate.Item.SegmentId, StringComparer.Ordinal)
+                    .ToList();
+                if (candidates.Count == 0)
+                {
+                    continue;
+                }
+
+                var canonicalText = candidates[0].Item.TranslatedText;
+                var groupUpdatedCount = 0;
+                foreach (var item in group.Where(static item => !item.IsExcluded))
+                {
+                    if (string.Equals(item.TranslatedText, canonicalText, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    item.TranslatedText = canonicalText;
+                    item.ApplyManualTranslationEdit();
+                    changedItems.Add(item);
+                    groupUpdatedCount++;
+                }
+
+                if (groupUpdatedCount > 0)
+                {
+                    correctedGroupCount++;
+                }
+            }
+        }
+        finally
+        {
+            _suppressItemStatePersistence = false;
+        }
+
+        if (changedItems.Count > 0)
+        {
+            SaveTranslationProgressItems(changedItems, "ApplySameOriginalCorrection");
+        }
+
+        RefreshItemsView();
+        StatusText = changedItems.Count == 0
+            ? "동일 원문 항목 중 교정할 번역문 차이를 찾지 못했습니다."
+            : $"{changedItems.Count}개 번역문을 동일원문 기준값으로 교정했습니다.";
+        CurrentOperationDetail = $"동일원문교정 그룹 {correctedGroupCount}개 / 변경 {changedItems.Count}개";
     }
 
     public void ApplyJosaRewriteToCurrentScope()

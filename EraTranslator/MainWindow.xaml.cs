@@ -138,6 +138,12 @@ public partial class MainWindow : Window
         _viewModel.RefreshItemsView();
     }
 
+    private void ApplySameOriginalCorrection_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        _viewModel.ApplySameOriginalCorrection();
+    }
+
     private void ApplyJosaRewrite_Click(object sender, RoutedEventArgs e)
     {
         CommitPendingTranslationEdits();

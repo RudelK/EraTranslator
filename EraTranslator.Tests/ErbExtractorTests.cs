@@ -74,6 +74,34 @@ PRINTFORMW drinkName
     }
 
     [Fact]
+    public void Extract_FindsBareJapaneseAssignmentValuesForColonIndexedVariables()
+    {
+        const string source = """
+IF TEQUIP:40 ==80
+    PRINTL 자위 종료
+    STR:0 = 手淫終了
+ELSEIF TEQUIP:40 ==83
+    PRINTL 스마타 종료
+    STR:0 = 素股終了
+ELSEIF TEQUIP:40 ==85
+    PRINTL 발가락질 종료
+    STR:0 = 足扱き終了
+ENDIF
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.Contains("手淫終了", values);
+        Assert.Contains("素股終了", values);
+        Assert.Contains("足扱き終了", values);
+        Assert.DoesNotContain("자위 종료", values);
+        Assert.DoesNotContain("스마타 종료", values);
+        Assert.DoesNotContain("발가락질 종료", values);
+    }
+
+    [Fact]
     public void Extract_FindsTopLevelAssignmentFragmentsWithoutCapturingWholeExpressions()
     {
         const string source = """
@@ -136,6 +164,7 @@ labelF = ABC_ONLY
         const string source = """
 PRINTFORMW %CALLNAME:TARGET%の高校生
 PRINTFORMW 高校生%CALLNAME:TARGET%
+PRINTFORMW %CALLNAME:MASTER%の
 PRINTFORMW "%CALLNAME:MASTER%魔力回復"
 PRINTFORMW 普通の文章です
 """;
@@ -145,11 +174,13 @@ PRINTFORMW 普通の文章です
         var values = segments.Select(segment => segment.OriginalText).ToArray();
 
         Assert.Contains("高校生", values);
+        Assert.Contains("%CALLNAME:MASTER%の", values);
         Assert.Contains("魔力回復", values);
         Assert.Contains("普通の文章です", values);
         Assert.DoesNotContain("%CALLNAME:TARGET%の高校生", values);
         Assert.DoesNotContain("の", values);
         Assert.Contains(segments, segment => segment.OriginalText == "高校生" && segment.SegmentType == "print-tail-fragment");
+        Assert.Contains(segments, segment => segment.OriginalText == "%CALLNAME:MASTER%の" && segment.SegmentType == "print-tail-fragment");
         Assert.Contains(segments, segment => segment.OriginalText == "魔力回復" && segment.SegmentType == "quoted-string-fragment");
         Assert.Contains(segments, segment => segment.OriginalText == "普通の文章です" && segment.SegmentType == "print-tail");
     }
