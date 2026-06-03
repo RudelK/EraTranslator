@@ -221,6 +221,27 @@ RETURNF CALC_CHARA_RANGED_DATA("ABL",targetChara,"戦闘能力","1,0|3,2")
     }
 
     [Fact]
+    public void Extract_FindsCsvKeyReferencesInAdjacentNamespaceAndKeyArguments()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+CALL DISPLAY_FALLEN_PARTS(charaIndex,"EXP","絶頂経験",50)
+CALL DISPLAY_FALLEN_PARTS(charaIndex,"ABL","欲望",4)
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "EXP"
+            && reference.OriginalKey == "絶頂経験");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "ABL"
+            && reference.OriginalKey == "欲望");
+    }
+
+    [Fact]
     public void Extract_FindsDimsLookupWrapperReferences()
     {
         const string definitions = """

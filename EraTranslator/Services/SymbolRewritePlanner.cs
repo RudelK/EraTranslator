@@ -160,7 +160,7 @@ public sealed class SymbolRewritePlanner
                     .ThenBy(item => item.LineNumber)
                     .ThenBy(item => item.SegmentId, StringComparer.Ordinal)
                     .ToList();
-                var preferred = ordered[0];
+                var preferred = ChoosePreferredRenameItem(ordered);
                 var requestedKeysBySegmentId = ordered.ToDictionary(
                     item => item.SegmentId,
                     item => item.TranslatedSymbolKey,
@@ -195,6 +195,50 @@ public sealed class SymbolRewritePlanner
             })
             .Where(entry => !string.Equals(entry.OriginalKey, entry.NewKey, StringComparison.Ordinal))
             .ToList();
+    }
+
+    private static ExtractedTextItem ChoosePreferredRenameItem(IReadOnlyList<ExtractedTextItem> ordered)
+    {
+        return ordered
+            .OrderBy(GetRenameSourcePriority)
+            .ThenBy(item => CountCollisionSuffixes(item.TranslatedSymbolKey))
+            .ThenBy(item => item.TranslatedSymbolKey.Length)
+            .ThenBy(item => item.RelativePath, StringComparer.Ordinal)
+            .ThenBy(item => item.LineNumber)
+            .ThenBy(item => item.SegmentId, StringComparer.Ordinal)
+            .First();
+    }
+
+    private static int GetRenameSourcePriority(ExtractedTextItem item)
+    {
+        if (DocumentFileTypes.IsCsvLike(item.FileType) && IsPrimaryCsvNamespaceSource(item))
+        {
+            return 0;
+        }
+
+        if (DocumentFileTypes.IsCsvLike(item.FileType) && !IsUnderscoreCsvFile(item.RelativePath))
+        {
+            return 1;
+        }
+
+        return 2;
+    }
+
+    private static bool IsPrimaryCsvNamespaceSource(ExtractedTextItem item)
+    {
+        if (IsUnderscoreCsvFile(item.RelativePath))
+        {
+            return false;
+        }
+
+        var fileNamespace = SymbolNamespaceRegistry.Default.ResolveFileNamespace(item.RelativePath);
+        return !string.IsNullOrWhiteSpace(fileNamespace)
+            && string.Equals(fileNamespace, item.SymbolNamespace, StringComparison.Ordinal);
+    }
+
+    private static bool IsUnderscoreCsvFile(string relativePath)
+    {
+        return Path.GetFileName(relativePath).StartsWith('_');
     }
 
     private static void ResolveCollisions(List<SymbolRenameEntry> entries)

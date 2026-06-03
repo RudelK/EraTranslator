@@ -520,12 +520,21 @@ public sealed class TranslationCoordinator : IDisposable
                 continue;
             }
 
-            var existing = group.FirstOrDefault(item => item.IsTranslatedSuccessfully);
-            if (existing is null || string.IsNullOrWhiteSpace(existing.TranslatedText))
+            var existingTranslations = group
+                .Where(item => item.IsTranslatedSuccessfully
+                    && ShouldPropagateResolvedTranslation(item)
+                    && !string.IsNullOrWhiteSpace(item.TranslatedText))
+                .Select(item => item.TranslatedText)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (existingTranslations.Count != 1)
             {
                 continue;
             }
 
+            var existing = group.First(item => item.IsTranslatedSuccessfully
+                && ShouldPropagateResolvedTranslation(item)
+                && string.Equals(item.TranslatedText, existingTranslations[0], StringComparison.Ordinal));
             foreach (var item in group.Where(item => item.NeedsTranslation))
             {
                 item.ApplyTranslationState(
@@ -595,7 +604,9 @@ public sealed class TranslationCoordinator : IDisposable
             return affectedItems;
         }
 
-        foreach (var item in propagationGroup.Where(item => !activeSegmentIds.Contains(item.SegmentId) && item.NeedsTranslation))
+        foreach (var item in propagationGroup.Where(item =>
+                     !activeSegmentIds.Contains(item.SegmentId)
+                     && ShouldPropagateResolvedTranslation(item)))
         {
             var normalizedTranslation = NormalizeTranslationForItem(item, translatedText);
             var hardFailureReason = GetHardFailureReasonForItem(
@@ -632,6 +643,13 @@ public sealed class TranslationCoordinator : IDisposable
         }
 
         return affectedItems;
+    }
+
+    private static bool ShouldPropagateResolvedTranslation(ExtractedTextItem item)
+    {
+        return !string.Equals(item.Status, "수동 수정", StringComparison.Ordinal)
+            && !(string.Equals(item.Status, "제외됨", StringComparison.Ordinal)
+                && string.Equals(item.ValidationStatus, "수동 제외", StringComparison.Ordinal));
     }
 
     private static string NormalizeTranslationForItem(ExtractedTextItem item, string translatedText)

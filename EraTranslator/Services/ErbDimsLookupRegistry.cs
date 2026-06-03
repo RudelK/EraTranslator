@@ -6,18 +6,22 @@ public sealed partial class ErbDimsLookupRegistry
 {
     private readonly Dictionary<string, Dictionary<int, string>> _functionArgumentNamespaces;
     private readonly HashSet<string> _lookupArrays;
+    private readonly Dictionary<string, ErbSplitLookupArrayInfo> _splitLookupArrays;
 
     private ErbDimsLookupRegistry(
         HashSet<string> lookupArrays,
-        Dictionary<string, Dictionary<int, string>> functionArgumentNamespaces)
+        Dictionary<string, Dictionary<int, string>> functionArgumentNamespaces,
+        Dictionary<string, ErbSplitLookupArrayInfo> splitLookupArrays)
     {
         _lookupArrays = lookupArrays;
         _functionArgumentNamespaces = functionArgumentNamespaces;
+        _splitLookupArrays = splitLookupArrays;
     }
 
     public static ErbDimsLookupRegistry Empty { get; } = new(
         new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-        new Dictionary<string, Dictionary<int, string>>(StringComparer.OrdinalIgnoreCase));
+        new Dictionary<string, Dictionary<int, string>>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, ErbSplitLookupArrayInfo>(StringComparer.OrdinalIgnoreCase));
 
     public static ErbDimsLookupRegistry BuildFromDocuments(IEnumerable<string> contents)
     {
@@ -74,6 +78,8 @@ public sealed partial class ErbDimsLookupRegistry
             AddDirectLookupArrayUsages(content, declaredArrays, lookupArrays);
         }
 
+        var splitLookupArrays = BuildSplitLookupArrays(contentList, declaredArrays);
+
         for (var iteration = 0; iteration < 8; iteration++)
         {
             var changed = false;
@@ -125,7 +131,7 @@ public sealed partial class ErbDimsLookupRegistry
             }
         }
 
-        return new ErbDimsLookupRegistry(lookupArrays, argumentNamespaces);
+        return new ErbDimsLookupRegistry(lookupArrays, argumentNamespaces, splitLookupArrays);
     }
 
     private static IEnumerable<string> ParseDimArrayNames(string content)
@@ -195,6 +201,11 @@ public sealed partial class ErbDimsLookupRegistry
     public bool IsLookupArray(string arrayName)
     {
         return _lookupArrays.Contains(arrayName);
+    }
+
+    public bool TryGetSplitLookupArray(string arrayName, out ErbSplitLookupArrayInfo splitLookupArray)
+    {
+        return _splitLookupArrays.TryGetValue(arrayName, out splitLookupArray!);
     }
 
     public bool TryGetLookupNamespace(string functionName, int argumentIndex, out string symbolNamespace)
@@ -284,6 +295,133 @@ public sealed partial class ErbDimsLookupRegistry
         }
 
         return functions;
+    }
+
+    private static Dictionary<string, ErbSplitLookupArrayInfo> BuildSplitLookupArrays(
+        IEnumerable<string> contents,
+        HashSet<string> declaredArrays)
+    {
+        var builders = new Dictionary<string, SplitLookupBuilder>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var content in contents)
+        {
+            var splitTargets = new Dictionary<string, SplitTargetInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rawLine in content.Split('\n'))
+            {
+                var line = rawLine.TrimEnd('\r');
+                var trimmed = line.TrimStart();
+                if (trimmed.StartsWith(';'))
+                {
+                    continue;
+                }
+
+                foreach (var call in EnumerateFunctionCalls(line))
+                {
+                    if (TryReadSplitStringCall(call, declaredArrays, out var splitTarget))
+                    {
+                        splitTargets[splitTarget.TargetArrayName] = splitTarget;
+                        if (!builders.ContainsKey(splitTarget.SourceArrayName))
+                        {
+                            builders[splitTarget.SourceArrayName] = new SplitLookupBuilder(splitTarget.SourceArrayName, splitTarget.Delimiter);
+                        }
+                    }
+                }
+
+                foreach (var call in EnumerateFunctionCalls(line))
+                {
+                    if (string.Equals(call.Name, "GETNUM", StringComparison.OrdinalIgnoreCase)
+                        && call.Arguments.Count >= 2
+                        && TryReadIdentifier(call.Arguments[0].Text, out var namespaceName)
+                        && TryReadSplitArrayField(call.Arguments[1].Text, out var targetArrayName, out var fieldIndex)
+                        && splitTargets.TryGetValue(targetArrayName, out var splitTarget)
+                        && builders.TryGetValue(splitTarget.SourceArrayName, out var builder))
+                    {
+                        builder.FieldNamespaces[fieldIndex] = SymbolNamespaceRegistry.CanonicalizeNamespace(namespaceName);
+                    }
+
+                    if (string.Equals(call.Name, "TOINT", StringComparison.OrdinalIgnoreCase)
+                        && call.Arguments.Count >= 1
+                        && TryReadSplitArrayField(call.Arguments[0].Text, out targetArrayName, out fieldIndex)
+                        && splitTargets.TryGetValue(targetArrayName, out splitTarget)
+                        && builders.TryGetValue(splitTarget.SourceArrayName, out builder))
+                    {
+                        builder.ProtectedFieldIndices.Add(fieldIndex);
+                    }
+                }
+            }
+        }
+
+        return builders.Values
+            .Where(builder => builder.FieldNamespaces.Count > 0)
+            .ToDictionary(
+                builder => builder.ArrayName,
+                builder => new ErbSplitLookupArrayInfo(
+                    builder.ArrayName,
+                    builder.Delimiter,
+                    new Dictionary<int, string>(builder.FieldNamespaces),
+                    new HashSet<int>(builder.ProtectedFieldIndices)),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadSplitStringCall(
+        FunctionCallInfo call,
+        HashSet<string> declaredArrays,
+        out SplitTargetInfo splitTarget)
+    {
+        splitTarget = default;
+        if (!string.Equals(call.Name, "SPLIT_STRING", StringComparison.OrdinalIgnoreCase)
+            || call.Arguments.Count < 3
+            || !TryReadArrayElement(call.Arguments[0].Text, out var sourceArrayName)
+            || !declaredArrays.Contains(sourceArrayName)
+            || !TryReadQuotedLiteral(call.Arguments[1].Text, out var delimiter)
+            || !TryReadIdentifier(call.Arguments[2].Text, out var targetArrayName)
+            || string.IsNullOrEmpty(delimiter))
+        {
+            return false;
+        }
+
+        splitTarget = new SplitTargetInfo(sourceArrayName, targetArrayName, delimiter);
+        return true;
+    }
+
+    private static bool TryReadArrayElement(string text, out string arrayName)
+    {
+        arrayName = string.Empty;
+        var match = ArrayElementPattern().Match(text.Trim());
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        arrayName = match.Groups["array"].Value;
+        return true;
+    }
+
+    private static bool TryReadSplitArrayField(string text, out string targetArrayName, out int fieldIndex)
+    {
+        targetArrayName = string.Empty;
+        fieldIndex = -1;
+        var match = SplitArrayFieldPattern().Match(text.Trim());
+        if (!match.Success || !int.TryParse(match.Groups["index"].Value, out fieldIndex))
+        {
+            return false;
+        }
+
+        targetArrayName = match.Groups["array"].Value;
+        return true;
+    }
+
+    private static bool TryReadQuotedLiteral(string text, out string literal)
+    {
+        literal = string.Empty;
+        var match = QuotedLiteralPattern().Match(text.Trim());
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        literal = match.Groups["value"].Value;
+        return true;
     }
 
     private static List<string> ParseFunctionParameters(string tail)
@@ -521,11 +659,29 @@ public sealed partial class ErbDimsLookupRegistry
 
     private readonly record struct FunctionArgumentInfo(string Text, int AbsoluteStart);
 
+    private readonly record struct SplitTargetInfo(string SourceArrayName, string TargetArrayName, string Delimiter);
+
+    private sealed record SplitLookupBuilder(string ArrayName, string Delimiter)
+    {
+        public Dictionary<int, string> FieldNamespaces { get; } = [];
+
+        public HashSet<int> ProtectedFieldIndices { get; } = [];
+    }
+
     [GeneratedRegex(@"^@\s*(?<name>[\p{L}_][\p{L}\p{N}_]*)(?<tail>.*)$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex FunctionDefinitionPattern();
 
     [GeneratedRegex(@"^[\p{L}_][\p{L}\p{N}_]*$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex IdentifierPattern();
+
+    [GeneratedRegex(@"^@?""(?<value>(?:[^""]|"""")*)""$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex QuotedLiteralPattern();
+
+    [GeneratedRegex(@"^(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex ArrayElementPattern();
+
+    [GeneratedRegex(@"^(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:\s*(?<index>\d+)$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex SplitArrayFieldPattern();
 
     [GeneratedRegex(@"^\s*#DIMS?\s+(?:(?:CONST|SAVEDATA|DYNAMIC|GLOBAL|REF|CHARADATA)\s+|,\s*)*(?<name>[\p{L}_][\p{L}\p{N}_]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DimArrayNamePattern();
@@ -536,3 +692,9 @@ public sealed partial class ErbDimsLookupRegistry
     [GeneratedRegex(@"(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:[^""'\r\n=<>!]+\s*(?:==|!=|<>)\s*@?""(?<value>(?:[^""]|"""")*)""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DimsArrayComparisonPattern();
 }
+
+public sealed record ErbSplitLookupArrayInfo(
+    string ArrayName,
+    string Delimiter,
+    IReadOnlyDictionary<int, string> FieldNamespaces,
+    IReadOnlySet<int> ProtectedFieldIndices);

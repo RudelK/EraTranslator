@@ -142,6 +142,19 @@ public sealed partial class ErbReferenceExtractor
             var trimmed = normalizedLine.TrimStart();
             if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
             {
+                if (trimmed.StartsWith('#')
+                    && TryReadDimArrayName(normalizedLine, out var dimArrayName)
+                    && _dimsLookupRegistry.TryGetSplitLookupArray(dimArrayName, out var splitLookupArray))
+                {
+                    AddSplitLookupDirectiveReferences(
+                        documentId,
+                        normalizedLine,
+                        absoluteOffset,
+                        lineIndex + 1,
+                        splitLookupArray,
+                        results);
+                }
+
                 absoluteOffset += line.Length + 1;
                 continue;
             }
@@ -192,6 +205,7 @@ public sealed partial class ErbReferenceExtractor
 
             AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, resolvedVariables, results);
             AddKeyListFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+            AddNamespaceKeyArgumentReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
             AddDimsLookupFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
             AddDimsArrayComparisonReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
 
@@ -329,6 +343,37 @@ public sealed partial class ErbReferenceExtractor
         }
     }
 
+    private void AddNamespaceKeyArgumentReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (var call in EnumerateFunctionCalls(line))
+        {
+            for (var argumentIndex = 0; argumentIndex < call.Arguments.Count - 1; argumentIndex++)
+            {
+                if (!TryReadQuotedArgument(call.Arguments[argumentIndex], out var namespaceName, out _)
+                    || !_namespaceRegistry.TryResolveNamespace(namespaceName, out var resolvedNamespace)
+                    || !TryReadQuotedArgument(call.Arguments[argumentIndex + 1], out var literal, out var literalStart)
+                    || !ShouldTreatAsSymbolKey(literal))
+                {
+                    continue;
+                }
+
+                AddDirectReference(
+                    documentId,
+                    resolvedNamespace,
+                    literal,
+                    absoluteOffset + literalStart,
+                    literal.Length,
+                    lineNumber,
+                    results);
+            }
+        }
+    }
+
     private bool TryGetDirectDimsLookupNamespace(FunctionCallInfo call, out string symbolNamespace)
     {
         symbolNamespace = string.Empty;
@@ -394,7 +439,39 @@ public sealed partial class ErbReferenceExtractor
                 absoluteOffset + match.Groups["value"].Index,
                 literal.Length,
                 lineNumber,
-                results);
+            results);
+        }
+    }
+
+    private static void AddSplitLookupDirectiveReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        ErbSplitLookupArrayInfo splitLookupArray,
+        List<ErbSymbolReference> results)
+    {
+        foreach (Match match in QuotedLiteralInLinePattern().Matches(line))
+        {
+            var value = match.Groups["value"].Value;
+            var valueStart = match.Groups["value"].Index;
+            foreach (var field in EnumerateSplitFields(value, valueStart, splitLookupArray.Delimiter))
+            {
+                if (!splitLookupArray.FieldNamespaces.TryGetValue(field.Index, out var symbolNamespace)
+                    || !ShouldTreatAsSymbolKey(field.Value))
+                {
+                    continue;
+                }
+
+                AddDirectReference(
+                    documentId,
+                    symbolNamespace,
+                    field.Value,
+                    absoluteOffset + field.RelativeStart,
+                    field.Value.Length,
+                    lineNumber,
+                    results);
+            }
         }
     }
 
@@ -1197,6 +1274,34 @@ Done:
         yield return new FunctionArgumentInfo(text[start..], absoluteStart + start);
     }
 
+    private static IEnumerable<SplitFieldInfo> EnumerateSplitFields(string value, int relativeStart, string delimiter)
+    {
+        if (string.IsNullOrEmpty(delimiter))
+        {
+            yield break;
+        }
+
+        var fieldIndex = 0;
+        var start = 0;
+        while (start <= value.Length)
+        {
+            var delimiterIndex = value.IndexOf(delimiter, start, StringComparison.Ordinal);
+            var end = delimiterIndex < 0 ? value.Length : delimiterIndex;
+            yield return new SplitFieldInfo(
+                fieldIndex,
+                value[start..end],
+                relativeStart + start);
+
+            fieldIndex++;
+            if (delimiterIndex < 0)
+            {
+                break;
+            }
+
+            start = delimiterIndex + delimiter.Length;
+        }
+    }
+
     private static bool TryGetNamespaceFromFirstArgumentFunction(
         FunctionCallInfo call,
         out string namespaceName,
@@ -1605,6 +1710,19 @@ Done:
         return _namespaceRegistry.TryResolveNamespace(match.Groups["namespace"].Value, out symbolNamespace);
     }
 
+    private static bool TryReadDimArrayName(string line, out string arrayName)
+    {
+        arrayName = string.Empty;
+        var match = DimArrayNamePattern().Match(line);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        arrayName = match.Groups["name"].Value;
+        return true;
+    }
+
     private static bool IsSelectCaseLine(string line)
     {
         var trimmed = line.TrimStart();
@@ -1672,6 +1790,9 @@ Done:
     [GeneratedRegex("""^[A-Za-z_][A-Za-z0-9_]*$""", RegexOptions.Compiled)]
     private static partial Regex IndexVariablePattern();
 
+    [GeneratedRegex(@"^\s*#DIMS?\s+(?:(?:CONST|SAVEDATA|DYNAMIC|GLOBAL|REF|CHARADATA)\s+|,\s*)*(?<name>[\p{L}_][\p{L}\p{N}_]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DimArrayNamePattern();
+
     [GeneratedRegex("""^\s*SELECTCASE\s+(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SelectCaseDimsArrayPattern();
 
@@ -1700,6 +1821,8 @@ Done:
     private readonly record struct FunctionArgumentInfo(string Text, int AbsoluteStart);
 
     private readonly record struct KeyOccurrence(string Value, int AbsoluteStart);
+
+    private readonly record struct SplitFieldInfo(int Index, string Value, int RelativeStart);
 
     private readonly record struct ExpressionResolutionResult(
         IReadOnlyCollection<string> Values,

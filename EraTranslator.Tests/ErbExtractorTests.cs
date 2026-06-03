@@ -256,6 +256,23 @@ PRINTFORML TALENT:MASTER:気骨
     }
 
     [Fact]
+    public void Extract_FindsNaturalTextInsideAngleBracketPrintTail()
+    {
+        const string source = """
+PRINT <愛液>
+PRINT <br>
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "愛液"
+            && segment.SegmentType == "print-tail-fragment");
+        Assert.DoesNotContain(segments, segment => segment.OriginalText == "br");
+    }
+
+    [Fact]
     public void Extract_SkipsQuotedRuleStringsWithRegisteredFunctionCalls()
     {
         const string source = """
@@ -467,6 +484,43 @@ answer = PROSTITUTION_CUSTOMER_PLAYTYPE_VALUE_AFFECT(GET_PROSTITUTION_CUSTOMER_V
     }
 
     [Fact]
+    public void Extract_TreatsSplitStringLookupArrayKeyFieldAsCsvReference()
+    {
+        const string source = """
+@GET_CHARA_STATUS_TEXT(targetChara)
+#FUNCTIONS
+#DIMS STATUS_TALENT="ロボ娘,5","プリンセス,5,お姫様"
+#DIMS talentParts,3
+itemCount = SPLIT_STRING(STATUS_TALENT:index,",",talentParts)
+IF TALENT:targetChara:GETNUM(TALENT,talentParts:0) && TOINT(talentParts:1) > 0
+    answer = \@ itemCount >= 2 ? %talentParts:2% # %talentParts:0% \@
+ENDIF
+""";
+
+        var registry = ErbDimsLookupRegistry.BuildFromDocuments([source]);
+        var extractor = new ErbExtractor(SymbolNamespaceRegistry.Default, ErbCodeFunctionRegistry.Empty, registry);
+
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "erb-split-lookup-key"
+            && segment.OriginalText == "ロボ娘"
+            && segment.SymbolNamespace == "TALENT"
+            && segment.OriginalSymbolKey == "ロボ娘");
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "erb-split-lookup-key"
+            && segment.OriginalText == "プリンセス"
+            && segment.SymbolNamespace == "TALENT"
+            && segment.OriginalSymbolKey == "プリンセス");
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "directive-string"
+            && segment.OriginalText == "お姫様");
+        Assert.DoesNotContain(segments, segment =>
+            string.Equals(segment.OriginalText, "ロボ娘,5", StringComparison.Ordinal)
+            || string.Equals(segment.OriginalText, "プリンセス,5,お姫様", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Extract_SkipsDimsLookupSelectCaseLabels()
     {
         const string source = """
@@ -516,6 +570,42 @@ ENDSELECT
         Assert.Contains(segments, segment =>
             segment.SegmentType == "quoted-string"
             && segment.OriginalText == "表示文");
+    }
+
+    [Fact]
+    public void Extract_IncludesStandaloneColorWordsWhenCaseIsNotKnownLookup()
+    {
+        const string source = """
+SELECTCASE colorText
+    CASE "黒","金","銀"
+        answer = %colorText%髪
+    CASE "栗","緑","灰"
+        answer = %colorText%色の髪
+    CASE "赤","青","白"
+        answer = %colorText%い髪
+    CASE "ピンク","紫","オレンジ","水色"
+        answer = %colorText%の髪
+ENDSELECT
+""";
+
+        var extractor = new ErbExtractor();
+
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.Contains("黒", values);
+        Assert.Contains("金", values);
+        Assert.Contains("銀", values);
+        Assert.Contains("緑", values);
+        Assert.Contains("灰", values);
+        Assert.Contains("赤", values);
+        Assert.Contains("青", values);
+        Assert.Contains("白", values);
+        Assert.Contains("紫", values);
+        Assert.Contains("水色", values);
+        Assert.Contains("栗", values);
+        Assert.Contains("ピンク", values);
+        Assert.Contains("オレンジ", values);
     }
 
     [Fact]

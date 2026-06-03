@@ -181,6 +181,54 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_PropagatesResolvedTranslationOverAutomaticCompletedDuplicatesOutsideActiveSet()
+    {
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["active"] = "대표 번역";
+            return result;
+        });
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var active = BuildItem("active", "같은 문장");
+        var automaticCompleted = BuildCompletedItem("auto", "같은 문장", "이전 자동 번역");
+        var automaticReview = BuildItem("review", "같은 문장");
+        automaticReview.ApplyTranslationState("검수 필요", "통과", "자동 검수", true, "이전 검수 번역");
+        var manual = BuildItem("manual", "같은 문장");
+        manual.TranslatedText = "수동 번역";
+        manual.ApplyManualTranslationEdit();
+        var manualExcluded = BuildItem("excluded", "같은 문장");
+        manualExcluded.ApplyManualStatusOverride("제외됨");
+
+        await coordinator.TranslateAsync(
+            [active],
+            [active, automaticCompleted, automaticReview, manual, manualExcluded],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 1,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("대표 번역", active.TranslatedText);
+        Assert.Equal("대표 번역", automaticCompleted.TranslatedText);
+        Assert.Equal("대표 번역", automaticReview.TranslatedText);
+        Assert.Equal("수동 번역", manual.TranslatedText);
+        Assert.Equal(string.Empty, manualExcluded.TranslatedText);
+        Assert.Equal("수동 수정", manual.Status);
+        Assert.Equal("제외됨", manualExcluded.Status);
+    }
+
+    [Fact]
     public async Task TranslateAsync_UsesDictionaryFirstTranslationBeforeCallingProvider()
     {
         var provider = new SequencedProvider();
@@ -337,9 +385,14 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
-    public async Task TranslateAsync_UsesFirstExistingCompletedTranslationAndPreservesExistingRows()
+    public async Task TranslateAsync_DoesNotReuseConflictingExistingTranslationsAndSynchronizesAutomaticRows()
     {
-        var provider = new SequencedProvider();
+        var provider = new SequencedProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            result.Translations["id-1"] = "새 대표 번역";
+            return result;
+        });
         var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
         var active = BuildItem("id-1", "같은 문장");
         var firstCompleted = BuildCompletedItem("id-2", "같은 문장", "첫 번역");
@@ -366,12 +419,12 @@ public sealed class TranslationCoordinatorTests
             null,
             CancellationToken.None);
 
-        Assert.Empty(provider.RequestHistory);
-        Assert.Equal("첫 번역", active.TranslatedText);
-        Assert.Equal("첫 번역", firstCompleted.TranslatedText);
-        Assert.Equal("둘째 번역", secondCompleted.TranslatedText);
+        Assert.Equal(["id-1"], Assert.Single(provider.RequestHistory));
+        Assert.Equal("새 대표 번역", active.TranslatedText);
+        Assert.Equal("새 대표 번역", firstCompleted.TranslatedText);
+        Assert.Equal("새 대표 번역", secondCompleted.TranslatedText);
         Assert.Equal("수동 번역", manual.TranslatedText);
-        Assert.Equal("검수 번역", review.TranslatedText);
+        Assert.Equal("새 대표 번역", review.TranslatedText);
     }
 
     [Fact]

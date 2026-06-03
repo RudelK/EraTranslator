@@ -2,6 +2,8 @@
 
 ## 0.7 - 2026-05-31
 
+### 기능
+
 - 앱 버전을 `0.7`로 올리고, 실행 파일 메타데이터와 창 제목 표기를 함께 갱신했다.
 - 내장 일본어 사전 스냅샷과 사전 우선 번역 경로를 추가해, 짧은 `ja -> ko` 용어는 LLM 호출 전에 먼저 사전/음독 기반으로 처리할 수 있게 했다.
 - 카타카나 음독 fallback, 한자 음독 fallback, 선택적 네이버 일본어 사전 조회를 추가해 짧은 용어 번역의 일관성과 속도를 높였다.
@@ -16,12 +18,24 @@
 - `GETNUM(namespace, "key")`, `namespace:ARG:key`, `namespace:(expr):key` 등 직접/해결 가능한 간접 참조 rewrite를 보강하고, 해석 불가능한 동적 참조는 저장 차단 대신 경고로 낮췄다.
 - `BASE/MAXBASE`, `ITEM/ITEMPRICE/ITEMSALES`, `PALAM/JUEL`, `CDOWN/DOWNBASE` 같은 alias와 `CUP`, `NOWEX` 심볼 참조를 보강했다.
 - ERB/ERH 함수명과 변수명을 별도 identifier 항목으로 추출하고, `ERB-식별자` 번역 phase에서 공백 없는 코드 식별자로 검증한 뒤 정의/참조 위치에 일괄 rewrite하도록 추가했다.
-- `TCVAR`, `CSTR`, CSV/ERD namespace, `LOADTEXT`/`SAVETEXT`, 리소스 파일명, 팔레트 키, DIMS lookup, CSV-name `SELECTCASE` 같은 코드성 구간을 일반 번역과 identifier rewrite에서 보호하도록 보강했다.
 - 표시 라벨, inline conditional, `%... + "문자열"%`, 다중 필드 `PRINT` 출력문 등 ERB print-tail 추출을 확장하면서 placeholder와 코드 포맷을 보존하도록 개선했다.
-- `#DIMS` lookup 배열과 CSV-name `SELECTCASE`의 CASE literal을 키 참조로 추적해 번역된 CSV/DIMS 키가 코드 참조와 정확히 맞도록 보강했다.
+- `#DIMS` lookup 배열, `SPLIT_STRING` 기반 split lookup 배열, CSV-name `SELECTCASE`, key-list 함수, 인접 `"namespace","key"` 함수 인자를 심볼 참조로 추적하도록 추가했다.
+- 색상명처럼 단독 짧은 CASE literal도 lookup 문맥이 아니면 번역 대상으로 추출하도록 보강했다.
+- `PRINT <愛液>`처럼 꺾쇠 안에 자연어가 있는 출력 토큰은 HTML 태그로 보지 않고 내부 텍스트를 추출하도록 추가했다.
 - 자동 번역 진행 저장을 변경 항목 incremental upsert 중심으로 바꾸고, phase 경계와 완료/취소 시점에만 full snapshot을 사용하도록 최적화했다.
-- 번역 결과의 `__PH0__` 보호 토큰 개수나 순서가 깨진 경우 저장 가능한 검수 상태가 아니라 `번역 실패`로 되돌려 재번역 대상에 남기도록 수정했다.
 - 팀 단위 번역 지원을 위한 패키지 export/import 계획을 `docs/plans/team-translation-support-plan.md`에 저장했다.
+
+### 수정
+
+- `TCVAR`, `CSTR`, CSV/ERD namespace, `LOADTEXT`/`SAVETEXT`, 리소스 파일명, 팔레트 키, DIMS lookup, CSV-name `SELECTCASE` 같은 코드성 구간을 일반 번역과 identifier rewrite에서 보호하도록 보강했다.
+- `#DIMS` lookup 배열과 CSV-name `SELECTCASE`의 CASE literal을 키 참조로 추적해 번역된 CSV/DIMS 키가 코드 참조와 정확히 맞도록 보강했다.
+- split lookup 배열의 키 필드는 ERB 내부 중복 번역보다 기본 CSV namespace 번역을 우선 사용하도록 저장 rewrite 우선순위를 정리했다.
+- `DISPLAY_FALLEN_PARTS(charaIndex, "EXP", "絶頂経験", ...)`처럼 namespace와 key를 인접 인자로 받는 함수 호출에서 key가 일반 문장 번역으로 저장되어 `GETNUM`/`EVALUATE`가 깨지는 문제를 수정했다.
+- 번역 결과의 `__PH0__` 보호 토큰 개수나 순서가 깨진 경우 저장 가능한 검수 상태가 아니라 `번역 실패`로 되돌려 재번역 대상에 남기도록 수정했다.
+- 자동 번역의 동일 원문 재사용에서 서로 다른 기존 자동 번역이 충돌하면 임의로 하나를 고르지 않도록 수정했다.
+- 자동 번역 결과가 확정되면 수동 수정/수동 제외 항목을 제외한 동일 원문 항목에도 필터 범위 밖까지 일관되게 전파되도록 수정했다.
+- 주석, 규칙 문자열, 코드-only 표현식, `SAVETEXT`/`LOADTEXT`, 이미지 리소스 경로, `%...%` placeholder 보존 범위가 번역/저장 중 깨지지 않도록 보호 규칙을 보강했다.
+- `%...%` placeholder 보호 범위가 줄을 넘어 누수되어 저장 결과를 잘못 검증하거나 치환하는 문제를 수정했다.
 
 ## 0.6 - 2026-05-29
 

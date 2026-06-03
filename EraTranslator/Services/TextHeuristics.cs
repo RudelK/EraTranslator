@@ -5,32 +5,9 @@ namespace EraTranslator.Services;
 
 public static partial class TextHeuristics
 {
-    private static readonly HashSet<string> KnownColorWords =
-    [
-        "白",
-        "黒",
-        "赤",
-        "青",
-        "緑",
-        "黄",
-        "灰",
-        "桃",
-        "水色",
-        "紫",
-        "橙",
-        "茶",
-        "金",
-        "銀",
-    ];
-
     public static bool ContainsTranslatableText(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        if (KnownColorWords.Contains(value.Trim()))
         {
             return false;
         }

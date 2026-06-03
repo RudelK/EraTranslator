@@ -668,6 +668,49 @@ RETURNF CALC_CHARA_SINGLE_DATA("TALENT",targetChara,"気骨派")
     }
 
     [Fact]
+    public void ExportCopy_RewritesAdjacentNamespaceAndKeyArgumentsAsSafeSymbolKeys()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "exp.csv"), "2,絶頂経験\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+CALL DISPLAY_FALLEN_PARTS(charaIndex,"EXP","絶頂経験",50)
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(gameRoot);
+            foreach (var item in session.Items.Where(item => item.SymbolNamespace == "EXP" && item.OriginalSymbolKey == "絶頂経験"))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "절정 경험");
+            }
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+            Assert.Contains("DISPLAY_FALLEN_PARTS(charaIndex,\"EXP\",\"절정경험\",50)", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"절정 경험\"", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void ExportCopy_RewritesDimsLookupArrayDefinitionsAndWrapperArgumentsConsistently()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -731,6 +774,101 @@ CALLF SET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,"対応娼婦",0)
             foreach (var item in session.Items.Where(item =>
                          item.SymbolNamespace == "DIMS:CUSTOMER_VALUES_ARRAY"
                          && item.OriginalSymbolKey == originalText))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesSplitStringLookupArrayKeyFieldsFromCsvNamespace()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(
+            Path.Combine(csvDir, "Talent.csv"),
+            """
+510,生徒会長
+512,芸能人
+517,ロボ娘
+527,プリンセス
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "FUNCTION_TRAINS.ERB"),
+            """
+@GET_CHARA_STATUS_TEXT(targetChara)
+#FUNCTIONS
+#DIMS STATUS_TALENT="ロボ娘,5","芸能人,1","プリンセス,5,お姫様"
+#DIMS talentParts,3
+itemCount = SPLIT_STRING(STATUS_TALENT:index,",",talentParts)
+IF TALENT:targetChara:GETNUM(TALENT,talentParts:0) && TOINT(talentParts:1) > 0
+    answer = \@ itemCount >= 2 ? %talentParts:2% # %talentParts:0% \@
+ENDIF
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        ScanSession session;
+        try
+        {
+            session = new FileScanner().Scan(gameRoot);
+            CompletePrimaryTalentKey("生徒会長", "학생회장");
+            CompletePrimaryTalentKey("芸能人", "연예인");
+            CompletePrimaryTalentKey("ロボ娘", "로보소녀");
+            CompletePrimaryTalentKey("プリンセス", "프린세스");
+            CompleteSplitTalentKey("ロボ娘", "로보아가씨");
+            CompleteText("お姫様", "공주님");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "FUNCTION_TRAINS.ERB"), Encoding.UTF8);
+
+            Assert.Contains("#DIMS STATUS_TALENT=\"로보소녀,5\",\"연예인,1\",\"프린세스,5,공주님\"", writtenErb, StringComparison.Ordinal);
+            Assert.Contains("GETNUM(TALENT,talentParts:0)", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("로보아가씨", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("ロボ娘,5", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("プリンセス,5,お姫様", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        void CompletePrimaryTalentKey(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item =>
+                         item.SymbolNamespace == "TALENT"
+                         && item.OriginalSymbolKey == originalText
+                         && item.RelativePath.Replace('\\', '/').Equals("CSV/Talent.csv", StringComparison.Ordinal)))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+
+        void CompleteSplitTalentKey(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item =>
+                         item.SymbolNamespace == "TALENT"
+                         && item.OriginalSymbolKey == originalText
+                         && item.SegmentType == "erb-split-lookup-key"))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+
+        void CompleteText(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item => item.OriginalText == originalText))
             {
                 item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
             }

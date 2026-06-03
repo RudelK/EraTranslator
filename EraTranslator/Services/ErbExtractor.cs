@@ -68,6 +68,7 @@ public sealed partial class ErbExtractor
         var insideDirectiveContinuation = false;
         var directiveContinuationParenDepth = 0;
         var directiveContinuationLookupNamespace = string.Empty;
+        ErbSplitLookupArrayInfo? directiveContinuationSplitLookupArray = null;
         var insidePaletteLookupFunction = false;
         var selectCaseLookupNamespaces = new Stack<string>();
         var selectCaseCsvNameNamespaces = new Stack<string>();
@@ -90,11 +91,17 @@ public sealed partial class ErbExtractor
 
             if (insideDirectiveContinuation)
             {
-                ExtractDirectiveStrings(normalizedLine, directiveContinuationParenDepth, directiveContinuationLookupNamespace, out directiveContinuationParenDepth);
+                ExtractDirectiveStrings(
+                    normalizedLine,
+                    directiveContinuationParenDepth,
+                    directiveContinuationLookupNamespace,
+                    directiveContinuationSplitLookupArray,
+                    out directiveContinuationParenDepth);
                 insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
                 if (!insideDirectiveContinuation)
                 {
                     directiveContinuationLookupNamespace = string.Empty;
+                    directiveContinuationSplitLookupArray = null;
                 }
 
                 absoluteOffset += line.Length + 1;
@@ -105,15 +112,31 @@ public sealed partial class ErbExtractor
             {
                 if (DimDirectivePattern().IsMatch(normalizedLine))
                 {
-                    directiveContinuationLookupNamespace = TryReadDimArrayName(normalizedLine, out var dimArrayName)
-                        && _dimsLookupRegistry.IsLookupArray(dimArrayName)
-                            ? ErbDimsLookupRegistry.ToNamespace(dimArrayName)
-                            : string.Empty;
-                    ExtractDirectiveStrings(normalizedLine, 0, directiveContinuationLookupNamespace, out directiveContinuationParenDepth);
+                    directiveContinuationLookupNamespace = string.Empty;
+                    directiveContinuationSplitLookupArray = null;
+                    if (TryReadDimArrayName(normalizedLine, out var dimArrayName))
+                    {
+                        if (_dimsLookupRegistry.IsLookupArray(dimArrayName))
+                        {
+                            directiveContinuationLookupNamespace = ErbDimsLookupRegistry.ToNamespace(dimArrayName);
+                        }
+                        else if (_dimsLookupRegistry.TryGetSplitLookupArray(dimArrayName, out var splitLookupArray))
+                        {
+                            directiveContinuationSplitLookupArray = splitLookupArray;
+                        }
+                    }
+
+                    ExtractDirectiveStrings(
+                        normalizedLine,
+                        0,
+                        directiveContinuationLookupNamespace,
+                        directiveContinuationSplitLookupArray,
+                        out directiveContinuationParenDepth);
                     insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
                     if (!insideDirectiveContinuation)
                     {
                         directiveContinuationLookupNamespace = string.Empty;
+                        directiveContinuationSplitLookupArray = null;
                     }
 
                     absoluteOffset += line.Length + 1;
@@ -241,7 +264,12 @@ public sealed partial class ErbExtractor
 
             absoluteOffset += line.Length + 1;
 
-            void ExtractDirectiveStrings(string sourceLine, int startingParenDepth, string lookupNamespace, out int endingParenDepth)
+            void ExtractDirectiveStrings(
+                string sourceLine,
+                int startingParenDepth,
+                string lookupNamespace,
+                ErbSplitLookupArrayInfo? splitLookupArray,
+                out int endingParenDepth)
             {
                 var scanResult = ScanDirectiveQuotedStrings(sourceLine, startingParenDepth);
                 endingParenDepth = scanResult.endingParenDepth;
@@ -265,7 +293,47 @@ public sealed partial class ErbExtractor
                         continue;
                     }
 
+                    if (splitLookupArray is not null)
+                    {
+                        ExtractSplitLookupDirectiveString(value, quotedString.relativeStart, splitLookupArray);
+                        continue;
+                    }
+
                     AddSegment("directive-string", quotedString.relativeStart, value);
+                }
+            }
+
+            void ExtractSplitLookupDirectiveString(
+                string value,
+                int relativeStart,
+                ErbSplitLookupArrayInfo splitLookupArray)
+            {
+                foreach (var field in EnumerateSplitFields(value, relativeStart, splitLookupArray.Delimiter))
+                {
+                    if (splitLookupArray.FieldNamespaces.TryGetValue(field.Index, out var symbolNamespace))
+                    {
+                        if (!TextHeuristics.IsNumericLike(field.Value)
+                            && !string.IsNullOrWhiteSpace(field.Value))
+                        {
+                            AddSegment(
+                                "erb-split-lookup-key",
+                                field.RelativeStart,
+                                field.Value,
+                                symbolNamespace,
+                                field.Value,
+                                isReferenceBearingKey: true);
+                        }
+
+                        continue;
+                    }
+
+                    if (splitLookupArray.ProtectedFieldIndices.Contains(field.Index)
+                        || !TextHeuristics.ContainsTranslatableText(field.Value))
+                    {
+                        continue;
+                    }
+
+                    AddSegment("directive-string", field.RelativeStart, field.Value);
                 }
             }
 
@@ -1165,12 +1233,45 @@ public sealed partial class ErbExtractor
         return false;
     }
 
+    private static IEnumerable<SplitFieldInfo> EnumerateSplitFields(string value, int relativeStart, string delimiter)
+    {
+        if (string.IsNullOrEmpty(delimiter))
+        {
+            yield break;
+        }
+
+        var fieldIndex = 0;
+        var start = 0;
+        while (start <= value.Length)
+        {
+            var delimiterIndex = value.IndexOf(delimiter, start, StringComparison.Ordinal);
+            var end = delimiterIndex < 0 ? value.Length : delimiterIndex;
+            yield return new SplitFieldInfo(
+                fieldIndex,
+                value[start..end],
+                relativeStart + start);
+
+            fieldIndex++;
+            if (delimiterIndex < 0)
+            {
+                break;
+            }
+
+            start = delimiterIndex + delimiter.Length;
+        }
+    }
+
     private List<(int start, int end)> CollectScriptSyntaxRanges(string value)
     {
         var ranges = new List<(int start, int end)>();
         foreach (Match match in _scriptSyntaxTokenPattern.Matches(value))
         {
             if (match.Length == 0)
+            {
+                continue;
+            }
+
+            if (IsNaturalAngleBracketDisplayToken(match.Value))
             {
                 continue;
             }
@@ -1187,6 +1288,25 @@ public sealed partial class ErbExtractor
         return ranges
             .OrderBy(static range => range.start)
             .ToList();
+    }
+
+    private static bool IsNaturalAngleBracketDisplayToken(string value)
+    {
+        if (value.Length < 3 || value[0] != '<' || value[^1] != '>')
+        {
+            return false;
+        }
+
+        var inner = value[1..^1].Trim();
+        if (inner.Length == 0
+            || inner[0] is '/' or '!' or '?'
+            || inner.Any(static ch => char.IsWhiteSpace(ch) || ch is '<' or '>' or '=' or '/' or '\\' or '"' or '\'')
+            || TextHeuristics.LooksLikeCodeOnly(inner))
+        {
+            return false;
+        }
+
+        return inner.Any(IsJapaneseTextCharacter);
     }
 
     private static bool IsInsideRange(int index, IReadOnlyList<(int start, int end)> ranges)
@@ -1903,6 +2023,8 @@ public sealed partial class ErbExtractor
             }
         }
     }
+
+    private readonly record struct SplitFieldInfo(int Index, string Value, int RelativeStart);
 
     [GeneratedRegex(@"@?""(?<content>(?:[^""]|"""")*)""", RegexOptions.Compiled)]
     private static partial Regex QuotedStringPattern();
