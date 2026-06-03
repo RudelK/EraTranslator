@@ -82,6 +82,34 @@ public sealed class PlaceholderProtectorTests
     }
 
     [Fact]
+    public void Protect_PreservesErbCodeReferencesInsideTranslatableQuotedText()
+    {
+        var protector = new PlaceholderProtector();
+        var original = "売春中;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `売春`";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.Equal("売春中;__PH0__ == `売春`", protectedText.Text);
+        Assert.Equal(["WORK_TYPE_TEXT:(CFLAG:index:労役種類)"], protectedText.Placeholders);
+        Assert.True(protector.HasAllTokens(protectedText.Text, protectedText.Placeholders, out _));
+
+        var restored = protector.Restore("매춘 중;__PH0__ == `매춘`", protectedText.Placeholders);
+        Assert.Equal("매춘 중;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `매춘`", restored);
+    }
+
+    [Fact]
+    public void Protect_PreservesStandaloneErbSymbolReferences()
+    {
+        var protector = new PlaceholderProtector();
+        var original = "현재 값은 CFLAG:index:労役種類 입니다";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.Equal("현재 값은 __PH0__ 입니다", protectedText.Text);
+        Assert.Equal(["CFLAG:index:労役種類"], protectedText.Placeholders);
+    }
+
+    [Fact]
     public void HasAllTokens_FailsWhenPlaceholderOrderIsBroken()
     {
         var protector = new PlaceholderProtector();

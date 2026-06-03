@@ -39,6 +39,35 @@ public sealed class AppConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public void Load_IncludesFullWidthColonInDefaultProtectedCharacters()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+
+        var actual = service.Load();
+
+        Assert.Contains("：", actual.ProtectedFullWidthCharacters, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_UpgradesLegacyDefaultProtectedCharacters()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+        File.WriteAllText(
+            service.ConfigPath,
+            """
+            {
+              "ProtectedFullWidthCharacters": "／【】＜＞「」（）『』％"
+            }
+            """);
+
+        var actual = service.Load();
+
+        Assert.Equal(new AppConfig().ProtectedFullWidthCharacters, actual.ProtectedFullWidthCharacters);
+    }
+
+    [Fact]
     public void SaveAndLoad_RoundTripsConfigInTargetDirectory()
     {
         Directory.CreateDirectory(_rootPath);

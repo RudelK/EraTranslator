@@ -61,6 +61,26 @@ public sealed partial class NaverJapaneseDictionaryLookupService(
             using var client = _httpClientFactory.CreateClient(nameof(NaverJapaneseDictionaryLookupService));
             client.Timeout = TimeSpan.FromSeconds(3);
 
+            var autocompleteUrl = BuildAutocompleteUrl(surface);
+            using (var autocompleteRequest = new HttpRequestMessage(HttpMethod.Get, autocompleteUrl))
+            {
+                ApplyChromeLikeHeaders(autocompleteRequest);
+                using var autocompleteResponse = await client.SendAsync(autocompleteRequest, cancellationToken).ConfigureAwait(false);
+                if (autocompleteResponse.IsSuccessStatusCode)
+                {
+                    var autocompleteContent = await autocompleteResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    var autocompleteEntry = _parser.TryParse(surface, autocompleteContent, autocompleteUrl);
+                    if (autocompleteEntry is not null)
+                    {
+                        return autocompleteEntry;
+                    }
+                }
+                else if (autocompleteResponse.StatusCode is HttpStatusCode.Forbidden or (HttpStatusCode)429)
+                {
+                    return null;
+                }
+            }
+
             var sourceUrl = BuildSearchUrl(surface);
             using var request = new HttpRequestMessage(HttpMethod.Get, sourceUrl);
             ApplyChromeLikeHeaders(request);
@@ -101,6 +121,11 @@ public sealed partial class NaverJapaneseDictionaryLookupService(
     private static string BuildSearchUrl(string surface)
     {
         return $"https://ja.dict.naver.com/search.nhn?query={Uri.EscapeDataString(surface)}";
+    }
+
+    private static string BuildAutocompleteUrl(string surface)
+    {
+        return $"https://ac-dict.naver.com/jako/ac?n_katahira=0&st=11&r_lt=11&q={Uri.EscapeDataString(surface)}";
     }
 
     private static void ApplyChromeLikeHeaders(HttpRequestMessage request)
@@ -146,6 +171,12 @@ public sealed partial class NaverJapaneseDictionaryParser
         }
 
         using var document = JsonDocument.Parse(content);
+        var autocompleteEntry = TryParseAutocompleteJson(expectedSurface, document.RootElement, sourceUrl);
+        if (autocompleteEntry is not null)
+        {
+            return autocompleteEntry;
+        }
+
         foreach (var node in EnumerateJsonObjects(document.RootElement))
         {
             var surface = FirstString(node, "surface", "entry", "headword", "word", "origin", "title");
@@ -171,6 +202,72 @@ public sealed partial class NaverJapaneseDictionaryParser
         }
 
         return null;
+    }
+
+    private static NaverJapaneseDictionaryEntry? TryParseAutocompleteJson(
+        string expectedSurface,
+        JsonElement root,
+        string sourceUrl)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("items", out var items)
+            || items.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var section in items.EnumerateArray())
+        {
+            if (section.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var candidate in section.EnumerateArray())
+            {
+                if (candidate.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                var reading = ReadAutocompleteCandidateValue(candidate, 0);
+                var surface = ReadAutocompleteCandidateValue(candidate, 1);
+                var meaning = NormalizeMeaning(ReadAutocompleteCandidateValue(candidate, 3));
+                var dictionary = ReadAutocompleteCandidateValue(candidate, 5);
+                if (!string.Equals(NormalizeText(surface), expectedSurface, StringComparison.Ordinal)
+                    || !string.Equals(dictionary, "jako", StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(meaning))
+                {
+                    continue;
+                }
+
+                return new NaverJapaneseDictionaryEntry(
+                    expectedSurface,
+                    NormalizeText(reading),
+                    meaning,
+                    sourceUrl,
+                    IsReviewRequired(meaning));
+            }
+        }
+
+        return null;
+    }
+
+    private static string ReadAutocompleteCandidateValue(JsonElement candidate, int index)
+    {
+        if (candidate.ValueKind != JsonValueKind.Array || candidate.GetArrayLength() <= index)
+        {
+            return string.Empty;
+        }
+
+        var wrapper = candidate[index];
+        if (wrapper.ValueKind == JsonValueKind.Array && wrapper.GetArrayLength() > 0)
+        {
+            var value = wrapper[0];
+            return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
+        }
+
+        return wrapper.ValueKind == JsonValueKind.String ? wrapper.GetString() ?? string.Empty : string.Empty;
     }
 
     private static NaverJapaneseDictionaryEntry? TryParseHtml(string expectedSurface, string content, string sourceUrl)

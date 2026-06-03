@@ -39,6 +39,8 @@ public sealed class SourceFileDocumentState
 
     public List<ErbVariableLiteralOccurrenceState> VariableLiteralOccurrences { get; init; } = [];
 
+    public List<ErbIdentifierOccurrenceState> IdentifierOccurrences { get; init; } = [];
+
     public List<string> ScanWarnings { get; init; } = [];
 
     public JosaDocumentAnalysisState JosaAnalysis { get; init; } = new();
@@ -176,6 +178,23 @@ public sealed class ErbVariableLiteralOccurrenceState
     public int LineNumber { get; init; }
 
     public bool IsExactValue { get; init; }
+}
+
+public sealed class ErbIdentifierOccurrenceState
+{
+    public string DocumentId { get; init; } = string.Empty;
+
+    public ErbIdentifierKind Kind { get; init; }
+
+    public ErbIdentifierRole Role { get; init; }
+
+    public string OriginalName { get; init; } = string.Empty;
+
+    public int AbsoluteStart { get; init; }
+
+    public int Length { get; init; }
+
+    public int LineNumber { get; init; }
 }
 
 public sealed class ExtractedTextItemState

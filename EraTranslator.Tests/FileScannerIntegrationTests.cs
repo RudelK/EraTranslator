@@ -60,4 +60,41 @@ status = cond ? 学生 # 社会人
         Assert.Contains(session.Items, item => item.SegmentType == "assignment-fragment" && item.OriginalText == "学生");
         Assert.Contains(session.Items, item => item.SegmentType == "assignment-fragment" && item.OriginalText == "社会人");
     }
+
+    [Fact]
+    public void Scan_UsesFunctionRegistryToSkipQuotedCodeRulesButKeepNaturalParentheses()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var erbRoot = Path.Combine(tempRoot, "ERB");
+        Directory.CreateDirectory(erbRoot);
+        File.WriteAllText(Path.Combine(erbRoot, "Functions.ERB"), """
+@IS_UNCONTACTABLE(index)
+@IS_NOT_POLICE_RESCUE_TALENT(index)
+""");
+        File.WriteAllText(Path.Combine(erbRoot, "Test.ERB"), """
+abductedCharaCount = COUNT_RULED_CHARAS("!IS_UNCONTACTABLE(index) && TALENT:index:監禁 > 0 && !IS_NOT_POLICE_RESCUE_TALENT(index)")
+PRINTFORML [2] - エンディング履歴(エンディング別)
+""");
+
+        try
+        {
+            var scanner = new FileScanner();
+            var session = scanner.Scan(tempRoot);
+
+            Assert.DoesNotContain(session.Items, item =>
+                item.OriginalText.Contains("IS_UNCONTACTABLE", StringComparison.Ordinal)
+                || item.OriginalText.Contains("TALENT:index:監禁", StringComparison.Ordinal));
+            Assert.Contains(session.Items, item =>
+                item.DocumentId == "ERB/Test.ERB"
+                && item.SegmentType == "print-tail"
+                && item.OriginalText == "[2] - エンディング履歴(エンディング別)");
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
 }

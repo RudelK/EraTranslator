@@ -249,6 +249,61 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TranslatePendingAsync_OrdersBuiltInCsvNamespacesBeforeCharacterSheetReferences()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildCsvNamespacePrioritySession(gameDirectory), gameDirectory);
+        var provider = new RecordingProvider(requests =>
+        {
+            var result = new TranslationProviderResult();
+            foreach (var request in requests)
+            {
+                result.Translations[request.Id] = request.Id switch
+                {
+                    "CSV/Base.csv:0" => "체력",
+                    "CSV/Cflag.csv:0" => "초대불가플래그",
+                    "CSV/Talent.csv:0" => "고등학생",
+                    "CSV/__登録/Chara3272.csv:0" => "애칭",
+                    _ => $"번역:{request.OriginalText}",
+                };
+            }
+
+            return result;
+        });
+
+        var viewModel = new MainWindowViewModel(
+            translationCoordinator: new TranslationCoordinator(new FakeTranslationProviderFactory(provider)),
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+        viewModel.EnableBundledDictionaryFirstPass = false;
+        viewModel.EnableKanaTransliterationFallback = false;
+        viewModel.EnableKanjiReadingFallback = false;
+
+        var expectedOrder = new[]
+        {
+            "CSV/Base.csv:0",
+            "CSV/Cflag.csv:0",
+            "CSV/Talent.csv:0",
+            "CSV/__登録/Chara3272.csv:0",
+        };
+        Assert.Equal(expectedOrder, viewModel.ItemsView.Cast<ExtractedTextItem>().Select(item => item.SegmentId).ToList());
+
+        var completed = await viewModel.TranslatePendingAsync();
+
+        Assert.True(completed);
+        Assert.Equal(expectedOrder, provider.RequestHistory.SelectMany(static request => request).ToList());
+    }
+
+    [Fact]
     public void ManualExcludedStatus_IsRestoredAfterReopen()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");
@@ -1895,6 +1950,112 @@ public sealed class MainWindowViewModelTests : IDisposable
         session.Metrics["Warnings"] = 0;
         session.Metrics["JosaPatterns"] = 0;
         return session;
+    }
+
+    private static ScanSession BuildCsvNamespacePrioritySession(string gameDirectory)
+    {
+        var session = new ScanSession
+        {
+            GameRoot = gameDirectory,
+        };
+
+        AddCsvReferenceItem(
+            "CSV/__登録/Chara3272.csv",
+            Path.Combine("CSV", "__登録", "Chara3272.csv"),
+            "csv-CharacterSheet-field-1",
+            "CFLAG",
+            "呼び名",
+            "呼び名");
+        AddCsvReferenceItem(
+            "CSV/Talent.csv",
+            Path.Combine("CSV", "Talent.csv"),
+            "csv-idfirst-field-1",
+            "TALENT",
+            "高校生",
+            "100");
+        AddCsvReferenceItem(
+            "CSV/Cflag.csv",
+            Path.Combine("CSV", "Cflag.csv"),
+            "csv-idfirst-field-1",
+            "CFLAG",
+            "招待不可フラグ",
+            "200");
+        AddCsvReferenceItem(
+            "CSV/Base.csv",
+            Path.Combine("CSV", "Base.csv"),
+            "csv-idfirst-field-1",
+            "BASE",
+            "体力",
+            "0");
+
+        session.Metrics["Documents"] = session.Documents.Count;
+        session.Metrics["Items"] = session.Items.Count;
+        session.Metrics["ErbItems"] = 0;
+        session.Metrics["CsvItems"] = session.Items.Count;
+        session.Metrics["Warnings"] = 0;
+        session.Metrics["JosaPatterns"] = 0;
+        return session;
+
+        void AddCsvReferenceItem(
+            string documentId,
+            string relativePath,
+            string segmentType,
+            string symbolNamespace,
+            string originalText,
+            string sourceKey)
+        {
+            var document = new SourceFileDocument
+            {
+                DocumentId = documentId,
+                FullPath = Path.Combine(gameDirectory, relativePath),
+                RelativePath = relativePath,
+                FileType = "CSV",
+                OriginalText = $"{sourceKey},{originalText}",
+                EncodingInfo = new DetectedEncodingInfo
+                {
+                    Encoding = new UTF8Encoding(true),
+                    Name = "UTF-8 BOM",
+                    Kind = DetectedEncodingKind.Utf8Bom,
+                    HasBom = true,
+                },
+                NewLineSequence = "\n",
+                CsvKind = CsvDocumentKind.IdFirstTable,
+            };
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = $"{documentId}:0",
+                DocumentId = document.DocumentId,
+                SegmentType = segmentType,
+                AbsoluteStart = sourceKey.Length + 1,
+                Length = originalText.Length,
+                LineNumber = 1,
+                OriginalText = originalText,
+                FieldIndex = 1,
+                SourceKey = sourceKey,
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+                SymbolNamespace = symbolNamespace,
+                OriginalSymbolKey = originalText,
+                IsReferenceBearingKey = true,
+            });
+            session.Documents[document.DocumentId] = document;
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = $"{documentId}:0",
+                DocumentId = document.DocumentId,
+                FileType = "CSV",
+                RelativePath = relativePath,
+                EncodingName = "utf-8",
+                SegmentType = segmentType,
+                LineNumber = 1,
+                OriginalText = originalText,
+                CsvFieldRole = CsvFieldRole.TranslatableValue,
+                SourceKey = sourceKey,
+                SymbolNamespace = symbolNamespace,
+                OriginalSymbolKey = originalText,
+                IsReferenceBearingKey = true,
+                WarningText = string.Empty,
+            });
+        }
     }
 
     private sealed class RecordingSqliteProjectStateStore : SqliteProjectStateStore

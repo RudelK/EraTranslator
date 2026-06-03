@@ -375,7 +375,7 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
-    public async Task TranslateAsync_MarksPercentPlaceholderDamageAsReviewNeededWithoutSaving()
+    public async Task TranslateAsync_MarksPercentPlaceholderDamageAsFailure()
     {
         var provider = new SequencedProvider(requests =>
         {
@@ -405,14 +405,15 @@ public sealed class TranslationCoordinatorTests
             null,
             CancellationToken.None);
 
-        Assert.Equal("검수 필요", items[0].Status);
+        Assert.Equal("번역 실패", items[0].Status);
         Assert.Equal("변수 삽입 손상", items[0].ValidationStatus);
         Assert.False(items[0].CanSave);
-        Assert.Equal("__PH1__ 마을 __PH0__", items[0].TranslatedText);
+        Assert.Equal(string.Empty, items[0].TranslatedText);
+        Assert.True(items[0].NeedsTranslation);
     }
 
     [Fact]
-    public async Task TranslateAsync_MarksPlaceholderCountMismatchAsReviewNeeded()
+    public async Task TranslateAsync_MarksPlaceholderCountMismatchAsFailure()
     {
         var provider = new SequencedProvider(requests =>
         {
@@ -442,11 +443,12 @@ public sealed class TranslationCoordinatorTests
             null,
             CancellationToken.None);
 
-        Assert.Equal("검수 필요", items[0].Status);
-        Assert.Equal("토큰 검토 필요", items[0].ValidationStatus);
+        Assert.Equal("번역 실패", items[0].Status);
+        Assert.Equal("변수 삽입 손상", items[0].ValidationStatus);
         Assert.Contains("보호 토큰 개수가 일치하지 않습니다", items[0].TranslationError, StringComparison.Ordinal);
-        Assert.Equal("__PH0__ 마을", items[0].TranslatedText);
+        Assert.Equal(string.Empty, items[0].TranslatedText);
         Assert.False(items[0].CanSave);
+        Assert.True(items[0].NeedsTranslation);
     }
 
     [Fact]

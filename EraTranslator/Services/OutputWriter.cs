@@ -9,9 +9,28 @@ public sealed class OutputWriter
     private static readonly UTF8Encoding Utf8NoBomEncoding = new(false);
     private static readonly UnicodeEncoding Utf16LeBomEncoding = new(false, true, true);
     private static readonly UnicodeEncoding Utf16LeNoBomEncoding = new(false, false, true);
-    private static readonly string[] ProtectedCodeArgumentFunctionNames = ["GETCONFIG", "VARSIZE", "LOADTEXT", "SAVETEXT"];
+    private static readonly string[] ProtectedCodeArgumentFunctionNames =
+    [
+        "GETCONFIG",
+        "VARSIZE",
+        "LOADTEXT",
+        "SAVETEXT",
+        "CALC_CHARA_SINGLE_DATA",
+        "CALC_CHARA_SINGLE_DATA_RULED",
+        "CALC_CHARA_MULTIPLE_DATA",
+        "CALC_CHARA_MULTIPLE_DATA_BASE",
+        "CALC_CHARA_RANGED_DATA",
+        "GET_NONEXISTABLE_CHARA_NO_DEFAULTABLE_SINGLE_DATA",
+        "GET_NONEXISTABLE_VALUES_BYNAME",
+        "GET_NONEXISTABLE_TALENT_BYNAME",
+        "GET_NONEXISTABLE_ABL_BYNAME",
+        "GET_NONEXISTABLE_CFLAG_BYNAME",
+        "GET_NONEXISTABLE_EXP_BYNAME",
+        "GET_NONEXISTABLE_CSTR_BYNAME",
+    ];
     private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
     private readonly SymbolRewritePlanner _rewritePlanner = new();
+    private readonly IdentifierRewritePlanner _identifierRewritePlanner = new();
     private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
     private readonly JosaPatternAnalyzer _josaPatternAnalyzer = new();
     private readonly JosaSupportPackageService _josaSupportPackageService = new();
@@ -35,6 +54,7 @@ public sealed class OutputWriter
 
         var rewritePlanStopwatch = Stopwatch.StartNew();
         var rewritePlan = _rewritePlanner.CreatePlan(session);
+        var identifierRewritePlan = _identifierRewritePlanner.CreatePlan(session);
         rewritePlanStopwatch.Stop();
         result.RewritePlanElapsed = rewritePlanStopwatch.Elapsed;
         var packageInfo = session.JosaPackageInfo.ErbExists || session.JosaPackageInfo.ErhExists
@@ -42,8 +62,8 @@ public sealed class OutputWriter
             : _josaSupportPackageService.InspectProject(session.GameRoot);
         var completed = saveMode switch
         {
-            SaveMode.ExportCopy => SaveToExportDirectory(session, outputDirectory, rewritePlan, packageInfo, progress, cancellationToken, result),
-            SaveMode.InPlaceWithBackup => SaveInPlaceWithBackup(session, rewritePlan, packageInfo, progress, cancellationToken, result),
+            SaveMode.ExportCopy => SaveToExportDirectory(session, outputDirectory, rewritePlan, identifierRewritePlan, packageInfo, progress, cancellationToken, result),
+            SaveMode.InPlaceWithBackup => SaveInPlaceWithBackup(session, rewritePlan, identifierRewritePlan, packageInfo, progress, cancellationToken, result),
             _ => throw new NotSupportedException($"지원되지 않는 저장 모드입니다: {saveMode}"),
         };
         totalStopwatch.Stop();
@@ -56,6 +76,7 @@ public sealed class OutputWriter
         ScanSession session,
         string outputDirectory,
         SymbolRewritePlan rewritePlan,
+        IdentifierRewritePlan identifierRewritePlan,
         JosaSupportPackageInfo packageInfo,
         IProgress<(double value, string detail)>? progress,
         CancellationToken cancellationToken,
@@ -77,17 +98,19 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
+            var hasIdentifierRewrites = identifierRewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var identifierReplacements)
+                && identifierReplacements.Count > 0;
             var josaDocumentReplacements = DocumentFileTypes.SupportsJosaRewrite(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
-            if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
+            if (translatedMap.Count == 0 && !hasDocumentRewrites && !hasIdentifierRewrites && josaDocumentReplacements.Count == 0)
             {
                 result.SkippedFiles.Add(document.RelativePath);
                 progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"건너뜀: {document.RelativePath}"));
                 continue;
             }
 
-            var content = ApplyTranslations(document, translatedMap, rewritePlan, josaDocumentReplacements, packageInfo);
+            var content = ApplyTranslations(document, translatedMap, rewritePlan, identifierRewritePlan, josaDocumentReplacements, packageInfo);
             var fullPath = Path.Combine(outputDirectory, document.RelativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
             File.WriteAllText(fullPath, content, ResolveOutputEncoding(document.EncodingInfo));
@@ -133,6 +156,7 @@ public sealed class OutputWriter
     private OutputWriteResult SaveInPlaceWithBackup(
         ScanSession session,
         SymbolRewritePlan rewritePlan,
+        IdentifierRewritePlan identifierRewritePlan,
         JosaSupportPackageInfo packageInfo,
         IProgress<(double value, string detail)>? progress,
         CancellationToken cancellationToken,
@@ -150,10 +174,12 @@ public sealed class OutputWriter
             var translatedMap = BuildTranslationItemMap(session, document.DocumentId, rewritePlan);
             var hasDocumentRewrites = rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var documentReplacements)
                 && documentReplacements.Count > 0;
+            var hasIdentifierRewrites = identifierRewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var identifierReplacements)
+                && identifierReplacements.Count > 0;
             var josaDocumentReplacements = DocumentFileTypes.SupportsJosaRewrite(document.FileType)
                 ? _josaPatternAnalyzer.CreateDocumentReplacements(document, rewritePlan.RenameMap, packageInfo)
                 : [];
-            if (translatedMap.Count == 0 && !hasDocumentRewrites && josaDocumentReplacements.Count == 0)
+            if (translatedMap.Count == 0 && !hasDocumentRewrites && !hasIdentifierRewrites && josaDocumentReplacements.Count == 0)
             {
                 result.SkippedFiles.Add(document.RelativePath);
                 progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"건너뜀: {document.RelativePath}"));
@@ -168,7 +194,7 @@ public sealed class OutputWriter
             backupElapsed += backupStopwatch.Elapsed;
             result.BackupFiles.Add(backupPath);
 
-            var content = ApplyTranslations(document, translatedMap, rewritePlan, josaDocumentReplacements, packageInfo);
+            var content = ApplyTranslations(document, translatedMap, rewritePlan, identifierRewritePlan, josaDocumentReplacements, packageInfo);
             File.WriteAllText(document.FullPath, content, ResolveOutputEncoding(document.EncodingInfo));
             result.WrittenFiles.Add(document.FullPath);
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
@@ -192,6 +218,7 @@ public sealed class OutputWriter
     {
         return session.Items
             .Where(item => item.DocumentId == documentId
+                && !IdentifierSegmentTypes.IsIdentifier(item.SegmentType)
                 && rewritePlan.CanWriteItem(item))
             .ToDictionary(item => item.SegmentId, item => item);
     }
@@ -200,18 +227,20 @@ public sealed class OutputWriter
         SourceFileDocument document,
         IReadOnlyDictionary<string, ExtractedTextItem> translatedItems,
         SymbolRewritePlan rewritePlan,
+        IdentifierRewritePlan identifierRewritePlan,
         IReadOnlyList<PlannedTextReplacement> josaDocumentReplacements,
         JosaSupportPackageInfo packageInfo)
     {
         return DocumentFileTypes.IsCsvLike(document.FileType)
             ? ApplyCsvTranslations(document, translatedItems, rewritePlan)
-            : ApplyErbTranslations(document, translatedItems, rewritePlan, josaDocumentReplacements, packageInfo);
+            : ApplyErbTranslations(document, translatedItems, rewritePlan, identifierRewritePlan, josaDocumentReplacements, packageInfo);
     }
 
     private string ApplyErbTranslations(
         SourceFileDocument document,
         IReadOnlyDictionary<string, ExtractedTextItem> translatedItems,
         SymbolRewritePlan rewritePlan,
+        IdentifierRewritePlan identifierRewritePlan,
         IReadOnlyList<PlannedTextReplacement> josaDocumentReplacements,
         JosaSupportPackageInfo packageInfo)
     {
@@ -220,6 +249,8 @@ public sealed class OutputWriter
         string? previousTranslatedValue = null;
         rewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var plannedReplacements);
         plannedReplacements ??= [];
+        identifierRewritePlan.DocumentReplacements.TryGetValue(document.DocumentId, out var identifierReplacements);
+        identifierReplacements ??= [];
 
         foreach (var segment in document.Segments
                      .Where(segment => translatedItems.ContainsKey(segment.SegmentId))
@@ -271,6 +302,19 @@ public sealed class OutputWriter
             }
         }
 
+        foreach (var replacement in identifierReplacements)
+        {
+            if (ShouldSkipIdentifierReplacement(document, replacement, replacements, josaDocumentReplacements))
+            {
+                continue;
+            }
+
+            replacements.Add(new PlannedTextReplacement(
+                replacement.Start,
+                replacement.Length,
+                replacement.Value));
+        }
+
         foreach (var replacement in josaDocumentReplacements)
         {
             if (document.Segments.Any(segment =>
@@ -312,6 +356,30 @@ public sealed class OutputWriter
                 || IsRangeInsideCommandArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ["LOADTEXT", "SAVETEXT"])
                 || IsPaletteCaseLabelLiteral(document.OriginalText, segment)
                 || IsQuotedComparisonLiteral(document.OriginalText, segment)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldSkipIdentifierReplacement(
+        SourceFileDocument document,
+        PlannedIdentifierReplacement replacement,
+        IReadOnlyList<PlannedTextReplacement> existingReplacements,
+        IReadOnlyList<PlannedTextReplacement> josaDocumentReplacements)
+    {
+        if (existingReplacements.Any(existing =>
+                RangesOverlap(existing.Start, existing.Length, replacement.Start, replacement.Length))
+            || josaDocumentReplacements.Any(josa =>
+                RangesOverlap(josa.Start, josa.Length, replacement.Start, replacement.Length)))
+        {
+            return true;
+        }
+
+        if (IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, ProtectedCodeArgumentFunctionNames)
+            || IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, PaletteLookupFunctionNames)
+            || IsRangeInsideCommandArgument(document.OriginalText, replacement.Start, replacement.Length, ["LOADTEXT", "SAVETEXT"]))
         {
             return true;
         }
@@ -596,10 +664,11 @@ public sealed class OutputWriter
                 continue;
             }
 
+            var lineEnd = text.IndexOfAny(['\r', '\n'], index + 1);
             var end = text.IndexOf(close, index + 1);
-            if (end < 0)
+            if (end < 0 || (lineEnd >= 0 && lineEnd < end))
             {
-                yield break;
+                continue;
             }
 
             yield return (index, end - index + 1);

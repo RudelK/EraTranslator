@@ -53,6 +53,31 @@ public sealed class NaverJapaneseDictionaryServiceTests : IDisposable
     }
 
     [Fact]
+    public void Parser_ExtractsAutocompleteJsonCandidate()
+    {
+        var parser = new NaverJapaneseDictionaryParser();
+        var json = """
+            {
+              "query": ["美脚"],
+              "items": [
+                [
+                  [["びきゃく"],["美脚"],[""],["날씬하고 긴 여성의 다리"],["id"],["jako"]]
+                ],
+                []
+              ]
+            }
+            """;
+
+        var entry = parser.TryParse("美脚", json, "https://ac-dict.naver.com/jako/ac?q=%E7%BE%8E%E8%84%9A");
+
+        Assert.NotNull(entry);
+        Assert.Equal("美脚", entry.Surface);
+        Assert.Equal("びきゃく", entry.ReadingKana);
+        Assert.Equal("날씬하고 긴 여성의 다리", entry.KoTarget);
+        Assert.False(entry.ReviewRequired);
+    }
+
+    [Fact]
     public void Parser_RejectsLooseJsonHeadword()
     {
         var parser = new NaverJapaneseDictionaryParser();
@@ -91,6 +116,7 @@ public sealed class NaverJapaneseDictionaryServiceTests : IDisposable
         Assert.NotNull(entry);
         Assert.Equal("쾌락", entry.KoTarget);
         Assert.NotNull(capturedRequest);
+        Assert.Contains("https://ac-dict.naver.com/jako/ac", capturedRequest!.RequestUri?.ToString(), StringComparison.Ordinal);
         Assert.Contains("Chrome", capturedRequest!.Headers.UserAgent.ToString(), StringComparison.Ordinal);
         Assert.Contains("ko-KR", capturedRequest.Headers.AcceptLanguage.ToString(), StringComparison.Ordinal);
         Assert.Equal("https://ja.dict.naver.com/", capturedRequest.Headers.Referrer?.ToString());

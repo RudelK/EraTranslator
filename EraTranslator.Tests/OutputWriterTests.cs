@@ -7,6 +7,130 @@ namespace EraTranslator.Tests;
 public sealed class OutputWriterTests
 {
     [Fact]
+    public void ExportCopy_RewritesTranslatedErbIdentifiersWithoutSpaces()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+@キャラ検索(ARGS)
+#FUNCTION
+#DIM キーボード選択コマンドID
+キーボード選択コマンドID = 1
+CALL キャラ検索("[グラツィア大公家の小公女]セレナ", キーボード選択コマンドID)
+SIF EXIST画像FILE(@"%CSTR:(キャラ検索("[グラツィア大公家の小公女]セレナ")):画像フォルダ%/ダンジョン用_野盗ボス")
+IF ABL:対象キャラ:(TCVAR:対象キャラ:野外オナニー_部位) > 4
+""",
+            Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(gameRoot);
+            var functionItem = Assert.Single(session.Items, item =>
+                item.SegmentType == IdentifierSegmentTypes.Function
+                && item.OriginalText == "キャラ検索");
+            functionItem.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "캐릭터 검색");
+            var variableItem = Assert.Single(session.Items, item =>
+                item.SegmentType == IdentifierSegmentTypes.Variable
+                && item.OriginalText == "キーボード選択コマンドID");
+            variableItem.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "키보드 선택 커맨드 ID");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var written = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+            Assert.Contains("@캐릭터검색(ARGS)", written, StringComparison.Ordinal);
+            Assert.Contains("CALL 캐릭터검색", written, StringComparison.Ordinal);
+            Assert.Contains("CSTR:(캐릭터검색(", written, StringComparison.Ordinal);
+            Assert.Contains("#DIM 키보드선택커맨드ID", written, StringComparison.Ordinal);
+            Assert.Contains("키보드선택커맨드ID = 1", written, StringComparison.Ordinal);
+            Assert.Contains("ダンジョン用_野盗ボス", written, StringComparison.Ordinal);
+            Assert.Contains("TCVAR:対象キャラ:野外オナニー_部位", written, StringComparison.Ordinal);
+            Assert.DoesNotContain("캐릭터 검색", written, StringComparison.Ordinal);
+            Assert.DoesNotContain("키보드 선택 커맨드 ID", written, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesErbIdentifiersInDimInitializersCaseStatementsAndFunctionArguments()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+#DIM CONST 売春一括指示_FALSE = 0
+#DIM  CONST 売春一括指示_ループ順_避妊方法, 4 = 売春一括指示_FALSE, 売春一括指示_生
+#DIM SAVEDATA 売春一括指示_OPTION = 売春一括指示_FALSE
+@壁尻部屋_彼初回口上, 彼Label
+@SUCCESSION_CHARA(選択キャラ)
+#DIMS 彼Label
+#DIM 選択キャラ,1
+SELECTCASE 売春一括指示_ループ順_避妊方法
+CASE 売春一括指示_FALSE, 売春一括指示_生
+[IF 売春一括指示]
+""",
+            Encoding.UTF8);
+
+        ScanSession session;
+        try
+        {
+            session = new FileScanner().Scan(gameRoot);
+            CompleteIdentifier("売春一括指示_FALSE", "매춘일괄지시_FALSE");
+            CompleteIdentifier("売春一括指示_生", "매춘일괄지시_생");
+            CompleteIdentifier("売春一括指示_ループ順_避妊方法", "매춘일괄지시_루프순_피임방법");
+            CompleteIdentifier("売春一括指示_OPTION", "매춘일괄지시_OPTION");
+            CompleteIdentifier("売春一括指示", "매춘일괄지시");
+            CompleteIdentifier("彼Label", "그Label");
+            CompleteIdentifier("選択キャラ", "선택캐릭터");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var written = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+            Assert.Contains("#DIM CONST 매춘일괄지시_FALSE = 0", written, StringComparison.Ordinal);
+            Assert.Contains("#DIM  CONST 매춘일괄지시_루프순_피임방법, 4 = 매춘일괄지시_FALSE, 매춘일괄지시_생", written, StringComparison.Ordinal);
+            Assert.Contains("#DIM SAVEDATA 매춘일괄지시_OPTION = 매춘일괄지시_FALSE", written, StringComparison.Ordinal);
+            Assert.Contains("@壁尻部屋_彼初回口上, 그Label", written, StringComparison.Ordinal);
+            Assert.Contains("@SUCCESSION_CHARA(선택캐릭터)", written, StringComparison.Ordinal);
+            Assert.Contains("#DIMS 그Label", written, StringComparison.Ordinal);
+            Assert.Contains("#DIM 선택캐릭터,1", written, StringComparison.Ordinal);
+            Assert.Contains("SELECTCASE 매춘일괄지시_루프순_피임방법", written, StringComparison.Ordinal);
+            Assert.Contains("CASE 매춘일괄지시_FALSE, 매춘일괄지시_생", written, StringComparison.Ordinal);
+            Assert.Contains("[IF 매춘일괄지시]", written, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        void CompleteIdentifier(string originalText, string translatedText)
+        {
+            var item = Assert.Single(session.Items, item =>
+                item.SegmentType == IdentifierSegmentTypes.Variable
+                && item.OriginalText == originalText);
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+        }
+    }
+
+    [Fact]
     public void ExportCopy_WritesTranslatedCsvWithoutChangingKey()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -490,6 +614,296 @@ IF CFLAG:{flagName}
         Assert.Contains("5,A감각", writtenAbl, StringComparison.Ordinal);
         Assert.Contains("TALENT:영구발정", writtenErb, StringComparison.Ordinal);
         Assert.Contains("ABL:A감각 >= 3", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCsvKeyListEntriesAsSymbolReferences()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(Path.Combine(csvDir, "Talent.csv"), "1,気骨\r\n2,反抗的\r\n3,気丈\r\n", Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+RETURNF CALC_CHARA_SINGLE_DATA("TALENT",targetChara,"気骨*3,反抗的")
+RETURNF GET_NONEXISTABLE_TALENT_BYNAME("気骨*3,反抗的",charaIndex,charaNo)
+RETURNF CALC_CHARA_MULTIPLE_DATA_BASE(answer,"TALENT",targetChara,"気骨*3,反抗的*11,気丈*12",10,1000)
+RETURNF CALC_CHARA_SINGLE_DATA("TALENT",targetChara,"気骨派")
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "TALENT" && item.OriginalSymbolKey == "気骨"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기개");
+        }
+
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "TALENT" && item.OriginalSymbolKey == "反抗的"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "반항적");
+        }
+
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "TALENT" && item.OriginalSymbolKey == "気丈"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "강인함");
+        }
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("\"기개*3,반항적\"", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("\"기개*3,반항적*11,강인함*12\"", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("\"気骨派\"", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain(" 기개", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain(" 반항적", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain(" 강인함", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"기개派\"", writtenErb, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesDimsLookupArrayDefinitionsAndWrapperArgumentsConsistently()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(
+            Path.Combine(erbDir, "Prostitution.ERH"),
+            """
+#DIMS CONST CUSTOMER_VALUES_ARRAY="対応娼婦","プレイ傾向"
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+@GET_CUSTOMER_VALUEINDEX_FROM_VALUENAME(valueName)
+#FUNCTION
+valueIndex = FINDELEMENT(CUSTOMER_VALUES_ARRAY,valueName,,,1)
+@GET_PROSTITUTION_CUSTOMER_VALUE(targetCustomerIndex,valueName)
+#FUNCTION
+RETURNF CUSTOMER:targetCustomerIndex:GET_CUSTOMER_VALUEINDEX_FROM_VALUENAME(valueName)
+@SET_PROSTITUTION_CUSTOMER_VALUE(targetCustomerIndex,valueName,value)
+#FUNCTION
+valueIndex = GET_CUSTOMER_VALUEINDEX_FROM_VALUENAME(valueName)
+answer = GET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,"プレイ傾向")
+CALLF SET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,"対応娼婦",0)
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        ScanSession session;
+        try
+        {
+            session = new FileScanner().Scan(gameRoot);
+            CompleteDimsKey("対応娼婦", "대응 창부");
+            CompleteDimsKey("プレイ傾向", "플레이 경향");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErh = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Prostitution.ERH"), Encoding.UTF8);
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+
+            Assert.Contains("\"대응 창부\",\"플레이 경향\"", writtenErh, StringComparison.Ordinal);
+            Assert.Contains("GET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,\"플레이 경향\")", writtenErb, StringComparison.Ordinal);
+            Assert.Contains("SET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,\"대응 창부\",0)", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("プレイ傾向", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("対応娼婦", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        void CompleteDimsKey(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item =>
+                         item.SymbolNamespace == "DIMS:CUSTOMER_VALUES_ARRAY"
+                         && item.OriginalSymbolKey == originalText))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesDimsLookupSelectCaseAndDirectFindElementConsistently()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(
+            Path.Combine(erbDir, "Prostitution.ERH"),
+            """
+#DIMS CONST PROSTITUTION_SEX_LIST="男","女","ふたなり"
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "Test.ERB"),
+            """
+SELECTCASE PROSTITUTION_SEX_LIST:customerSex
+    CASE "男"
+        RETURNF "偉そうな"
+    CASE "女","ふたなり"
+        RETURNF "高慢な"
+ENDSELECT
+value = FINDELEMENT(PROSTITUTION_SEX_LIST,"女")
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        ScanSession session;
+        try
+        {
+            session = new FileScanner().Scan(gameRoot);
+            CompleteDimsKey("男", "남");
+            CompleteDimsKey("女", "여");
+            CompleteDimsKey("ふたなり", "후타나리");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErh = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Prostitution.ERH"), Encoding.UTF8);
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+
+            Assert.Contains("\"남\",\"여\",\"후타나리\"", writtenErh, StringComparison.Ordinal);
+            Assert.Contains("CASE \"남\"", writtenErb, StringComparison.Ordinal);
+            Assert.Contains("CASE \"여\",\"후타나리\"", writtenErb, StringComparison.Ordinal);
+            Assert.Contains("FINDELEMENT(PROSTITUTION_SEX_LIST,\"여\")", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"女\"", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        void CompleteDimsKey(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item =>
+                         item.SymbolNamespace == "DIMS:PROSTITUTION_SEX_LIST"
+                         && item.OriginalSymbolKey == originalText))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_RewritesCsvNameSelectCaseLabelsByExactCsvKey()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var csvDir = Path.Combine(gameRoot, "CSV");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(csvDir);
+        Directory.CreateDirectory(erbDir);
+
+        File.WriteAllText(
+            Path.Combine(csvDir, "Talent.csv"),
+            """
+280,回復早い
+290,オトコ
+323,寄生
+324,浄化
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(erbDir, "PrintState.ERB"),
+            """
+SELECTCASE TALENTNAME:index
+    CASE "寄生","浄化","オトコ","オトコっぽい"
+        isLevelSatisfied = 0
+ENDSELECT
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        ScanSession session;
+        try
+        {
+            session = new FileScanner().Scan(gameRoot);
+            CompleteTalentKey("オトコ", "남자");
+            CompleteTalentKey("寄生", "기생");
+            CompleteTalentKey("浄化", "정화");
+
+            var writer = new OutputWriter();
+            writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "PrintState.ERB"), Encoding.UTF8);
+
+            Assert.Contains("CASE \"기생\",\"정화\",\"남자\",\"オトコっぽい\"", writtenErb, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"オトコ\",", writtenErb, StringComparison.Ordinal);
+            Assert.Contains("\"オトコっぽい\"", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        void CompleteTalentKey(string originalText, string translatedText)
+        {
+            foreach (var item in session.Items.Where(item =>
+                         item.SymbolNamespace == "TALENT"
+                         && item.OriginalSymbolKey == originalText))
+            {
+                item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, translatedText);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_DoesNotLetPercentProtectionLeakAcrossLines()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+        File.WriteAllText(
+            Path.Combine(erbDir, "PrintState.ERB"),
+            """
+PRINTFORM %UNFINISHED
+CALL PRINT_IN_CLIENT_WIDTH("性格:")
+""".Replace("\n", "\r\n", StringComparison.Ordinal),
+            Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(gameRoot);
+            var item = Assert.Single(session.Items, item => item.OriginalText == "性格:");
+            item.ApplyTranslationState("검수 필요", "통과", string.Empty, true, "성격:");
+
+            new OutputWriter().Save(session, exportRoot, SaveMode.ExportCopy);
+
+            var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "PrintState.ERB"), Encoding.UTF8);
+            Assert.Contains("CALL PRINT_IN_CLIENT_WIDTH(\"성격:\")", writtenErb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -2113,10 +2527,10 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
 
         File.WriteAllText(Path.Combine(csvDir, "Talent.csv"), "307,交際\r\n610,失踪\r\n", Encoding.UTF8);
         File.WriteAllText(Path.Combine(csvDir, "Base.csv"), "0,体力\r\n", Encoding.UTF8);
-        File.WriteAllText(Path.Combine(csvDir, "Item.csv"), "92,子宮内避妊結界,2000\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(csvDir, "Item.csv"), "64,APTX5000ハーフリング,40000\r\n92,子宮内避妊結界,2000\r\n", Encoding.UTF8);
         File.WriteAllText(
             Path.Combine(erbDir, "Test.ERB"),
-            "IF TALENT:(targetChara):交際\r\nIF TALENT:GETCHARA(205):失踪\r\nIF MAXBASE:(T):体力 > 1000\r\nIF MONEY > ITEMPRICE:子宮内避妊結界\r\n",
+            "IF TALENT:(targetChara):交際\r\nIF TALENT:GETCHARA(205):失踪\r\nIF MAXBASE:(T):体力 > 1000\r\nIF MONEY > ITEMPRICE:子宮内避妊結界\r\nITEMSALES:APTX5000ハーフリング = 1\r\n",
             Encoding.UTF8);
 
         var session = new FileScanner().Scan(gameRoot);
@@ -2140,6 +2554,11 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
             item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "자궁내피임결계");
         }
 
+        foreach (var item in session.Items.Where(item => item.SymbolNamespace == "ITEM" && item.OriginalSymbolKey == "APTX5000ハーフリング"))
+        {
+            item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "APTX5000하프링");
+        }
+
         var writer = new OutputWriter();
         writer.Save(session, exportRoot, SaveMode.ExportCopy);
 
@@ -2148,6 +2567,7 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
         Assert.Contains("TALENT:GETCHARA(205):실종", writtenErb, StringComparison.Ordinal);
         Assert.Contains("MAXBASE:(T):체력 > 1000", writtenErb, StringComparison.Ordinal);
         Assert.Contains("ITEMPRICE:자궁내피임결계", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("ITEMSALES:APTX5000하프링 = 1", writtenErb, StringComparison.Ordinal);
     }
 
     [Fact]

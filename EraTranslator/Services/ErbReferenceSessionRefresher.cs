@@ -6,7 +6,8 @@ public static class ErbReferenceSessionRefresher
 {
     public static void Refresh(ScanSession session)
     {
-        var extractor = new ErbReferenceExtractor(SymbolNamespaceRegistry.CreateFromDocuments(session.Documents.Values));
+        var dimsLookupRegistry = ErbDimsLookupRegistry.BuildFromDocuments(session.Documents.Values.Select(document => document.OriginalText));
+        var extractor = new ErbReferenceExtractor(SymbolNamespaceRegistry.CreateFromDocuments(session.Documents.Values), dimsLookupRegistry);
         foreach (var document in session.Documents.Values.Where(document =>
                      DocumentFileTypes.IsErbLike(document.FileType)))
         {

@@ -34,6 +34,8 @@ public sealed class FileScanner
         var targetFiles = EnumerateTargetFiles(gameRoot).ToList();
         var namespaceRegistry = SymbolNamespaceRegistry.CreateFromRelativePaths(
             targetFiles.Select(path => Path.GetRelativePath(gameRoot, path)));
+        var functionRegistry = BuildFunctionRegistry(targetFiles, cancellationToken);
+        var dimsLookupRegistry = BuildDimsLookupRegistry(targetFiles, cancellationToken);
         var files = targetFiles
             .Select((path, index) => new ScanTargetFile(index, path))
             .ToList();
@@ -54,7 +56,7 @@ public sealed class FileScanner
             targetFile =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = ScanFile(gameRoot, targetFile.Path, namespaceRegistry, session.JosaPackageInfo, cancellationToken);
+                var result = ScanFile(gameRoot, targetFile.Path, namespaceRegistry, functionRegistry, dimsLookupRegistry, session.JosaPackageInfo, cancellationToken);
                 results[targetFile.Index] = result;
                 Interlocked.Add(ref translatableErbSegments, result.ErbItemCount);
                 Interlocked.Add(ref translatableCsvSegments, result.CsvItemCount);
@@ -74,10 +76,14 @@ public sealed class FileScanner
             session.Items.AddRange(result.Items);
         }
 
+        var identifierItems = BuildIdentifierItems(session);
+        session.Items.AddRange(identifierItems);
+
         session.Metrics["Documents"] = session.Documents.Count;
         session.Metrics["Items"] = session.Items.Count;
         session.Metrics["ErbItems"] = translatableErbSegments;
         session.Metrics["CsvItems"] = translatableCsvSegments;
+        session.Metrics["IdentifierItems"] = identifierItems.Count;
         session.Metrics["Warnings"] = warningCount;
         session.Metrics["JosaPatterns"] = josaPatternCount;
         _symbolReferenceAnalyzer.Analyze(session);
@@ -155,18 +161,67 @@ public sealed class FileScanner
         return _maxDegreeOfParallelismOverride ?? Math.Max(1, Environment.ProcessorCount - 2);
     }
 
+    private static ErbCodeFunctionRegistry BuildFunctionRegistry(
+        IReadOnlyCollection<string> targetFiles,
+        CancellationToken cancellationToken)
+    {
+        var encodingDetector = new EncodingDetector();
+        var contents = new List<string>();
+        foreach (var path in targetFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var extension = Path.GetExtension(path).ToLowerInvariant();
+            if (!ErbExtensions.Contains(extension))
+            {
+                continue;
+            }
+
+            var bytes = File.ReadAllBytes(path);
+            var encodingInfo = encodingDetector.Detect(bytes);
+            contents.Add(DecodeContent(bytes, encodingInfo));
+        }
+
+        return ErbCodeFunctionRegistry.BuildFromDocuments(contents);
+    }
+
+    private static ErbDimsLookupRegistry BuildDimsLookupRegistry(
+        IReadOnlyCollection<string> targetFiles,
+        CancellationToken cancellationToken)
+    {
+        var encodingDetector = new EncodingDetector();
+        var contents = new List<string>();
+        foreach (var path in targetFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var extension = Path.GetExtension(path).ToLowerInvariant();
+            if (!ErbExtensions.Contains(extension))
+            {
+                continue;
+            }
+
+            var bytes = File.ReadAllBytes(path);
+            var encodingInfo = encodingDetector.Detect(bytes);
+            contents.Add(DecodeContent(bytes, encodingInfo));
+        }
+
+        return ErbDimsLookupRegistry.BuildFromDocuments(contents);
+    }
+
     private static ScannedFileResult ScanFile(
         string gameRoot,
         string path,
         SymbolNamespaceRegistry namespaceRegistry,
+        ErbCodeFunctionRegistry functionRegistry,
+        ErbDimsLookupRegistry dimsLookupRegistry,
         JosaSupportPackageInfo packageInfo,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         var encodingDetector = new EncodingDetector();
-        var erbExtractor = new ErbExtractor(namespaceRegistry);
-        var erbReferenceExtractor = new ErbReferenceExtractor(namespaceRegistry);
+        var erbExtractor = new ErbExtractor(namespaceRegistry, functionRegistry, dimsLookupRegistry);
+        var erbReferenceExtractor = new ErbReferenceExtractor(namespaceRegistry, dimsLookupRegistry);
+        var erbIdentifierExtractor = new ErbIdentifierExtractor(namespaceRegistry);
         var csvExtractor = new CsvExtractor(namespaceRegistry);
         var josaPatternAnalyzer = new JosaPatternAnalyzer();
 
@@ -217,6 +272,7 @@ public sealed class FileScanner
             var referenceResult = erbReferenceExtractor.Extract(documentId, content);
             document.SymbolReferences.AddRange(referenceResult.references);
             document.VariableLiteralOccurrences.AddRange(referenceResult.variableLiterals);
+            document.IdentifierOccurrences.AddRange(erbIdentifierExtractor.Extract(documentId, content));
             if (DocumentFileTypes.SupportsJosaRewrite(fileType))
             {
                 document.JosaAnalysis = josaPatternAnalyzer.AnalyzeDocument(content, packageInfo);
@@ -255,6 +311,73 @@ public sealed class FileScanner
             csvItemCount,
             document.ScanWarnings.Count,
             document.JosaAnalysis.PatternCount);
+    }
+
+    private static List<ExtractedTextItem> BuildIdentifierItems(ScanSession session)
+    {
+        var items = new List<ExtractedTextItem>();
+        var occurrences = session.Documents.Values
+            .Where(document => DocumentFileTypes.IsErbLike(document.FileType))
+            .SelectMany(document => document.IdentifierOccurrences.Select(occurrence => (document, occurrence)))
+            .OrderBy(pair => pair.occurrence.Kind)
+            .ThenBy(pair => pair.occurrence.OriginalName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.document.RelativePath, StringComparer.Ordinal)
+            .ThenBy(pair => pair.occurrence.AbsoluteStart)
+            .GroupBy(pair => (pair.occurrence.Kind, pair.occurrence.OriginalName), pair => pair, IdentifierOccurrenceKeyComparer.Instance);
+
+        foreach (var group in occurrences)
+        {
+            var first = group.First();
+            var document = first.document;
+            var occurrence = first.occurrence;
+            var segmentType = IdentifierSegmentTypes.ForKind(occurrence.Kind);
+            var segmentId = $"identifier:{(occurrence.Kind == EraTranslator.Models.ErbIdentifierKind.Function ? "function" : "variable")}:{occurrence.OriginalName}";
+            var segment = new TextSegment
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                SegmentType = segmentType,
+                AbsoluteStart = occurrence.AbsoluteStart,
+                Length = occurrence.Length,
+                LineNumber = occurrence.LineNumber,
+                OriginalText = occurrence.OriginalName,
+                SourceKey = IdentifierSegmentTypes.SourceKeyFor(occurrence.Kind, occurrence.OriginalName),
+            };
+            document.Segments.Add(segment);
+            items.Add(new ExtractedTextItem
+            {
+                SegmentId = segment.SegmentId,
+                DocumentId = document.DocumentId,
+                FileType = document.FileType,
+                RelativePath = document.RelativePath,
+                EncodingName = document.EncodingInfo.Name,
+                SegmentType = segment.SegmentType,
+                LineNumber = segment.LineNumber,
+                OriginalText = segment.OriginalText,
+                SourceKey = segment.SourceKey,
+                PreserveWhitespace = false,
+                WarningText = string.Join(" | ", document.ScanWarnings),
+            });
+        }
+
+        return items;
+    }
+
+    private sealed class IdentifierOccurrenceKeyComparer : IEqualityComparer<(EraTranslator.Models.ErbIdentifierKind Kind, string OriginalName)>
+    {
+        public static IdentifierOccurrenceKeyComparer Instance { get; } = new();
+
+        public bool Equals(
+            (EraTranslator.Models.ErbIdentifierKind Kind, string OriginalName) x,
+            (EraTranslator.Models.ErbIdentifierKind Kind, string OriginalName) y)
+        {
+            return x.Kind == y.Kind && string.Equals(x.OriginalName, y.OriginalName, StringComparison.Ordinal);
+        }
+
+        public int GetHashCode((EraTranslator.Models.ErbIdentifierKind Kind, string OriginalName) obj)
+        {
+            return HashCode.Combine(obj.Kind, StringComparer.Ordinal.GetHashCode(obj.OriginalName));
+        }
     }
 
     private static string DetectNewLine(string content)

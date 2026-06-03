@@ -113,10 +113,16 @@ public sealed class PhaseScopedGlossaryBuilder
             return phase switch
             {
                 TranslationPhaseKind.CsvGeneral => item.IsReferenceBearingKey,
+                TranslationPhaseKind.ErbIdentifiers => item.IsReferenceBearingKey,
                 TranslationPhaseKind.Erh or TranslationPhaseKind.Erb => item.IsReferenceBearingKey
                     || item.CsvFieldRole == CsvFieldRole.TranslatableValue,
                 _ => false,
             };
+        }
+
+        if (IdentifierSegmentTypes.IsIdentifier(item.SegmentType))
+        {
+            return phase is TranslationPhaseKind.Erh or TranslationPhaseKind.Erb;
         }
 
         return phase == TranslationPhaseKind.Erb

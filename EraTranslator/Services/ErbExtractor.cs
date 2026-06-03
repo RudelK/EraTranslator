@@ -5,9 +5,32 @@ namespace EraTranslator.Services;
 public sealed partial class ErbExtractor
 {
     private static readonly string[] ReservedScriptVariables = ["LOCAL", "LOCALS", "ARG", "ARGS", "RESULT", "RESULTS"];
-    private static readonly string[] ProtectedCodeArgumentFunctionNames = ["GETCONFIG", "VARSIZE", "LOADTEXT", "SAVETEXT"];
+    // These arguments carry code/data syntax. CSV key-list entries are still rewritten
+    // later through ErbReferenceExtractor symbol references, not through free text MT.
+    private static readonly string[] ProtectedCodeArgumentFunctionNames =
+    [
+        "GETCONFIG",
+        "VARSIZE",
+        "LOADTEXT",
+        "SAVETEXT",
+        "CALC_CHARA_SINGLE_DATA",
+        "CALC_CHARA_SINGLE_DATA_RULED",
+        "CALC_CHARA_MULTIPLE_DATA",
+        "CALC_CHARA_MULTIPLE_DATA_BASE",
+        "CALC_CHARA_RANGED_DATA",
+        "GET_NONEXISTABLE_CHARA_NO_DEFAULTABLE_SINGLE_DATA",
+        "GET_NONEXISTABLE_VALUES_BYNAME",
+        "GET_NONEXISTABLE_TALENT_BYNAME",
+        "GET_NONEXISTABLE_ABL_BYNAME",
+        "GET_NONEXISTABLE_CFLAG_BYNAME",
+        "GET_NONEXISTABLE_EXP_BYNAME",
+        "GET_NONEXISTABLE_CSTR_BYNAME",
+    ];
     private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
+    private readonly SymbolNamespaceRegistry _namespaceRegistry;
     private readonly Regex _scriptSyntaxTokenPattern;
+    private readonly ErbCodeFunctionRegistry _functionRegistry;
+    private readonly ErbDimsLookupRegistry _dimsLookupRegistry;
 
     public ErbExtractor()
         : this(SymbolNamespaceRegistry.Default)
@@ -15,8 +38,24 @@ public sealed partial class ErbExtractor
     }
 
     public ErbExtractor(SymbolNamespaceRegistry namespaceRegistry)
+        : this(namespaceRegistry, ErbCodeFunctionRegistry.Empty)
     {
+    }
+
+    public ErbExtractor(SymbolNamespaceRegistry namespaceRegistry, ErbCodeFunctionRegistry functionRegistry)
+        : this(namespaceRegistry, functionRegistry, ErbDimsLookupRegistry.Empty)
+    {
+    }
+
+    public ErbExtractor(
+        SymbolNamespaceRegistry namespaceRegistry,
+        ErbCodeFunctionRegistry functionRegistry,
+        ErbDimsLookupRegistry dimsLookupRegistry)
+    {
+        _namespaceRegistry = namespaceRegistry;
         _scriptSyntaxTokenPattern = BuildScriptSyntaxTokenPattern(namespaceRegistry);
+        _functionRegistry = functionRegistry;
+        _dimsLookupRegistry = dimsLookupRegistry;
     }
 
     public List<TextSegment> Extract(string documentId, string content)
@@ -28,7 +67,10 @@ public sealed partial class ErbExtractor
         var insideDataBlock = false;
         var insideDirectiveContinuation = false;
         var directiveContinuationParenDepth = 0;
+        var directiveContinuationLookupNamespace = string.Empty;
         var insidePaletteLookupFunction = false;
+        var selectCaseLookupNamespaces = new Stack<string>();
+        var selectCaseCsvNameNamespaces = new Stack<string>();
 
         for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
         {
@@ -48,8 +90,13 @@ public sealed partial class ErbExtractor
 
             if (insideDirectiveContinuation)
             {
-                ExtractDirectiveStrings(normalizedLine, directiveContinuationParenDepth, out directiveContinuationParenDepth);
+                ExtractDirectiveStrings(normalizedLine, directiveContinuationParenDepth, directiveContinuationLookupNamespace, out directiveContinuationParenDepth);
                 insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
+                if (!insideDirectiveContinuation)
+                {
+                    directiveContinuationLookupNamespace = string.Empty;
+                }
+
                 absoluteOffset += line.Length + 1;
                 continue;
             }
@@ -58,8 +105,17 @@ public sealed partial class ErbExtractor
             {
                 if (DimDirectivePattern().IsMatch(normalizedLine))
                 {
-                    ExtractDirectiveStrings(normalizedLine, 0, out directiveContinuationParenDepth);
+                    directiveContinuationLookupNamespace = TryReadDimArrayName(normalizedLine, out var dimArrayName)
+                        && _dimsLookupRegistry.IsLookupArray(dimArrayName)
+                            ? ErbDimsLookupRegistry.ToNamespace(dimArrayName)
+                            : string.Empty;
+                    ExtractDirectiveStrings(normalizedLine, 0, directiveContinuationLookupNamespace, out directiveContinuationParenDepth);
                     insideDirectiveContinuation = ShouldContinueDirective(normalizedLine, directiveContinuationParenDepth);
+                    if (!insideDirectiveContinuation)
+                    {
+                        directiveContinuationLookupNamespace = string.Empty;
+                    }
+
                     absoluteOffset += line.Length + 1;
                     continue;
                 }
@@ -99,6 +155,24 @@ public sealed partial class ErbExtractor
 
             ExtractCharacterSearchArguments(normalizedLine);
 
+            if (TryReadSelectCaseLookupNamespace(normalizedLine, out var selectCaseLookupNamespace))
+            {
+                selectCaseLookupNamespaces.Push(selectCaseLookupNamespace);
+            }
+            else if (IsSelectCaseLine(normalizedLine))
+            {
+                selectCaseLookupNamespaces.Push(string.Empty);
+            }
+
+            if (TryReadSelectCaseCsvNameNamespace(normalizedLine, out var selectCaseCsvNameNamespace))
+            {
+                selectCaseCsvNameNamespaces.Push(selectCaseCsvNameNamespace);
+            }
+            else if (IsSelectCaseLine(normalizedLine))
+            {
+                selectCaseCsvNameNamespaces.Push(string.Empty);
+            }
+
             var htmlContext = HtmlAssignmentPattern().IsMatch(normalizedLine) || HtmlPrintPattern().IsMatch(normalizedLine);
             var protectedQuotedRanges = CollectProtectedQuotedRanges(normalizedLine, "html-markup");
             var imageResourceContext = LooksLikeImageResourceContext(normalizedLine);
@@ -108,6 +182,8 @@ public sealed partial class ErbExtractor
                 if (skipQuotedStrings
                     || protectedQuotedRanges.Any(range => RangesOverlap(range.start, range.end - range.start, match.Index, match.Length))
                     || (insidePaletteLookupFunction && IsCaseLabelLine(normalizedLine))
+                    || IsDimsLookupCaseLabel(normalizedLine, selectCaseLookupNamespaces)
+                    || IsCsvNameCaseLabel(normalizedLine, selectCaseCsvNameNamespaces)
                     || IsQuotedStringProtectedCodeArgument(normalizedLine, match.Index, match.Length))
                 {
                     continue;
@@ -147,15 +223,25 @@ public sealed partial class ErbExtractor
             {
                 var tail = printMatch.Groups["tail"].Value;
                 var tailOffset = printMatch.Groups["tail"].Index;
-                if (!tail.Contains('"'))
+                if (!tail.Contains('"') || tail.Contains("\\@", StringComparison.Ordinal))
                 {
                     ExtractPrintTailSegments(tail, tailOffset);
                 }
             }
 
+            if (IsEndSelectLine(normalizedLine) && selectCaseLookupNamespaces.Count > 0)
+            {
+                selectCaseLookupNamespaces.Pop();
+            }
+
+            if (IsEndSelectLine(normalizedLine) && selectCaseCsvNameNamespaces.Count > 0)
+            {
+                selectCaseCsvNameNamespaces.Pop();
+            }
+
             absoluteOffset += line.Length + 1;
 
-            void ExtractDirectiveStrings(string sourceLine, int startingParenDepth, out int endingParenDepth)
+            void ExtractDirectiveStrings(string sourceLine, int startingParenDepth, string lookupNamespace, out int endingParenDepth)
             {
                 var scanResult = ScanDirectiveQuotedStrings(sourceLine, startingParenDepth);
                 endingParenDepth = scanResult.endingParenDepth;
@@ -164,6 +250,18 @@ public sealed partial class ErbExtractor
                     var value = quotedString.value;
                     if (!TextHeuristics.ContainsTranslatableText(value))
                     {
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(lookupNamespace))
+                    {
+                        AddSegment(
+                            "erb-dims-lookup-key",
+                            quotedString.relativeStart,
+                            value,
+                            lookupNamespace,
+                            value,
+                            isReferenceBearingKey: true);
                         continue;
                     }
 
@@ -371,10 +469,18 @@ public sealed partial class ErbExtractor
                 return ranges;
             }
 
-            void AddSegment(string type, int relativeStart, string value)
+            void AddSegment(
+                string type,
+                int relativeStart,
+                string value,
+                string symbolNamespace = "",
+                string originalSymbolKey = "",
+                bool isReferenceBearingKey = false)
             {
+                var isNaturalPrintTail = type.StartsWith("print-tail", StringComparison.Ordinal)
+                    && LooksLikeNaturalPrintTailText(value);
                 if (!TextHeuristics.ContainsTranslatableText(value)
-                    || TextHeuristics.LooksLikeCodeOnly(value)
+                    || (!isNaturalPrintTail && TextHeuristics.LooksLikeCodeOnly(value))
                     || LooksLikeErbSymbolExpression(value))
                 {
                     return;
@@ -398,6 +504,10 @@ public sealed partial class ErbExtractor
                     Length = value.Length,
                     LineNumber = lineIndex + 1,
                     OriginalText = value,
+                    SourceKey = isReferenceBearingKey ? $"{symbolNamespace}:{originalSymbolKey}" : null,
+                    SymbolNamespace = symbolNamespace,
+                    OriginalSymbolKey = originalSymbolKey,
+                    IsReferenceBearingKey = isReferenceBearingKey,
                 });
             }
 
@@ -419,16 +529,37 @@ public sealed partial class ErbExtractor
                     return;
                 }
 
+                var trimmedTail = tailValue.Trim();
+                if (LooksLikeNaturalPrintTailText(trimmedTail))
+                {
+                    var trimOffset = tailValue.IndexOf(trimmedTail, StringComparison.Ordinal);
+                    var segmentStart = lineOffset + Math.Max(trimOffset, 0);
+                    if (!TryAddDisplayPrintTextChunks("print-tail", trimmedTail, segmentStart))
+                    {
+                        AddSegment("print-tail", segmentStart, trimmedTail);
+                    }
+
+                    return;
+                }
+
                 var ternaryMatches = InlineConditionalPattern().Matches(tailValue);
                 if (ternaryMatches.Count > 0)
                 {
+                    var consumedEnd = 0;
                     foreach (Match ternary in ternaryMatches)
                     {
+                        TryAddPrintText(
+                            "print-tail",
+                            "print-tail-fragment",
+                            tailValue[consumedEnd..ternary.Index],
+                            lineOffset + consumedEnd);
+
                         var inner = ternary.Groups["inner"].Value;
                         var questionIndex = inner.IndexOf('?');
                         var hashIndex = inner.LastIndexOf('#');
                         if (questionIndex < 0 || hashIndex <= questionIndex)
                         {
+                            consumedEnd = ternary.Index + ternary.Length;
                             continue;
                         }
 
@@ -436,46 +567,132 @@ public sealed partial class ErbExtractor
                         var rightRaw = inner[(hashIndex + 1)..];
                         var left = leftRaw.Trim();
                         var right = rightRaw.Trim();
+                        var innerOffset = ternary.Groups["inner"].Index;
 
-                        if (ContainsScriptSyntaxToken(left)
-                            && !ShouldKeepWholeCodeMixedText(left)
-                            && TryAddCodeMixedTextSpans("inline-conditional-left-fragment", left, lineOffset + ternary.Groups["inner"].Index + questionIndex + 1 + leftRaw.IndexOf(left, StringComparison.Ordinal)))
-                        {
-                            // Code-mixed condition branches should share stable label translations.
-                        }
-                        else if (TextHeuristics.ContainsTranslatableText(left))
-                        {
-                            var relative = ternary.Groups["inner"].Index + questionIndex + 1 + leftRaw.IndexOf(left, StringComparison.Ordinal);
-                            AddSegment("inline-conditional-left", lineOffset + relative, left);
-                        }
+                        TryAddPrintText(
+                            "inline-conditional-left",
+                            "inline-conditional-left-fragment",
+                            left,
+                            lineOffset + innerOffset + questionIndex + 1 + leftRaw.IndexOf(left, StringComparison.Ordinal));
 
-                        if (ContainsScriptSyntaxToken(right)
-                            && !ShouldKeepWholeCodeMixedText(right)
-                            && TryAddCodeMixedTextSpans("inline-conditional-right-fragment", right, lineOffset + ternary.Groups["inner"].Index + hashIndex + 1 + rightRaw.IndexOf(right, StringComparison.Ordinal)))
-                        {
-                            // Code-mixed condition branches should share stable label translations.
-                        }
-                        else if (TextHeuristics.ContainsTranslatableText(right))
-                        {
-                            var relative = ternary.Groups["inner"].Index + hashIndex + 1 + rightRaw.IndexOf(right, StringComparison.Ordinal);
-                            AddSegment("inline-conditional-right", lineOffset + relative, right);
-                        }
+                        TryAddPrintText(
+                            "inline-conditional-right",
+                            "inline-conditional-right-fragment",
+                            right,
+                            lineOffset + innerOffset + hashIndex + 1 + rightRaw.IndexOf(right, StringComparison.Ordinal));
+
+                        consumedEnd = ternary.Index + ternary.Length;
                     }
 
+                    TryAddPrintText(
+                        "print-tail",
+                        "print-tail-fragment",
+                        tailValue[consumedEnd..],
+                        lineOffset + consumedEnd);
                     return;
                 }
 
-                if (ContainsScriptSyntaxToken(tailValue)
-                    && !ShouldKeepWholeCodeMixedText(tailValue)
-                    && TryAddCodeMixedTextSpans("print-tail-fragment", tailValue, lineOffset))
+                TryAddPrintText("print-tail", "print-tail-fragment", tailValue, lineOffset);
+            }
+
+            bool TryAddPrintText(string wholeType, string fragmentType, string value, int relativeStart)
+            {
+                var trimmed = value.Trim();
+                if (trimmed.Length == 0)
                 {
-                    return;
+                    return false;
                 }
 
-                if (TextHeuristics.ContainsTranslatableText(tailValue))
+                var offset = value.IndexOf(trimmed, StringComparison.Ordinal);
+                var segmentStart = relativeStart + Math.Max(offset, 0);
+
+                if (TryAddDisplayPrintTextChunks(wholeType, trimmed, segmentStart))
                 {
-                    AddSegment("print-tail", lineOffset, tailValue);
+                    return true;
                 }
+
+                if (LooksLikeNaturalPrintTailText(trimmed))
+                {
+                    AddSegment(wholeType, segmentStart, trimmed);
+                    return true;
+                }
+
+                if (TryAddQuotedDisplayStringsInsidePercent(fragmentType, trimmed, segmentStart))
+                {
+                    return true;
+                }
+
+                if (ContainsScriptSyntaxToken(trimmed)
+                    && !ShouldKeepWholeCodeMixedText(trimmed)
+                    && TryAddCodeMixedTextSpans(fragmentType, trimmed, segmentStart))
+                {
+                    return true;
+                }
+
+                if (TextHeuristics.ContainsTranslatableText(trimmed))
+                {
+                    AddSegment(wholeType, segmentStart, trimmed);
+                    return true;
+                }
+
+                return false;
+            }
+
+            bool TryAddDisplayPrintTextChunks(string segmentType, string value, int relativeStart)
+            {
+                if (!LooksLikeNaturalPrintTailText(value))
+                {
+                    return false;
+                }
+
+                var chunks = SplitByLayoutWhitespace(value, minimumRunLength: 2);
+                if (chunks.Count <= 1)
+                {
+                    var singleSpaceChunks = SplitByLayoutWhitespace(value, minimumRunLength: 1);
+                    if (singleSpaceChunks.Count > 1
+                        && singleSpaceChunks.All(chunk => LooksLikeDisplayLabelOrRatePrintText(chunk.value)))
+                    {
+                        chunks = singleSpaceChunks;
+                    }
+                }
+
+                if (chunks.Count <= 1)
+                {
+                    return false;
+                }
+
+                if (chunks.Any(chunk => !LooksLikeNaturalPrintTailText(chunk.value)))
+                {
+                    return false;
+                }
+
+                foreach (var chunk in chunks)
+                {
+                    AddSegment(segmentType, relativeStart + chunk.start, chunk.value);
+                }
+
+                return true;
+            }
+
+            bool TryAddQuotedDisplayStringsInsidePercent(string segmentType, string value, int relativeStart)
+            {
+                var added = false;
+                foreach (Match match in QuotedStringPattern().Matches(value))
+                {
+                    var content = match.Groups["content"].Value.Replace("\"\"", "\"", StringComparison.Ordinal);
+                    if (!TextHeuristics.ContainsTranslatableText(content)
+                        || TextHeuristics.LooksLikeCodeOnly(content)
+                        || TextHeuristics.IsNumericLike(content)
+                        || !IsRangeInsidePercentExpression(value, match.Index, match.Length))
+                    {
+                        continue;
+                    }
+
+                    AddSegment(segmentType, relativeStart + match.Groups["content"].Index, content);
+                    added = true;
+                }
+
+                return added;
             }
         }
 
@@ -775,6 +992,11 @@ public sealed partial class ErbExtractor
             return false;
         }
 
+        if (LooksLikeNaturalParenthesizedText(value))
+        {
+            return true;
+        }
+
         var visibleText = _scriptSyntaxTokenPattern.Replace(value, string.Empty).Trim();
         if (!TextHeuristics.ContainsTranslatableText(visibleText))
         {
@@ -783,6 +1005,164 @@ public sealed partial class ErbExtractor
 
         return CodeMixedSentenceMarkerPattern().IsMatch(visibleText)
             || CodeMixedPredicateEndingPattern().IsMatch(visibleText);
+    }
+
+    private bool LooksLikeNaturalParenthesizedText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Contains('%', StringComparison.Ordinal)
+            || value.Contains('{', StringComparison.Ordinal)
+            || value.Contains('<', StringComparison.Ordinal)
+            || CodeExpressionMarkerPattern().IsMatch(value)
+            || ContainsRegisteredFunctionCall(value))
+        {
+            return false;
+        }
+
+        return NaturalParenthesizedTextPattern().IsMatch(value)
+            && value.Any(IsJapaneseTextCharacter);
+    }
+
+    private bool LooksLikeNaturalPrintTailText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Contains("\\@", StringComparison.Ordinal)
+            || !TextHeuristics.ContainsTranslatableText(value))
+        {
+            return false;
+        }
+
+        if (LooksLikeDisplayLabelOrRatePrintText(value))
+        {
+            return true;
+        }
+
+        var visibleText = ProtectedInlineTokenPattern().Replace(value, string.Empty).Trim();
+        if (visibleText.Length == 0)
+        {
+            return false;
+        }
+
+        if (LooksLikeDisplayLabelOrRatePrintText(visibleText))
+        {
+            return true;
+        }
+
+        if (CodeExpressionOperatorPattern().IsMatch(visibleText))
+        {
+            return false;
+        }
+
+        return NaturalParenthesizedTextPattern().IsMatch(visibleText)
+            || CodeMixedSentenceMarkerPattern().IsMatch(visibleText)
+            || CodeMixedPredicateEndingPattern().IsMatch(visibleText);
+    }
+
+    private static bool LooksLikeDisplayLabelOrRatePrintText(string value)
+    {
+        if (!TextHeuristics.ContainsTranslatableText(value)
+            || StartsWithAsciiNamespaceReference(value))
+        {
+            return false;
+        }
+
+        var visibleText = ProtectedInlineTokenPattern().Replace(value, string.Empty);
+        if (!visibleText.Contains(':', StringComparison.Ordinal)
+            && !visibleText.Contains('：', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return visibleText.Contains('円', StringComparison.Ordinal)
+            || visibleText.Contains('分', StringComparison.Ordinal)
+            || visibleText.Contains('×', StringComparison.Ordinal)
+            || visibleText.Contains('％', StringComparison.Ordinal)
+            || visibleText.Contains('？', StringComparison.Ordinal)
+            || visibleText.Contains('…', StringComparison.Ordinal)
+            || ProtectedInlineTokenPattern().IsMatch(value);
+    }
+
+    private static bool StartsWithAsciiNamespaceReference(string value)
+    {
+        var trimmed = value.TrimStart();
+        var colonIndex = trimmed.IndexOf(':');
+        if (colonIndex <= 0)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < colonIndex; index++)
+        {
+            var ch = trimmed[index];
+            if (ch is not (>= 'A' and <= 'Z') and not (>= 'a' and <= 'z') and not (>= '0' and <= '9') and not '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static List<(int start, string value)> SplitByLayoutWhitespace(string value, int minimumRunLength)
+    {
+        var chunks = new List<(int start, string value)>();
+        var chunkStart = 0;
+        var index = 0;
+        while (index < value.Length)
+        {
+            if (!char.IsWhiteSpace(value[index]))
+            {
+                index++;
+                continue;
+            }
+
+            var runStart = index;
+            while (index < value.Length && char.IsWhiteSpace(value[index]))
+            {
+                index++;
+            }
+
+            if (index - runStart < minimumRunLength)
+            {
+                continue;
+            }
+
+            AddChunk(chunkStart, runStart);
+            chunkStart = index;
+        }
+
+        AddChunk(chunkStart, value.Length);
+        return chunks;
+
+        void AddChunk(int start, int end)
+        {
+            if (end <= start)
+            {
+                return;
+            }
+
+            var raw = value[start..end];
+            var trimmed = raw.Trim();
+            if (trimmed.Length == 0)
+            {
+                return;
+            }
+
+            chunks.Add((start + raw.IndexOf(trimmed, StringComparison.Ordinal), trimmed));
+        }
+    }
+
+    private bool ContainsRegisteredFunctionCall(string value)
+    {
+        foreach (Match match in FunctionCallTokenPattern().Matches(value))
+        {
+            if (_functionRegistry.Contains(match.Groups["name"].Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private List<(int start, int end)> CollectScriptSyntaxRanges(string value)
@@ -1140,6 +1520,16 @@ public sealed partial class ErbExtractor
             return false;
         }
 
+        if (LooksLikeNaturalParenthesizedText(value))
+        {
+            return false;
+        }
+
+        if (LooksLikeNaturalPrintTailText(value))
+        {
+            return false;
+        }
+
         var sanitized = _scriptSyntaxTokenPattern.Replace(value, string.Empty);
         if (string.Equals(sanitized, value, StringComparison.Ordinal))
         {
@@ -1173,9 +1563,10 @@ public sealed partial class ErbExtractor
         return string.Join("|", namespaceRegistry.OrderedNamespaces.Select(Regex.Escape));
     }
 
-    private static bool IsQuotedStringProtectedCodeArgument(string sourceLine, int quoteStart, int quoteLength)
+    private bool IsQuotedStringProtectedCodeArgument(string sourceLine, int quoteStart, int quoteLength)
     {
         return IsRangeInsidePercentExpression(sourceLine, quoteStart, quoteLength)
+            || _dimsLookupRegistry.IsLookupFunctionArgument(sourceLine, quoteStart, quoteLength)
             || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, ProtectedCodeArgumentFunctionNames)
             || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, PaletteLookupFunctionNames)
             || IsRangeInsideCommandArgument(sourceLine, quoteStart, quoteLength, ["LOADTEXT", "SAVETEXT"])
@@ -1188,6 +1579,78 @@ public sealed partial class ErbExtractor
         return trimmed.Length > "CASE".Length
             && trimmed.StartsWith("CASE", StringComparison.OrdinalIgnoreCase)
             && char.IsWhiteSpace(trimmed["CASE".Length]);
+    }
+
+    private bool TryReadSelectCaseLookupNamespace(string sourceLine, out string symbolNamespace)
+    {
+        symbolNamespace = string.Empty;
+        var match = SelectCaseDimsArrayPattern().Match(sourceLine);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var arrayName = match.Groups["array"].Value;
+        if (!_dimsLookupRegistry.IsLookupArray(arrayName))
+        {
+            return false;
+        }
+
+        symbolNamespace = ErbDimsLookupRegistry.ToNamespace(arrayName);
+        return true;
+    }
+
+    private bool TryReadSelectCaseCsvNameNamespace(string sourceLine, out string symbolNamespace)
+    {
+        symbolNamespace = string.Empty;
+        var match = SelectCaseCsvNamePattern().Match(sourceLine);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        return _namespaceRegistry.TryResolveNamespace(match.Groups["namespace"].Value, out symbolNamespace);
+    }
+
+    private static bool IsSelectCaseLine(string sourceLine)
+    {
+        var trimmed = sourceLine.TrimStart();
+        return trimmed.Length > "SELECTCASE".Length
+            && trimmed.StartsWith("SELECTCASE", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed["SELECTCASE".Length]);
+    }
+
+    private static bool IsEndSelectLine(string sourceLine)
+    {
+        var trimmed = sourceLine.TrimStart();
+        return trimmed.Equals("ENDSELECT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDimsLookupCaseLabel(string sourceLine, Stack<string> selectCaseLookupNamespaces)
+    {
+        return selectCaseLookupNamespaces.Count > 0
+            && !string.IsNullOrWhiteSpace(selectCaseLookupNamespaces.Peek())
+            && IsCaseLabelLine(sourceLine);
+    }
+
+    private static bool IsCsvNameCaseLabel(string sourceLine, Stack<string> selectCaseCsvNameNamespaces)
+    {
+        return selectCaseCsvNameNamespaces.Count > 0
+            && !string.IsNullOrWhiteSpace(selectCaseCsvNameNamespaces.Peek())
+            && IsCaseLabelLine(sourceLine);
+    }
+
+    private static bool TryReadDimArrayName(string sourceLine, out string arrayName)
+    {
+        arrayName = string.Empty;
+        var match = DimArrayNamePattern().Match(sourceLine);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        arrayName = match.Groups["name"].Value;
+        return true;
     }
 
     private static bool TryReadFunctionName(string trimmedLine, out string functionName)
@@ -1486,6 +1949,15 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"^\s*#DIMS?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex DimDirectivePattern();
 
+    [GeneratedRegex(@"^\s*#DIMS?\s+(?:(?:CONST|SAVEDATA|DYNAMIC|GLOBAL|REF|CHARADATA)\s+|,\s*)*(?<name>[\p{L}_][\p{L}\p{N}_]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DimArrayNamePattern();
+
+    [GeneratedRegex("""^\s*SELECTCASE\s+(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SelectCaseDimsArrayPattern();
+
+    [GeneratedRegex("""^\s*SELECTCASE\s+(?<namespace>[\p{L}_][\p{L}\p{N}_]*)NAME\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SelectCaseCsvNamePattern();
+
     [GeneratedRegex(@"^\s*PRINT_IMG\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex PrintImageCommandPattern();
 
@@ -1497,4 +1969,19 @@ public sealed partial class ErbExtractor
 
     [GeneratedRegex(@"[\u3040-\u309F].*(?:した|している|してる|だった|です|ます|ない|いる|ある|った|いた|えた|れた|た)$", RegexOptions.Compiled)]
     private static partial Regex CodeMixedPredicateEndingPattern();
+
+    [GeneratedRegex(@"[\p{L}\p{N}_ー々〆ヶ]+[（(][\p{L}\p{N}_ー々〆ヶ]+[）)]", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex NaturalParenthesizedTextPattern();
+
+    [GeneratedRegex(@"(?:&&|\|\||==|!=|>=|<=|(?<![（(])!|(?<![）)])>|<|:)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex CodeExpressionMarkerPattern();
+
+    [GeneratedRegex(@"(?:&&|\|\||==|!=|>=|<=|(?<![（(])!|(?<![）)])>|<|\?|:)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex CodeExpressionOperatorPattern();
+
+    [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex ProtectedInlineTokenPattern();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?<name>[\p{L}_][\p{L}\p{N}_]*)\s*\(", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex FunctionCallTokenPattern();
 }

@@ -35,6 +35,7 @@ public sealed class SymbolNamespaceRegistry
         "STR",
         "ITEM",
         "ITEMPRICE",
+        "ITEMSALES",
         "BASE",
         "MAXBASE",
         "DOWNBASE",

@@ -348,28 +348,14 @@ public sealed class TranslationCoordinator : IDisposable
                             }
                             else
                             {
-                                if (IsPlaceholderCountMismatch(tokenError))
-                                {
-                                    var reviewItems = ApplyReviewToGroup(
-                                        activeGroupedByOriginal,
-                                        item.OriginalText,
-                                        normalizedTranslated,
-                                        "토큰 검토 필요",
-                                        tokenError);
-                                    processedCount += MarkProcessed(reviewItems);
-                                    changedItems.AddRange(reviewItems);
-                                }
-                                else
-                                {
-                                    var reviewItems = ApplyReviewToGroup(
-                                        activeGroupedByOriginal,
-                                        item.OriginalText,
-                                        normalizedTranslated,
-                                        validationLabel,
-                                        tokenError);
-                                    processedCount += MarkProcessed(reviewItems);
-                                    changedItems.AddRange(reviewItems);
-                                }
+                                var failureItems = ApplyFailureToGroup(
+                                    activeGroupedByOriginal,
+                                    item.OriginalText,
+                                    "번역 실패",
+                                    validationLabel,
+                                    tokenError);
+                                processedCount += MarkProcessed(failureItems);
+                                changedItems.AddRange(failureItems);
                             }
 
                             continue;
@@ -572,12 +558,12 @@ public sealed class TranslationCoordinator : IDisposable
             originalText,
             item =>
             {
-                var normalizedTranslation = TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
-                var hardFailureReason = TranslationQualityRules.GetHardFailureReason(
+                var normalizedTranslation = NormalizeTranslationForItem(item, translatedText);
+                var hardFailureReason = GetHardFailureReasonForItem(
+                    item,
                     normalizedTranslation,
                     sourceLanguage,
-                    targetLanguage,
-                    item.OriginalText);
+                    targetLanguage);
                 if (hardFailureReason is not null)
                 {
                     item.ApplyTranslationState(
@@ -592,7 +578,9 @@ public sealed class TranslationCoordinator : IDisposable
                 var resolvedReviewReason = MergeReviewReason(
                     forceReview,
                     reviewReason,
-                    TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
+                    IdentifierSegmentTypes.IsIdentifier(item.SegmentType)
+                        ? null
+                        : TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
                 item.ApplyTranslationState(
                     resolvedReviewReason is null ? "번역 완료" : "검수 필요",
                     "통과",
@@ -609,12 +597,12 @@ public sealed class TranslationCoordinator : IDisposable
 
         foreach (var item in propagationGroup.Where(item => !activeSegmentIds.Contains(item.SegmentId) && item.NeedsTranslation))
         {
-            var normalizedTranslation = TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
-            var hardFailureReason = TranslationQualityRules.GetHardFailureReason(
+            var normalizedTranslation = NormalizeTranslationForItem(item, translatedText);
+            var hardFailureReason = GetHardFailureReasonForItem(
+                item,
                 normalizedTranslation,
                 sourceLanguage,
-                targetLanguage,
-                item.OriginalText);
+                targetLanguage);
             if (hardFailureReason is not null)
             {
                 item.ApplyTranslationState(
@@ -630,7 +618,9 @@ public sealed class TranslationCoordinator : IDisposable
             var resolvedReviewReason = MergeReviewReason(
                 forceReview,
                 reviewReason,
-                TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
+                IdentifierSegmentTypes.IsIdentifier(item.SegmentType)
+                    ? null
+                    : TranslationQualityRules.GetReviewReason(item.OriginalText, normalizedTranslation));
             item.ApplyTranslationState(
                 resolvedReviewReason is null ? "번역 완료" : "검수 필요",
                 "통과",
@@ -642,6 +632,28 @@ public sealed class TranslationCoordinator : IDisposable
         }
 
         return affectedItems;
+    }
+
+    private static string NormalizeTranslationForItem(ExtractedTextItem item, string translatedText)
+    {
+        return IdentifierSegmentTypes.IsIdentifier(item.SegmentType)
+            ? TranslationQualityRules.NormalizeIdentifierText(translatedText)
+            : TranslationQualityRules.NormalizeTranslatedText(item.FileType, translatedText, item.PreserveWhitespace);
+    }
+
+    private static TranslationQualityRules.HardFailureReason? GetHardFailureReasonForItem(
+        ExtractedTextItem item,
+        string normalizedTranslation,
+        string sourceLanguage,
+        string targetLanguage)
+    {
+        return IdentifierSegmentTypes.IsIdentifier(item.SegmentType)
+            ? TranslationQualityRules.GetIdentifierHardFailureReason(normalizedTranslation)
+            : TranslationQualityRules.GetHardFailureReason(
+                normalizedTranslation,
+                sourceLanguage,
+                targetLanguage,
+                item.OriginalText);
     }
 
     private static string? MergeReviewReason(bool forceReview, string configuredReason, string? qualityReason)
@@ -745,11 +757,6 @@ public sealed class TranslationCoordinator : IDisposable
             placeholder.Length >= 2
             && placeholder.StartsWith('%')
             && placeholder.EndsWith('%'));
-    }
-
-    private static bool IsPlaceholderCountMismatch(string error)
-    {
-        return error.Contains("보호 토큰 개수가 일치하지 않습니다", StringComparison.Ordinal);
     }
 
     private static bool SupportsPromptingDictionary(TranslationProviderType providerType)

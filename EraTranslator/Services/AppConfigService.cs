@@ -6,6 +6,8 @@ namespace EraTranslator.Services;
 
 public sealed class AppConfigService(string? baseDirectory = null)
 {
+    private const string LegacyDefaultProtectedFullWidthCharacters = "／【】＜＞「」（）『』％";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -63,7 +65,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 EnableKanjiReadingFallback = loaded.EnableKanjiReadingFallback,
                 DictionaryFirstMaxTermLength = loaded.DictionaryFirstMaxTermLength <= 0 ? new AppConfig().DictionaryFirstMaxTermLength : loaded.DictionaryFirstMaxTermLength,
                 RefreshGridDuringTranslatedTextEdit = loaded.RefreshGridDuringTranslatedTextEdit,
-                ProtectedFullWidthCharacters = loaded.ProtectedFullWidthCharacters ?? new AppConfig().ProtectedFullWidthCharacters,
+                ProtectedFullWidthCharacters = NormalizeProtectedFullWidthCharacters(loaded.ProtectedFullWidthCharacters),
                 PapagoClientId = loaded.PapagoClientId,
                 PapagoClientSecret = mergedSecrets.PapagoClientSecret,
                 EzTransInstallationPath = loaded.EzTransInstallationPath,
@@ -224,6 +226,17 @@ public sealed class AppConfigService(string? baseDirectory = null)
             : template.Replace("[[[ERA_PH_0]]]", "__PH0__", StringComparison.Ordinal);
     }
 
+    private static string NormalizeProtectedFullWidthCharacters(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || string.Equals(value, LegacyDefaultProtectedFullWidthCharacters, StringComparison.Ordinal))
+        {
+            return new AppConfig().ProtectedFullWidthCharacters;
+        }
+
+        return value;
+    }
+
     private sealed class AppConfigDocument
     {
         public string GameDirectory { get; init; } = string.Empty;
@@ -290,7 +303,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
 
         public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 
-        public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％";
+        public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％：";
 
         public string PapagoClientId { get; init; } = string.Empty;
 

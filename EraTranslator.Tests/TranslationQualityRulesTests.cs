@@ -68,6 +68,56 @@ public sealed class TranslationQualityRulesTests
     }
 
     [Fact]
+    public void GetHardFailureReason_IgnoresJapaneseInsideErbCodeReferences()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason(
+            "매춘 중;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `매춘`",
+            "ja",
+            "ko",
+            "売春中;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `売春`");
+
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public void GetHardFailureReason_StillRejectsUntranslatedBacktickLiteralAroundErbCode()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason(
+            "매춘 중;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `売春`",
+            "ja",
+            "ko",
+            "売春中;WORK_TYPE_TEXT:(CFLAG:index:労役種類) == `売春`");
+
+        Assert.NotNull(reason);
+        Assert.Equal("대상 언어 불일치", reason.Value.ValidationStatus);
+    }
+
+    [Fact]
+    public void GetHardFailureReason_AllowsDecorativeJapaneseProlongedSoundMarks()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason(
+            "%CSVCALLNAME(targettedLady)%짱 찾았다ーー!",
+            "ja",
+            "ko",
+            "%CSVCALLNAME(targettedLady)%ちゃんみつけたーー！");
+
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public void GetHardFailureReason_RejectsUntranslatedNaturalParentheticalText()
+    {
+        var reason = TranslationQualityRules.GetHardFailureReason(
+            "[2] - 엔딩이력(エンディング別)",
+            "ja",
+            "ko",
+            "[2] - エンディング履歴(エンディング別)");
+
+        Assert.NotNull(reason);
+        Assert.Equal("대상 언어 불일치", reason.Value.ValidationStatus);
+    }
+
+    [Fact]
     public void GetHardFailureReason_ReturnsFailureForUnchangedKanjiOnlyTranslationInJaToKo()
     {
         var reason = TranslationQualityRules.GetHardFailureReason("交渉術", "ja", "ko", "交渉術");

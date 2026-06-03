@@ -24,6 +24,8 @@ public sealed class SourceFileDocument
 
     public List<ErbVariableLiteralOccurrence> VariableLiteralOccurrences { get; } = [];
 
+    public List<ErbIdentifierOccurrence> IdentifierOccurrences { get; } = [];
+
     public List<string> ScanWarnings { get; } = [];
 
     public JosaDocumentAnalysis JosaAnalysis { get; set; } = new();

@@ -38,6 +38,7 @@ public class SqliteProjectStateStore
             ExecuteNonQuery(connection, transaction, "DELETE FROM symbol_reference_candidates;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM symbol_references;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM variable_literal_occurrences;");
+            ExecuteNonQuery(connection, transaction, "DELETE FROM identifier_occurrences;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM scan_warnings;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM segments;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM documents;");
@@ -527,6 +528,17 @@ public class SqliteProjectStateStore
                 is_exact_value INTEGER NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES documents(document_id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS identifier_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                role INTEGER NOT NULL,
+                original_name TEXT NOT NULL,
+                absolute_start INTEGER NOT NULL,
+                length INTEGER NOT NULL,
+                line_number INTEGER NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES documents(document_id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS scan_warnings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 document_id TEXT NOT NULL,
@@ -570,6 +582,7 @@ public class SqliteProjectStateStore
             CREATE INDEX IF NOT EXISTS idx_segments_document_id ON segments(document_id);
             CREATE INDEX IF NOT EXISTS idx_symbol_references_document_id ON symbol_references(document_id);
             CREATE INDEX IF NOT EXISTS idx_variable_literal_occurrences_document_id ON variable_literal_occurrences(document_id);
+            CREATE INDEX IF NOT EXISTS idx_identifier_occurrences_document_id ON identifier_occurrences(document_id);
             CREATE INDEX IF NOT EXISTS idx_scan_warnings_document_id ON scan_warnings(document_id);
             CREATE INDEX IF NOT EXISTS idx_documents_relative_path ON documents(relative_path);
             CREATE INDEX IF NOT EXISTS idx_translation_progress_updated_at_utc ON translation_progress(updated_at_utc);
@@ -853,6 +866,42 @@ public class SqliteProjectStateStore
             }
         }
 
+        using (var identifierCommand = connection.CreateCommand())
+        {
+            identifierCommand.CommandText = """
+                SELECT
+                    document_id,
+                    kind,
+                    role,
+                    original_name,
+                    absolute_start,
+                    length,
+                    line_number
+                FROM identifier_occurrences
+                ORDER BY document_id, absolute_start, id;
+                """;
+            using var reader = identifierCommand.ExecuteReader();
+            while (reader.Read())
+            {
+                var documentId = reader.GetString(0);
+                if (!documents.TryGetValue(documentId, out var document))
+                {
+                    continue;
+                }
+
+                document.IdentifierOccurrences.Add(new ErbIdentifierOccurrence
+                {
+                    DocumentId = documentId,
+                    Kind = (ErbIdentifierKind)reader.GetInt32(1),
+                    Role = (ErbIdentifierRole)reader.GetInt32(2),
+                    OriginalName = reader.GetString(3),
+                    AbsoluteStart = reader.GetInt32(4),
+                    Length = reader.GetInt32(5),
+                    LineNumber = reader.GetInt32(6),
+                });
+            }
+        }
+
         using (var warningCommand = connection.CreateCommand())
         {
             warningCommand.CommandText = """
@@ -1088,6 +1137,7 @@ public class SqliteProjectStateStore
     {
         private readonly SqliteCommand _candidateCommand;
         private readonly SqliteCommand _documentCommand;
+        private readonly SqliteCommand _identifierOccurrenceCommand;
         private readonly SqliteCommand _metricCommand;
         private readonly SqliteCommand _occurrenceCommand;
         private readonly SqliteCommand _referenceCommand;
@@ -1221,6 +1271,24 @@ public class SqliteProjectStateStore
                     $line_number,
                     $is_exact_value);
                 """);
+            _identifierOccurrenceCommand = CreateCommand(connection, transaction, """
+                INSERT INTO identifier_occurrences (
+                    document_id,
+                    kind,
+                    role,
+                    original_name,
+                    absolute_start,
+                    length,
+                    line_number)
+                VALUES (
+                    $document_id,
+                    $kind,
+                    $role,
+                    $original_name,
+                    $absolute_start,
+                    $length,
+                    $line_number);
+                """);
             _warningCommand = CreateCommand(connection, transaction, """
                 INSERT INTO scan_warnings (document_id, warning_text)
                 VALUES ($document_id, $warning_text);
@@ -1314,6 +1382,19 @@ public class SqliteProjectStateStore
                 _occurrenceCommand.ExecuteNonQuery();
             }
 
+            foreach (var occurrence in document.IdentifierOccurrences)
+            {
+                _identifierOccurrenceCommand.Parameters.Clear();
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$document_id", occurrence.DocumentId);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$kind", (int)occurrence.Kind);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$role", (int)occurrence.Role);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$original_name", occurrence.OriginalName);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$absolute_start", occurrence.AbsoluteStart);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$length", occurrence.Length);
+                _identifierOccurrenceCommand.Parameters.AddWithValue("$line_number", occurrence.LineNumber);
+                _identifierOccurrenceCommand.ExecuteNonQuery();
+            }
+
             foreach (var warning in document.ScanWarnings)
             {
                 _warningCommand.Parameters.Clear();
@@ -1338,6 +1419,7 @@ public class SqliteProjectStateStore
             _referenceCommand.Dispose();
             _candidateCommand.Dispose();
             _occurrenceCommand.Dispose();
+            _identifierOccurrenceCommand.Dispose();
             _warningCommand.Dispose();
             _metricCommand.Dispose();
         }

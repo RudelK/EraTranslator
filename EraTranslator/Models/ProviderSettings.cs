@@ -56,7 +56,7 @@ public sealed class ProviderSettings
 
     public string RetryPromptTemplate { get; init; } = string.Empty;
 
-    public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％";
+    public string ProtectedFullWidthCharacters { get; init; } = "／【】＜＞「」（）『』％：";
 
     public string PapagoClientId { get; init; } = string.Empty;
 

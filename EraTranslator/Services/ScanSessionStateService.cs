@@ -119,6 +119,18 @@ public sealed class ScanSessionStateService
                             IsExactValue = occurrence.IsExactValue,
                         })
                         .ToList(),
+                    IdentifierOccurrences = document.IdentifierOccurrences
+                        .Select(occurrence => new ErbIdentifierOccurrenceState
+                        {
+                            DocumentId = occurrence.DocumentId,
+                            Kind = occurrence.Kind,
+                            Role = occurrence.Role,
+                            OriginalName = occurrence.OriginalName,
+                            AbsoluteStart = occurrence.AbsoluteStart,
+                            Length = occurrence.Length,
+                            LineNumber = occurrence.LineNumber,
+                        })
+                        .ToList(),
                     ScanWarnings = document.ScanWarnings.ToList(),
                     JosaAnalysis = new JosaDocumentAnalysisState
                     {
@@ -293,6 +305,16 @@ public sealed class ScanSessionStateService
                 Length = occurrence.Length,
                 LineNumber = occurrence.LineNumber,
                 IsExactValue = occurrence.IsExactValue,
+            }));
+            document.IdentifierOccurrences.AddRange(documentState.IdentifierOccurrences.Select(occurrence => new ErbIdentifierOccurrence
+            {
+                DocumentId = occurrence.DocumentId,
+                Kind = occurrence.Kind,
+                Role = occurrence.Role,
+                OriginalName = occurrence.OriginalName,
+                AbsoluteStart = occurrence.AbsoluteStart,
+                Length = occurrence.Length,
+                LineNumber = occurrence.LineNumber,
             }));
             document.ScanWarnings.AddRange(documentState.ScanWarnings);
             session.Documents[document.DocumentId] = document;

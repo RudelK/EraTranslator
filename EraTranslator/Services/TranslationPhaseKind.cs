@@ -4,6 +4,7 @@ public enum TranslationPhaseKind
 {
     CsvReferenceKeys,
     CsvGeneral,
+    ErbIdentifiers,
     Erh,
     Erb,
 }

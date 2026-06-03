@@ -2619,6 +2619,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             CreatePhasePlan(translationScope, TranslationPhaseKind.CsvReferenceKeys),
             CreatePhasePlan(translationScope, TranslationPhaseKind.CsvGeneral),
+            CreatePhasePlan(translationScope, TranslationPhaseKind.ErbIdentifiers),
             CreatePhasePlan(translationScope, TranslationPhaseKind.Erh),
             CreatePhasePlan(translationScope, TranslationPhaseKind.Erb),
         }
@@ -2632,6 +2633,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         var items = translationScope
             .Where(item => GetTranslationPhaseForItem(item) == kind)
+            .OrderBy(GetTranslationPhaseSortOrder)
+            .ThenBy(GetCsvNamespaceSortOrder)
+            .ThenBy(item => item.RelativePath, StringComparer.Ordinal)
+            .ThenBy(item => item.LineNumber)
+            .ThenBy(item => item.SegmentId, StringComparer.Ordinal)
             .ToList();
         return new TranslationPhasePlan(kind, items, items.Count(item => item.NeedsTranslation));
     }
@@ -2642,6 +2648,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             TranslationPhaseKind.CsvReferenceKeys => "CSV-참조키",
             TranslationPhaseKind.CsvGeneral => "CSV-일반",
+            TranslationPhaseKind.ErbIdentifiers => "ERB-식별자",
             TranslationPhaseKind.Erh => "ERH",
             TranslationPhaseKind.Erb => "ERB",
             _ => "번역",
@@ -2652,6 +2659,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     {
         return items
             .OrderBy(GetTranslationPhaseSortOrder)
+            .ThenBy(GetCsvNamespaceSortOrder)
             .ThenBy(item => item.RelativePath, StringComparer.Ordinal)
             .ThenBy(item => item.LineNumber)
             .ThenBy(item => item.SegmentId, StringComparer.Ordinal);
@@ -2664,6 +2672,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             return item.IsReferenceBearingKey
                 ? TranslationPhaseKind.CsvReferenceKeys
                 : TranslationPhaseKind.CsvGeneral;
+        }
+
+        if (IdentifierSegmentTypes.IsIdentifier(item.SegmentType))
+        {
+            return TranslationPhaseKind.ErbIdentifiers;
         }
 
         if (string.Equals(item.FileType, "ERH", StringComparison.OrdinalIgnoreCase))
@@ -2680,9 +2693,136 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             TranslationPhaseKind.CsvReferenceKeys => 0,
             TranslationPhaseKind.CsvGeneral => 1,
-            TranslationPhaseKind.Erh => 2,
-            TranslationPhaseKind.Erb => 3,
+            TranslationPhaseKind.ErbIdentifiers => 2,
+            TranslationPhaseKind.Erh => 3,
+            TranslationPhaseKind.Erb => 4,
             _ => int.MaxValue,
+        };
+    }
+
+    private static int GetCsvNamespaceSortOrder(ExtractedTextItem item)
+    {
+        if (!DocumentFileTypes.IsCsvLike(item.FileType))
+        {
+            return 0;
+        }
+
+        var fileStem = Path.GetFileNameWithoutExtension(item.RelativePath);
+        if (TryGetBuiltInCsvNamespaceOrder(item.SymbolNamespace, out var namespaceOrder))
+        {
+            return namespaceOrder + GetCsvNamespaceSourceOffset(item, fileStem, item.SymbolNamespace);
+        }
+
+        if (TryGetBuiltInCsvNamespaceOrder(fileStem, out namespaceOrder))
+        {
+            return namespaceOrder;
+        }
+
+        if (IsCharacterSheetItem(item, fileStem))
+        {
+            return 900;
+        }
+
+        return item.IsReferenceBearingKey ? 300 : 500;
+    }
+
+    private static int GetCsvNamespaceSourceOffset(ExtractedTextItem item, string? fileStem, string symbolNamespace)
+    {
+        if (IsBuiltInNamespaceFile(fileStem, symbolNamespace))
+        {
+            return 0;
+        }
+
+        return IsCharacterSheetItem(item, fileStem) ? 220 : 5;
+    }
+
+    private static bool TryGetBuiltInCsvNamespaceOrder(string? value, out int order)
+    {
+        switch (SymbolNamespaceRegistry.CanonicalizeNamespace(value ?? string.Empty))
+        {
+            case "BASE":
+            case "MAXBASE":
+            case "DOWNBASE":
+                order = 0;
+                return true;
+            case "CFLAG":
+                order = 10;
+                return true;
+            case "TFLAG":
+                order = 20;
+                return true;
+            case "FLAG":
+                order = 30;
+                return true;
+            case "TALENT":
+                order = 40;
+                return true;
+            case "ABL":
+                order = 50;
+                return true;
+            case "EXP":
+                order = 60;
+                return true;
+            case "MARK":
+                order = 70;
+                return true;
+            case "PALAM":
+            case "JUEL":
+                order = 80;
+                return true;
+            case "CUP":
+            case "CDOWN":
+                order = 90;
+                return true;
+            case "SOURCE":
+                order = 100;
+                return true;
+            case "TEQUIP":
+                order = 110;
+                return true;
+            case "NOWEX":
+            case "EX":
+                order = 120;
+                return true;
+            case "ITEM":
+            case "ITEMPRICE":
+                order = 130;
+                return true;
+            case "CSTR":
+            case "STR":
+            case "SAVESTR":
+            case "CALLNAME":
+            case "TCVAR":
+                order = 140;
+                return true;
+            default:
+                order = 0;
+                return false;
+        }
+    }
+
+    private static bool IsCharacterSheetItem(ExtractedTextItem item, string? fileStem)
+    {
+        return item.SegmentType.StartsWith("csv-CharacterSheet", StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(fileStem)
+                && fileStem.StartsWith("Chara", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsBuiltInNamespaceFile(string? fileStem, string symbolNamespace)
+    {
+        if (string.IsNullOrWhiteSpace(fileStem))
+        {
+            return false;
+        }
+
+        var canonicalStem = SymbolNamespaceRegistry.CanonicalizeNamespace(fileStem);
+        var canonicalNamespace = SymbolNamespaceRegistry.CanonicalizeNamespace(symbolNamespace);
+        return canonicalNamespace switch
+        {
+            "MAXBASE" or "DOWNBASE" => canonicalStem == "BASE",
+            "ITEMPRICE" => canonicalStem == "ITEM",
+            "CDOWN" => canonicalStem == "PALAM",
+            _ => canonicalStem == canonicalNamespace,
         };
     }
 
@@ -3056,6 +3196,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             if (phaseComparison != 0)
             {
                 return phaseComparison;
+            }
+
+            var csvNamespaceComparison = GetCsvNamespaceSortOrder(left).CompareTo(GetCsvNamespaceSortOrder(right));
+            if (csvNamespaceComparison != 0)
+            {
+                return csvNamespaceComparison;
             }
 
             var pathComparison = StringComparer.Ordinal.Compare(left.RelativePath, right.RelativePath);

@@ -155,6 +155,162 @@ PRINTFORMW 普通の文章です
     }
 
     [Fact]
+    public void Extract_KeepsNaturalParenthesizedPrintTailWhole()
+    {
+        const string source = """
+PRINTFORML [2] - エンディング履歴(エンディング別)
+PRINTFORML [3] - エンディング履歴(達成順)
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "[2] - エンディング履歴(エンディング別)"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "[3] - エンディング履歴(達成順)"
+            && segment.SegmentType == "print-tail");
+        Assert.DoesNotContain(segments, segment =>
+            segment.OriginalText == "エンディング履歴"
+            || segment.OriginalText == "エンディング別"
+            || segment.OriginalText == "達成順");
+    }
+
+    [Fact]
+    public void Extract_KeepsPrintTailTextAroundInlineCodeAndNaturalParentheses()
+    {
+        const string source = """
+PRINTFORML %MASTER_LAYER_GET_NAME(layer)%{years}%MASTER_LAYER_GET_YEARS_COUNT_TEXT(layer)%\@ addYears == 0 ? # 、留年{addYears}%MASTER_LAYER_GET_EXTRA_YEARS_COUNT_TEXT(layer)%\@の{TALENT:MASTER:年齢}歳で設定しました
+PRINTFORML 能力値にあと【{extraPoint}】のポイントを割り振って下さい(能力最小1,最大8)
+PRINTL [1]いいえ(16歳・普通体型の男子高校生として設定されます)
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "、留年{addYears}%MASTER_LAYER_GET_EXTRA_YEARS_COUNT_TEXT(layer)%"
+            && segment.SegmentType == "inline-conditional-right");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "の{TALENT:MASTER:年齢}歳で設定しました"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "能力値にあと【{extraPoint}】のポイントを割り振って下さい(能力最小1,最大8)"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "[1]いいえ(16歳・普通体型の男子高校生として設定されます)"
+            && segment.SegmentType == "print-tail");
+    }
+
+    [Fact]
+    public void Extract_KeepsPrintTailDisplayLabelsWithPlaceholdersAndRateSymbols()
+    {
+        const string source = """
+PRINTFORML 所持金:{MONEY}円
+PRINTFORML 客の所持金による修正:×50％
+PRINTFORML ……？:×50％
+PRINTFORML 　　所持金：{MONEY}円　　残り時間：{FLAG:残調教時間}分
+PRINTFORM \@ GET_CHARA_GO_SCHOOL_INDEX(ASSI) > 0 ?[801]%GET_SCHOOL_NAME(GET_CHARA_GO_SCHOOL_INDEX(ASSI)) + "所属",24,LEFT% # 無所属     　　　　　　　　　 \@
+PRINTPLAINFORM 従順:LV{ABL:0} 欲望:LV{ABL:1} 技巧:LV{ABL:2}    
+PRINTFORML TALENT:MASTER:気骨
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "所持金:{MONEY}円"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "客の所持金による修正:×50％"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "……？:×50％"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "所持金：{MONEY}円"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "残り時間：{FLAG:残調教時間}分"
+            && segment.SegmentType == "print-tail");
+        Assert.DoesNotContain(segments, segment =>
+            segment.OriginalText == "所持金：{MONEY}円　　残り時間：{FLAG:残調教時間}分");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "所属"
+            && segment.SegmentType == "inline-conditional-left-fragment");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "無所属"
+            && segment.SegmentType == "inline-conditional-right");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "従順:LV{ABL:0}"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "欲望:LV{ABL:1}"
+            && segment.SegmentType == "print-tail");
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "技巧:LV{ABL:2}"
+            && segment.SegmentType == "print-tail");
+        Assert.DoesNotContain(segments, segment =>
+            segment.OriginalText == "TALENT:MASTER:気骨");
+    }
+
+    [Fact]
+    public void Extract_SkipsQuotedRuleStringsWithRegisteredFunctionCalls()
+    {
+        const string source = """
+abductedCharaCount = COUNT_RULED_CHARAS("!IS_UNCONTACTABLE(index) && TALENT:index:監禁 > 0 && !IS_NOT_POLICE_RESCUE_TALENT(index)")
+PRINTFORML [2] - エンディング履歴(エンディング別)
+""";
+
+        var functionRegistry = ErbCodeFunctionRegistry.FromNames(
+            ["COUNT_RULED_CHARAS", "IS_UNCONTACTABLE", "IS_NOT_POLICE_RESCUE_TALENT"]);
+        var extractor = new ErbExtractor(SymbolNamespaceRegistry.Default, functionRegistry);
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.DoesNotContain(segments, segment =>
+            segment.OriginalText.Contains("IS_UNCONTACTABLE", StringComparison.Ordinal)
+            || segment.OriginalText.Contains("TALENT:index:監禁", StringComparison.Ordinal));
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "[2] - エンディング履歴(エンディング別)"
+            && segment.SegmentType == "print-tail");
+    }
+
+    [Fact]
+    public void Extract_SkipsQuotedErbExpressionsWithSymbolReferences()
+    {
+        const string source = """
+answer = "MAX(EXP:index:レズ経験,EXP:index:ゲイ経験)"
+PRINTL [1]いいえ(16歳・普通体型の男子高校生として設定されます)
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.DoesNotContain(segments, segment =>
+            string.Equals(segment.OriginalText, "MAX(EXP:index:レズ経験,EXP:index:ゲイ経験)", StringComparison.Ordinal));
+        Assert.Contains(segments, segment =>
+            segment.OriginalText == "[1]いいえ(16歳・普通体型の男子高校生として設定されます)"
+            && segment.SegmentType == "print-tail");
+    }
+
+    [Fact]
+    public void Extract_DoesNotFreeTranslateCsvKeyListsInsideCalculationFunctions()
+    {
+        const string source = """
+RETURNF CALC_CHARA_SINGLE_DATA("TALENT",targetChara,"気骨*3,反抗的")
+RETURNF CALC_CHARA_MULTIPLE_DATA_BASE(answer,"TALENT",targetChara,"臆病*9,反抗的*11,気丈*12",10,1000)
+RETURNF GET_NONEXISTABLE_TALENT_BYNAME("気骨*3,反抗的",charaIndex,charaNo)
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.DoesNotContain(segments, segment => segment.OriginalText.Contains("気骨", StringComparison.Ordinal));
+        Assert.DoesNotContain(segments, segment => segment.OriginalText.Contains("反抗的", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Extract_FindsTrailingCurrencyUnitAfterCodePlaceholder()
     {
         const string source = """
@@ -209,6 +365,26 @@ ENDDATA
     }
 
     [Fact]
+    public void Extract_KeepsInflectionsInsideNaturalTextSegments()
+    {
+        const string source = """
+PRINTFORMW 服を着た
+PRINTDATAW
+DATAFORM 靴まで履いた
+ENDDATA
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.Contains("服を着た", values);
+        Assert.Contains("靴まで履いた", values);
+        Assert.DoesNotContain("た", values);
+        Assert.DoesNotContain("まで", values);
+    }
+
+    [Fact]
     public void Extract_FindsQuotedStringsInDimDirectives_WithoutCapturingNumericDimValues()
     {
         const string source = """
@@ -253,6 +429,93 @@ ENDDATA
         Assert.Contains("栗毛", values);
         Assert.Contains("黒髪", values);
         Assert.Contains("灰髪", values);
+    }
+
+    [Fact]
+    public void Extract_TreatsDimsLookupArrayKeysAsReferenceBearingItems()
+    {
+        const string source = """
+#DIMS CONST CUSTOMER_VALUES_ARRAY="対応娼婦","プレイ傾向"
+@GET_CUSTOMER_VALUEINDEX_FROM_VALUENAME(valueName)
+#FUNCTION
+valueIndex = FINDELEMENT(CUSTOMER_VALUES_ARRAY,valueName,,,1)
+@GET_PROSTITUTION_CUSTOMER_VALUE(targetCustomerIndex,valueName)
+#FUNCTION
+RETURNF CUSTOMER:targetCustomerIndex:GET_CUSTOMER_VALUEINDEX_FROM_VALUENAME(valueName)
+answer = GET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,"プレイ傾向")
+""";
+
+        var registry = ErbDimsLookupRegistry.BuildFromDocuments([source]);
+        var extractor = new ErbExtractor(SymbolNamespaceRegistry.Default, ErbCodeFunctionRegistry.Empty, registry);
+        var segments = extractor.Extract("test.erh", source);
+
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "erb-dims-lookup-key"
+            && segment.SymbolNamespace == "DIMS:CUSTOMER_VALUES_ARRAY"
+            && segment.OriginalSymbolKey == "プレイ傾向");
+        Assert.DoesNotContain(segments, segment =>
+            segment.SegmentType == "quoted-string"
+            && segment.OriginalText == "プレイ傾向");
+
+        var nestedSource = """
+answer = PROSTITUTION_CUSTOMER_PLAYTYPE_VALUE_AFFECT(GET_PROSTITUTION_CUSTOMER_VALUE(customerIndex,"プレイ傾向"),prostitutionLady)
+""";
+        var nestedSegments = extractor.Extract("test.erb", nestedSource);
+        Assert.DoesNotContain(nestedSegments, segment =>
+            segment.SegmentType == "quoted-string"
+            && segment.OriginalText == "プレイ傾向");
+    }
+
+    [Fact]
+    public void Extract_SkipsDimsLookupSelectCaseLabels()
+    {
+        const string source = """
+#DIMS CONST PROSTITUTION_SEX_LIST="男","女","ふたなり"
+SELECTCASE PROSTITUTION_SEX_LIST:customerSex
+    CASE "男"
+        RETURNF "偉そうな"
+    CASE "女","ふたなり"
+        RETURNF "高慢な"
+ENDSELECT
+""";
+
+        var registry = ErbDimsLookupRegistry.BuildFromDocuments([source]);
+        var extractor = new ErbExtractor(SymbolNamespaceRegistry.Default, ErbCodeFunctionRegistry.Empty, registry);
+
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.DoesNotContain(segments, segment =>
+            segment.SegmentType == "quoted-string"
+            && (segment.OriginalText == "男"
+                || segment.OriginalText == "女"
+                || segment.OriginalText == "ふたなり"));
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "quoted-string"
+            && segment.OriginalText == "偉そうな");
+    }
+
+    [Fact]
+    public void Extract_SkipsCsvNameSelectCaseLabels()
+    {
+        const string source = """
+SELECTCASE TALENTNAME:index
+    CASE "寄生","浄化","オトコ"
+        RETURNF "表示文"
+ENDSELECT
+""";
+
+        var extractor = new ErbExtractor();
+
+        var segments = extractor.Extract("test.erb", source);
+
+        Assert.DoesNotContain(segments, segment =>
+            segment.SegmentType == "quoted-string"
+            && (segment.OriginalText == "寄生"
+                || segment.OriginalText == "浄化"
+                || segment.OriginalText == "オトコ"));
+        Assert.Contains(segments, segment =>
+            segment.SegmentType == "quoted-string"
+            && segment.OriginalText == "表示文");
     }
 
     [Fact]

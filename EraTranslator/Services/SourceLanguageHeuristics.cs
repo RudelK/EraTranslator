@@ -121,7 +121,17 @@ public static partial class SourceLanguageHeuristics
     private static List<char> GetMeaningfulChars(string text)
     {
         var sanitized = StripPlaceholderLikeTokens(text);
-        return sanitized.Where(static ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch) && !char.IsDigit(ch)).ToList();
+        return sanitized
+            .Where(static ch => !char.IsWhiteSpace(ch)
+                && !char.IsPunctuation(ch)
+                && !char.IsDigit(ch)
+                && !IsDecorativeProlongedSoundMark(ch))
+            .ToList();
+    }
+
+    private static bool IsDecorativeProlongedSoundMark(char ch)
+    {
+        return ch is 'ー' or 'ｰ';
     }
 
     private static string StripPlaceholderLikeTokens(string text)

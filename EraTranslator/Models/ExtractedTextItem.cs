@@ -182,6 +182,19 @@ public sealed class ExtractedTextItem : BindableBase
             return;
         }
 
+        if (IdentifierSegmentTypes.IsIdentifier(SegmentType))
+        {
+            _translatedText = TranslationQualityRules.NormalizeIdentifierText(_translatedText);
+            var hardFailure = TranslationQualityRules.GetIdentifierHardFailureReason(_translatedText);
+            _status = hardFailure is null ? "수동 수정" : "검수 필요";
+            _translationError = hardFailure?.Message ?? string.Empty;
+            _translationSource = string.Empty;
+            _validationStatus = hardFailure?.ValidationStatus ?? "통과";
+            _canSave = hardFailure is null;
+            RaiseStateChangedProperties();
+            return;
+        }
+
         _translatedText = TranslationQualityRules.NormalizeTranslatedText(FileType, _translatedText, PreserveWhitespace);
         var reviewReason = TranslationQualityRules.GetReviewReason(OriginalText, _translatedText);
         _status = reviewReason is null ? "수동 수정" : "검수 필요";

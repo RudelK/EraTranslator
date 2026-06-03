@@ -18,6 +18,31 @@ public static partial class TranslationQualityRules
         return NormalizeErbFunctionArgumentSeparators(NormalizeProtectedCharacterSpacing(text));
     }
 
+    public static string NormalizeIdentifierText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        return IdentifierWhitespacePattern().Replace(NormalizeProtectedCharacterSpacing(text.Trim()), string.Empty);
+    }
+
+    public static HardFailureReason? GetIdentifierHardFailureReason(string translatedText)
+    {
+        if (string.IsNullOrWhiteSpace(translatedText))
+        {
+            return new HardFailureReason("식별자 오류", "공백 제거 후 식별자 번역문이 비어 있습니다.");
+        }
+
+        if (InvalidIdentifierCharacterPattern().IsMatch(translatedText))
+        {
+            return new HardFailureReason("식별자 오류", "식별자에 사용할 수 없는 문자 또는 구분자가 포함되어 있습니다.");
+        }
+
+        return null;
+    }
+
     public static HardFailureReason? GetHardFailureReason(
         string translatedText,
         string sourceLanguage,
@@ -217,7 +242,8 @@ public static partial class TranslationQualityRules
             return false;
         }
 
-        if (SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedText, normalizedSource))
+        var translatedTextForLanguageCheck = RemoveProtectedErbCodeReferences(translatedText);
+        if (SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedTextForLanguageCheck, normalizedSource))
         {
             return true;
         }
@@ -230,15 +256,27 @@ public static partial class TranslationQualityRules
         var normalizedOriginal = NormalizeForLanguageComparison(originalText);
         if (normalizedOriginal.Length == 0
             || !SourceLanguageHeuristics.ContainsMeaningfulLanguageText(normalizedOriginal, normalizedSource)
-            || SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedText, normalizedTarget))
+            || SourceLanguageHeuristics.ContainsMeaningfulLanguageText(translatedTextForLanguageCheck, normalizedTarget))
         {
             return false;
         }
 
         return string.Equals(
-            NormalizeForLanguageComparison(translatedText),
+            NormalizeForLanguageComparison(translatedTextForLanguageCheck),
             normalizedOriginal,
             StringComparison.Ordinal);
+    }
+
+    private static string RemoveProtectedErbCodeReferences(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var sanitized = ErbIndexedFunctionReferencePattern().Replace(text, string.Empty);
+        sanitized = ErbSymbolReferencePattern().Replace(sanitized, string.Empty);
+        return sanitized;
     }
 
     private static string NormalizeForLanguageComparison(string text)
@@ -359,4 +397,16 @@ public static partial class TranslationQualityRules
 
     [GeneratedRegex(@"[ \t\u3000]+", RegexOptions.Compiled)]
     private static partial Regex CsvWhitespacePattern();
+
+    [GeneratedRegex(@"\s+", RegexOptions.Compiled)]
+    private static partial Regex IdentifierWhitespacePattern();
+
+    [GeneratedRegex(@"[\r\n:：,，、\(\)（）\[\]［］\{\}｛｝%％""'`<>＜＞=＝+\-*/\\&|!！?？;；#＃]", RegexOptions.Compiled)]
+    private static partial Regex InvalidIdentifierCharacterPattern();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}_])[\p{L}_][\p{L}\p{N}_]*:\((?:[^()\r\n]|\([^()\r\n]*\))*\)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex ErbIndexedFunctionReferencePattern();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|ITEMSALES|BASE|MAXBASE|DOWNBASE|ABL|CUP|PALAM|CDOWN|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|TCVAR|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ErbSymbolReferencePattern();
 }

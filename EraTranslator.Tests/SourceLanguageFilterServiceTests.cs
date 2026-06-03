@@ -17,6 +17,8 @@ public sealed class SourceLanguageFilterServiceTests
     [InlineData("[巨乳]×0.7（ALL）", "ja", true)]
     [InlineData("上位陥落済;IS_UPPER_FALLEN(index)", "ja", true)]
     [InlineData("引き継ぎ;TALENT:index:引き継ぎ", "ja", true)]
+    [InlineData("%CSVCALLNAME(targettedLady)%짱 찾았다ーー!", "ja", false)]
+    [InlineData("コーヒー", "ja", true)]
     public void Heuristics_DetectsLikelySourceLanguage(string text, string language, bool expected)
     {
         Assert.Equal(expected, SourceLanguageHeuristics.IsLikelySourceText(text, language));

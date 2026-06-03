@@ -6,6 +6,7 @@ namespace EraTranslator.Services;
 public sealed partial class ErbReferenceExtractor
 {
     private readonly SymbolNamespaceRegistry _namespaceRegistry;
+    private readonly ErbDimsLookupRegistry _dimsLookupRegistry;
 
     public ErbReferenceExtractor()
         : this(SymbolNamespaceRegistry.Default)
@@ -13,8 +14,14 @@ public sealed partial class ErbReferenceExtractor
     }
 
     public ErbReferenceExtractor(SymbolNamespaceRegistry namespaceRegistry)
+        : this(namespaceRegistry, ErbDimsLookupRegistry.Empty)
+    {
+    }
+
+    public ErbReferenceExtractor(SymbolNamespaceRegistry namespaceRegistry, ErbDimsLookupRegistry dimsLookupRegistry)
     {
         _namespaceRegistry = namespaceRegistry;
+        _dimsLookupRegistry = dimsLookupRegistry;
     }
 
     public (List<ErbSymbolReference> references, List<ErbVariableLiteralOccurrence> variableLiterals) Extract(string documentId, string content)
@@ -125,6 +132,8 @@ public sealed partial class ErbReferenceExtractor
     {
         var results = new List<ErbSymbolReference>();
         var absoluteOffset = 0;
+        var selectCaseLookupNamespaces = new Stack<string>();
+        var selectCaseCsvNameNamespaces = new Stack<string>();
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
@@ -137,7 +146,54 @@ public sealed partial class ErbReferenceExtractor
                 continue;
             }
 
+            if (TryReadSelectCaseLookupNamespace(normalizedLine, out var selectCaseNamespace))
+            {
+                selectCaseLookupNamespaces.Push(selectCaseNamespace);
+            }
+            else if (IsSelectCaseLine(normalizedLine))
+            {
+                selectCaseLookupNamespaces.Push(string.Empty);
+            }
+
+            if (TryReadSelectCaseCsvNameNamespace(normalizedLine, out var selectCaseCsvNameNamespace))
+            {
+                selectCaseCsvNameNamespaces.Push(selectCaseCsvNameNamespace);
+            }
+            else if (IsSelectCaseLine(normalizedLine))
+            {
+                selectCaseCsvNameNamespaces.Push(string.Empty);
+            }
+
+            if (IsCaseLabelLine(normalizedLine)
+                && selectCaseLookupNamespaces.Count > 0
+                && !string.IsNullOrWhiteSpace(selectCaseLookupNamespaces.Peek()))
+            {
+                AddDimsCaseLabelReferences(
+                    documentId,
+                    selectCaseLookupNamespaces.Peek(),
+                    normalizedLine,
+                    absoluteOffset,
+                    lineIndex + 1,
+                    results);
+            }
+
+            if (IsCaseLabelLine(normalizedLine)
+                && selectCaseCsvNameNamespaces.Count > 0
+                && !string.IsNullOrWhiteSpace(selectCaseCsvNameNamespaces.Peek()))
+            {
+                AddCsvNameCaseLabelReferences(
+                    documentId,
+                    selectCaseCsvNameNamespaces.Peek(),
+                    normalizedLine,
+                    absoluteOffset,
+                    lineIndex + 1,
+                    results);
+            }
+
             AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, resolvedVariables, results);
+            AddKeyListFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+            AddDimsLookupFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+            AddDimsArrayComparisonReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
 
             for (var index = 0; index < normalizedLine.Length; index++)
             {
@@ -180,10 +236,238 @@ public sealed partial class ErbReferenceExtractor
                 }
             }
 
+            if (IsEndSelectLine(normalizedLine) && selectCaseLookupNamespaces.Count > 0)
+            {
+                selectCaseLookupNamespaces.Pop();
+            }
+
+            if (IsEndSelectLine(normalizedLine) && selectCaseCsvNameNamespaces.Count > 0)
+            {
+                selectCaseCsvNameNamespaces.Pop();
+            }
+
             absoluteOffset += line.Length + 1;
         }
 
         return results;
+    }
+
+    private void AddKeyListFunctionReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (var call in EnumerateFunctionCalls(line))
+        {
+            if (TryGetNamespaceFromFirstArgumentFunction(call, out var namespaceName, out var keyListArgumentIndex))
+            {
+                AddKeyListArgumentReferences(documentId, namespaceName, call, keyListArgumentIndex, absoluteOffset, lineNumber, results);
+                continue;
+            }
+
+            if (TryGetNamespaceFromSecondArgumentFunction(call, out namespaceName, out keyListArgumentIndex))
+            {
+                AddKeyListArgumentReferences(documentId, namespaceName, call, keyListArgumentIndex, absoluteOffset, lineNumber, results);
+                continue;
+            }
+
+            if (TryGetNamespaceFromFunctionName(call.Name, out namespaceName))
+            {
+                AddKeyListArgumentReferences(documentId, namespaceName, call, 0, absoluteOffset, lineNumber, results);
+            }
+        }
+    }
+
+    private void AddDimsLookupFunctionReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (var call in EnumerateFunctionCalls(line))
+        {
+            if (TryGetDirectDimsLookupNamespace(call, out var directLookupNamespace)
+                && TryReadQuotedArgument(call.Arguments[1], out var directLiteral, out var directLiteralStart)
+                && ShouldTreatAsSymbolKey(directLiteral))
+            {
+                AddDirectReference(
+                    documentId,
+                    directLookupNamespace,
+                    directLiteral,
+                    absoluteOffset + directLiteralStart,
+                    directLiteral.Length,
+                    lineNumber,
+                    results);
+            }
+
+            for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
+            {
+                if (!_dimsLookupRegistry.TryGetLookupNamespace(call.Name, argumentIndex, out var symbolNamespace))
+                {
+                    continue;
+                }
+
+                var argument = call.Arguments[argumentIndex];
+                if (!TryReadQuotedArgument(argument, out var literal, out var literalStart)
+                    || !ShouldTreatAsSymbolKey(literal))
+                {
+                    continue;
+                }
+
+                AddDirectReference(
+                    documentId,
+                    symbolNamespace,
+                    literal,
+                    absoluteOffset + literalStart,
+                    literal.Length,
+                    lineNumber,
+                    results);
+            }
+        }
+    }
+
+    private bool TryGetDirectDimsLookupNamespace(FunctionCallInfo call, out string symbolNamespace)
+    {
+        symbolNamespace = string.Empty;
+        if (!IsElementLookupFunction(call.Name)
+            || call.Arguments.Count < 2
+            || !TryReadIdentifier(call.Arguments[0].Text, out var arrayName)
+            || !_dimsLookupRegistry.IsLookupArray(arrayName))
+        {
+            return false;
+        }
+
+        symbolNamespace = ErbDimsLookupRegistry.ToNamespace(arrayName);
+        return true;
+    }
+
+    private void AddDimsCaseLabelReferences(
+        string documentId,
+        string symbolNamespace,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (Match match in QuotedLiteralInLinePattern().Matches(line))
+        {
+            var literal = match.Groups["value"].Value;
+            if (!ShouldTreatAsSymbolKey(literal))
+            {
+                continue;
+            }
+
+            AddDirectReference(
+                documentId,
+                symbolNamespace,
+                literal,
+                absoluteOffset + match.Groups["value"].Index,
+                literal.Length,
+                lineNumber,
+                results);
+        }
+    }
+
+    private static void AddCsvNameCaseLabelReferences(
+        string documentId,
+        string symbolNamespace,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (Match match in QuotedLiteralInLinePattern().Matches(line))
+        {
+            var literal = match.Groups["value"].Value;
+            if (!ShouldTreatAsSymbolKey(literal))
+            {
+                continue;
+            }
+
+            AddDirectReference(
+                documentId,
+                symbolNamespace,
+                literal,
+                absoluteOffset + match.Groups["value"].Index,
+                literal.Length,
+                lineNumber,
+                results);
+        }
+    }
+
+    private void AddDimsArrayComparisonReferences(
+        string documentId,
+        string line,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        foreach (Match match in DimsArrayComparisonPattern().Matches(line))
+        {
+            var arrayName = match.Groups["array"].Value;
+            if (!_dimsLookupRegistry.IsLookupArray(arrayName))
+            {
+                continue;
+            }
+
+            var literal = match.Groups["value"].Value;
+            if (!ShouldTreatAsSymbolKey(literal))
+            {
+                continue;
+            }
+
+            AddDirectReference(
+                documentId,
+                ErbDimsLookupRegistry.ToNamespace(arrayName),
+                literal,
+                absoluteOffset + match.Groups["value"].Index,
+                literal.Length,
+                lineNumber,
+                results);
+        }
+    }
+
+    private void AddKeyListArgumentReferences(
+        string documentId,
+        string namespaceName,
+        FunctionCallInfo call,
+        int argumentIndex,
+        int absoluteOffset,
+        int lineNumber,
+        List<ErbSymbolReference> results)
+    {
+        if (!_namespaceRegistry.TryResolveNamespace(namespaceName, out var resolvedNamespace)
+            || argumentIndex < 0
+            || argumentIndex >= call.Arguments.Count)
+        {
+            return;
+        }
+
+        var argument = call.Arguments[argumentIndex];
+        if (!TryReadQuotedArgument(argument, out var literal, out var literalStart))
+        {
+            return;
+        }
+
+        foreach (var key in EnumerateWeightedKeyList(literal, literalStart, call.Name))
+        {
+            if (!ShouldTreatAsSymbolKey(key.Value))
+            {
+                continue;
+            }
+
+            AddDirectReference(
+                documentId,
+                resolvedNamespace,
+                key.Value,
+                absoluteOffset + key.AbsoluteStart,
+                key.Value.Length,
+                lineNumber,
+                results);
+        }
     }
 
     private static List<ComponentInfo> ReadReferenceComponents(string line, int cursor)
@@ -697,6 +981,307 @@ Done:
             absoluteStart + expression.LastIndexOf(right, StringComparison.Ordinal));
     }
 
+    private static IEnumerable<FunctionCallInfo> EnumerateFunctionCalls(string line)
+    {
+        for (var index = 0; index < line.Length; index++)
+        {
+            if (line[index] == '"')
+            {
+                var quoteEnd = index + 1;
+                while (quoteEnd < line.Length)
+                {
+                    if (line[quoteEnd] == '"' && !IsEscapedQuote(line, quoteEnd))
+                    {
+                        break;
+                    }
+
+                    quoteEnd++;
+                }
+
+                index = quoteEnd;
+                continue;
+            }
+
+            if (!IsIdentifierStart(line[index]))
+            {
+                continue;
+            }
+
+            var nameStart = index;
+            var nameEnd = index + 1;
+            while (nameEnd < line.Length && IsIdentifierCharacter(line[nameEnd]))
+            {
+                nameEnd++;
+            }
+
+            var cursor = nameEnd;
+            SkipWhitespace(line, ref cursor);
+            if (cursor >= line.Length || line[cursor] != '(')
+            {
+                index = nameEnd - 1;
+                continue;
+            }
+
+            var close = FindMatchingParen(line, cursor);
+            if (close < 0)
+            {
+                index = nameEnd - 1;
+                continue;
+            }
+
+            var argumentText = line[(cursor + 1)..close];
+            yield return new FunctionCallInfo(
+                line[nameStart..nameEnd],
+                SplitFunctionArguments(argumentText, cursor + 1).ToList());
+
+            // Keep scanning inside the argument list so nested calls like
+            // OUTER(GET_LOOKUP("key")) also produce references.
+            index = nameEnd - 1;
+        }
+    }
+
+    private static int FindMatchingParen(string line, int openIndex)
+    {
+        var depth = 0;
+        var quote = false;
+        for (var index = openIndex; index < line.Length; index++)
+        {
+            var ch = line[index];
+            if (ch == '"' && !IsEscapedQuote(line, index))
+            {
+                quote = !quote;
+                continue;
+            }
+
+            if (quote)
+            {
+                continue;
+            }
+
+            if (ch == '(')
+            {
+                depth++;
+                continue;
+            }
+
+            if (ch == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static IEnumerable<FunctionArgumentInfo> SplitFunctionArguments(string expression, int absoluteStart)
+    {
+        var quote = false;
+        var depth = 0;
+        var start = 0;
+        for (var index = 0; index < expression.Length; index++)
+        {
+            var ch = expression[index];
+            if (ch == '"' && !IsEscapedQuote(expression, index))
+            {
+                quote = !quote;
+                continue;
+            }
+
+            if (quote)
+            {
+                continue;
+            }
+
+            if (ch == '(')
+            {
+                depth++;
+                continue;
+            }
+
+            if (ch == ')' && depth > 0)
+            {
+                depth--;
+                continue;
+            }
+
+            if (ch == ',' && depth == 0)
+            {
+                yield return BuildArgument(expression, start, index, absoluteStart);
+                start = index + 1;
+            }
+        }
+
+        yield return BuildArgument(expression, start, expression.Length, absoluteStart);
+    }
+
+    private static FunctionArgumentInfo BuildArgument(string expression, int start, int end, int absoluteStart)
+    {
+        while (start < end && char.IsWhiteSpace(expression[start]))
+        {
+            start++;
+        }
+
+        while (end > start && char.IsWhiteSpace(expression[end - 1]))
+        {
+            end--;
+        }
+
+        return new FunctionArgumentInfo(expression[start..end], absoluteStart + start);
+    }
+
+    private static bool TryReadQuotedArgument(FunctionArgumentInfo argument, out string literal, out int literalStart)
+    {
+        literal = string.Empty;
+        literalStart = 0;
+        var match = QuotedLiteralPattern().Match(argument.Text);
+        if (!match.Success || match.Length != argument.Text.Length)
+        {
+            return false;
+        }
+
+        literal = match.Groups["value"].Value;
+        literalStart = argument.AbsoluteStart + match.Groups["value"].Index;
+        return true;
+    }
+
+    private static IEnumerable<KeyOccurrence> EnumerateWeightedKeyList(string literal, int absoluteStart, string functionName)
+    {
+        var entrySeparator = functionName.EndsWith("_RULED", StringComparison.OrdinalIgnoreCase) ? '|' : ',';
+        foreach (var entry in SplitKeyListEntries(literal, absoluteStart, entrySeparator))
+        {
+            var text = entry.Text.TrimStart();
+            var keyStart = entry.AbsoluteStart + entry.Text.Length - text.Length;
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            var keyLength = 0;
+            while (keyLength < text.Length && text[keyLength] is not '*' and not ',' and not '|')
+            {
+                keyLength++;
+            }
+
+            while (keyLength > 0 && char.IsWhiteSpace(text[keyLength - 1]))
+            {
+                keyLength--;
+            }
+
+            if (keyLength <= 0)
+            {
+                continue;
+            }
+
+            yield return new KeyOccurrence(text[..keyLength], keyStart);
+        }
+    }
+
+    private static IEnumerable<FunctionArgumentInfo> SplitKeyListEntries(string text, int absoluteStart, char separator)
+    {
+        var start = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] != separator)
+            {
+                continue;
+            }
+
+            yield return new FunctionArgumentInfo(text[start..index], absoluteStart + start);
+            start = index + 1;
+        }
+
+        yield return new FunctionArgumentInfo(text[start..], absoluteStart + start);
+    }
+
+    private static bool TryGetNamespaceFromFirstArgumentFunction(
+        FunctionCallInfo call,
+        out string namespaceName,
+        out int keyListArgumentIndex)
+    {
+        namespaceName = string.Empty;
+        keyListArgumentIndex = -1;
+        var normalizedName = call.Name.ToUpperInvariant();
+        if (normalizedName is not ("CALC_CHARA_SINGLE_DATA"
+            or "CALC_CHARA_SINGLE_DATA_RULED"
+            or "CALC_CHARA_MULTIPLE_DATA"
+            or "CALC_CHARA_RANGED_DATA"
+            or "GET_NONEXISTABLE_CHARA_NO_DEFAULTABLE_SINGLE_DATA"
+            or "GET_NONEXISTABLE_VALUES_BYNAME"
+            or "GET_NONEXISTABLE_CHARA_VALUES_NO_DEFAULTABLE"))
+        {
+            return false;
+        }
+
+        if (call.Arguments.Count < 2 || !TryReadQuotedArgument(call.Arguments[0], out namespaceName, out _))
+        {
+            return false;
+        }
+
+        keyListArgumentIndex = normalizedName switch
+        {
+            "GET_NONEXISTABLE_VALUES_BYNAME" => 1,
+            "GET_NONEXISTABLE_CHARA_VALUES_NO_DEFAULTABLE" => 2,
+            _ => 2,
+        };
+        return true;
+    }
+
+    private static bool TryGetNamespaceFromSecondArgumentFunction(
+        FunctionCallInfo call,
+        out string namespaceName,
+        out int keyListArgumentIndex)
+    {
+        namespaceName = string.Empty;
+        keyListArgumentIndex = -1;
+        var normalizedName = call.Name.ToUpperInvariant();
+        if (normalizedName is not "CALC_CHARA_MULTIPLE_DATA_BASE")
+        {
+            return false;
+        }
+
+        if (call.Arguments.Count < 4 || !TryReadQuotedArgument(call.Arguments[1], out namespaceName, out _))
+        {
+            return false;
+        }
+
+        keyListArgumentIndex = 3;
+        return true;
+    }
+
+    private static bool TryGetNamespaceFromFunctionName(string functionName, out string namespaceName)
+    {
+        namespaceName = functionName.ToUpperInvariant() switch
+        {
+            "GET_NONEXISTABLE_TALENT_BYNAME" => "TALENT",
+            "GET_NONEXISTABLE_ABL_BYNAME" => "ABL",
+            "GET_NONEXISTABLE_CFLAG_BYNAME" => "CFLAG",
+            "GET_NONEXISTABLE_EXP_BYNAME" => "EXP",
+            "GET_NONEXISTABLE_CSTR_BYNAME" => "CSTR",
+            _ => string.Empty,
+        };
+        return namespaceName.Length > 0;
+    }
+
+    private static bool IsEscapedQuote(string text, int index)
+    {
+        return index + 1 < text.Length && text[index + 1] == '"'
+            || index > 0 && text[index - 1] == '"';
+    }
+
+    private static bool IsIdentifierStart(char character)
+    {
+        return character == '_' || char.IsLetter(character);
+    }
+
+    private static bool IsIdentifierCharacter(char character)
+    {
+        return character == '_' || char.IsLetterOrDigit(character);
+    }
+
     private static List<ExpressionPart> SplitTopLevel(string expression, char separator, int absoluteStart)
     {
         var parts = new List<ExpressionPart>();
@@ -989,6 +1574,78 @@ Done:
         return value.StartsWith('{') || value.StartsWith('[');
     }
 
+    private bool TryReadSelectCaseLookupNamespace(string line, out string symbolNamespace)
+    {
+        symbolNamespace = string.Empty;
+        var match = SelectCaseDimsArrayPattern().Match(line);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var arrayName = match.Groups["array"].Value;
+        if (!_dimsLookupRegistry.IsLookupArray(arrayName))
+        {
+            return false;
+        }
+
+        symbolNamespace = ErbDimsLookupRegistry.ToNamespace(arrayName);
+        return true;
+    }
+
+    private bool TryReadSelectCaseCsvNameNamespace(string line, out string symbolNamespace)
+    {
+        symbolNamespace = string.Empty;
+        var match = SelectCaseCsvNamePattern().Match(line);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        return _namespaceRegistry.TryResolveNamespace(match.Groups["namespace"].Value, out symbolNamespace);
+    }
+
+    private static bool IsSelectCaseLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length > "SELECTCASE".Length
+            && trimmed.StartsWith("SELECTCASE", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed["SELECTCASE".Length]);
+    }
+
+    private static bool IsCaseLabelLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length > "CASE".Length
+            && trimmed.StartsWith("CASE", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed["CASE".Length]);
+    }
+
+    private static bool IsEndSelectLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Equals("ENDSELECT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsElementLookupFunction(string functionName)
+    {
+        return functionName.Equals("FINDELEMENT", StringComparison.OrdinalIgnoreCase)
+            || functionName.Equals("FINDLASTELEMENT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadIdentifier(string text, out string identifier)
+    {
+        identifier = string.Empty;
+        var trimmed = text.Trim();
+        if (!VariableNamePattern().IsMatch(trimmed))
+        {
+            return false;
+        }
+
+        identifier = trimmed;
+        return true;
+    }
+
     private static bool ShouldTreatAsSymbolKey(string value)
     {
         return !string.IsNullOrWhiteSpace(value)
@@ -1015,6 +1672,18 @@ Done:
     [GeneratedRegex("""^[A-Za-z_][A-Za-z0-9_]*$""", RegexOptions.Compiled)]
     private static partial Regex IndexVariablePattern();
 
+    [GeneratedRegex("""^\s*SELECTCASE\s+(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SelectCaseDimsArrayPattern();
+
+    [GeneratedRegex("""^\s*SELECTCASE\s+(?<namespace>[\p{L}_][\p{L}\p{N}_]*)NAME\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SelectCaseCsvNamePattern();
+
+    [GeneratedRegex(@"(?<array>[\p{L}_][\p{L}\p{N}_]*)\s*:[^""'\r\n=<>!]+\s*(?:==|!=|<>)\s*@?""(?<value>(?:[^""]|"""")*)""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DimsArrayComparisonPattern();
+
+    [GeneratedRegex(@"@?""(?<value>(?:[^""]|"""")*)""", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex QuotedLiteralInLinePattern();
+
     private readonly record struct AssignmentInfo(string VariableName, string ExpressionText, int ExpressionAbsoluteStart, int LineNumber);
 
     private readonly record struct ComponentInfo(string Value, int Start, int Length, int End, bool IsExpression)
@@ -1025,6 +1694,12 @@ Done:
     private readonly record struct ExpressionPart(string Text, int AbsoluteStart);
 
     private readonly record struct LiteralOccurrence(string LiteralValue, int AbsoluteStart, int Length);
+
+    private readonly record struct FunctionCallInfo(string Name, List<FunctionArgumentInfo> Arguments);
+
+    private readonly record struct FunctionArgumentInfo(string Text, int AbsoluteStart);
+
+    private readonly record struct KeyOccurrence(string Value, int AbsoluteStart);
 
     private readonly record struct ExpressionResolutionResult(
         IReadOnlyCollection<string> Values,
