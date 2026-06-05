@@ -8,6 +8,7 @@ public sealed class FileScanner
     private static readonly string[] ErbExtensions = [".erb", ".era", ".erh"];
     private static readonly string[] CsvExtensions = [".csv", ".cvs", ".erd"];
     private static readonly string[] SupportedScanDirectoryNames = ["ERB", "CSV", "CVS", "DATA"];
+    private static readonly string[] ExcludedScanDirectoryNames = [".era-translator-backup", ".era-translator"];
     private readonly int? _maxDegreeOfParallelismOverride;
     private readonly SymbolReferenceAnalyzer _symbolReferenceAnalyzer = new();
     private readonly JosaSupportPackageService _josaSupportPackageService = new();
@@ -130,6 +131,11 @@ public sealed class FileScanner
         var directories = Directory.EnumerateDirectories(gameRoot, "*", SearchOption.AllDirectories)
             .Where(path =>
             {
+                if (IsExcludedScanPath(gameRoot, path))
+                {
+                    return false;
+                }
+
                 var name = Path.GetFileName(path);
                 return SupportedScanDirectoryNames.Contains(name, StringComparer.OrdinalIgnoreCase);
             })
@@ -145,6 +151,11 @@ public sealed class FileScanner
         {
             foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
             {
+                if (IsExcludedScanPath(gameRoot, file))
+                {
+                    continue;
+                }
+
                 var fullPath = Path.GetFullPath(file);
                 var extension = Path.GetExtension(file).ToLowerInvariant();
                 if ((ErbExtensions.Contains(extension) || CsvExtensions.Contains(extension))
@@ -154,6 +165,17 @@ public sealed class FileScanner
                 }
             }
         }
+    }
+
+    private static bool IsExcludedScanPath(string gameRoot, string path)
+    {
+        var fullGameRoot = Path.GetFullPath(gameRoot);
+        var fullPath = Path.GetFullPath(path);
+        var relativePath = Path.GetRelativePath(fullGameRoot, fullPath);
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(segment => ExcludedScanDirectoryNames.Contains(segment, StringComparer.OrdinalIgnoreCase));
     }
 
     private int GetMaxDegreeOfParallelism()

@@ -163,6 +163,7 @@ public sealed class ExtractedTextItemTests
         Assert.Contains(nameof(ExtractedTextItem.ValidationStatus), changedProperties);
         Assert.Contains(nameof(ExtractedTextItem.CanSave), changedProperties);
         Assert.Contains(nameof(ExtractedTextItem.EditableStatus), changedProperties);
+        Assert.Contains(nameof(ExtractedTextItem.ManualStatusOverrideVersion), changedProperties);
         Assert.Contains(nameof(ExtractedTextItem.StateText), changedProperties);
         Assert.Contains(nameof(ExtractedTextItem.HasPersistableState), changedProperties);
         Assert.DoesNotContain(string.Empty, changedProperties);

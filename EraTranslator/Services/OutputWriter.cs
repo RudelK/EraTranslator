@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text;
 
 namespace EraTranslator.Services;
 
 public sealed class OutputWriter
 {
+    private const string BackupDirectoryName = ".era-translator-backup";
     private static readonly UTF8Encoding Utf8BomEncoding = new(true);
     private static readonly UTF8Encoding Utf8NoBomEncoding = new(false);
     private static readonly UnicodeEncoding Utf16LeBomEncoding = new(false, true, true);
@@ -121,7 +123,7 @@ public sealed class OutputWriter
         result.DocumentWriteElapsed = documentWriteStopwatch.Elapsed;
 
         var packageStopwatch = Stopwatch.StartNew();
-        WriteBundledJosaPackage(outputDirectory, result, backupRoot: null);
+        WriteBundledJosaPackage(outputDirectory, result, backupArchive: null);
         packageStopwatch.Stop();
         result.PackageWriteElapsed = packageStopwatch.Elapsed;
         progress?.Report((1.0, result.WrittenFiles.Count == 0 ? "저장할 파일 없음" : $"저장 완료: {result.WrittenFiles.Count}개 파일"));
@@ -132,7 +134,7 @@ public sealed class OutputWriter
     {
         var normalizedGameRoot = NormalizeDirectoryPath(gameRoot);
         var normalizedOutputRoot = NormalizeDirectoryPath(outputDirectory);
-        var backupRoot = Path.Combine(normalizedGameRoot, ".era-translator-backup");
+        var backupRoot = Path.Combine(normalizedGameRoot, BackupDirectoryName);
         var backupStateRoot = Path.Combine(normalizedGameRoot, ".era-translator");
 
         foreach (var sourcePath in Directory.EnumerateFiles(normalizedGameRoot, "*", SearchOption.AllDirectories))
@@ -162,10 +164,10 @@ public sealed class OutputWriter
         CancellationToken cancellationToken,
         OutputWriteResult result)
     {
-        var backupRoot = Path.Combine(session.GameRoot, ".era-translator-backup", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+        var backupDirectory = Path.Combine(session.GameRoot, BackupDirectoryName);
         var documents = session.Documents.Values.ToList();
         var documentWriteStopwatch = Stopwatch.StartNew();
-        var backupElapsed = TimeSpan.Zero;
+        using var backupArchive = new BackupArchiveContext(session.GameRoot, backupDirectory, result);
 
         for (var index = 0; index < documents.Count; index++)
         {
@@ -186,13 +188,7 @@ public sealed class OutputWriter
                 continue;
             }
 
-            var backupPath = Path.Combine(backupRoot, document.RelativePath);
-            var backupStopwatch = Stopwatch.StartNew();
-            Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
-            File.Copy(document.FullPath, backupPath, overwrite: false);
-            backupStopwatch.Stop();
-            backupElapsed += backupStopwatch.Elapsed;
-            result.BackupFiles.Add(backupPath);
+            backupArchive.BackupFile(document.FullPath);
 
             var content = ApplyTranslations(document, translatedMap, rewritePlan, identifierRewritePlan, josaDocumentReplacements, packageInfo);
             File.WriteAllText(document.FullPath, content, ResolveOutputEncoding(document.EncodingInfo));
@@ -200,12 +196,13 @@ public sealed class OutputWriter
             progress?.Report((((index + 1) / (double)Math.Max(documents.Count, 1)) * 0.95, $"저장 중: {document.RelativePath}"));
         }
         documentWriteStopwatch.Stop();
-        result.BackupElapsed = backupElapsed;
+        result.BackupElapsed = backupArchive.Elapsed;
         result.DocumentWriteElapsed = documentWriteStopwatch.Elapsed;
 
         var packageStopwatch = Stopwatch.StartNew();
-        WriteBundledJosaPackage(session.GameRoot, result, backupRoot);
+        WriteBundledJosaPackage(session.GameRoot, result, backupArchive);
         packageStopwatch.Stop();
+        result.BackupElapsed = backupArchive.Elapsed;
         result.PackageWriteElapsed = packageStopwatch.Elapsed;
         progress?.Report((1.0, result.WrittenFiles.Count == 0 ? "저장할 파일 없음" : $"저장 완료: {result.WrittenFiles.Count}개 파일"));
         return result;
@@ -354,6 +351,7 @@ public sealed class OutputWriter
                 || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ProtectedCodeArgumentFunctionNames)
                 || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, PaletteLookupFunctionNames)
                 || IsRangeInsideCommandArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ["LOADTEXT", "SAVETEXT"])
+                || TextHeuristics.LooksLikeResourcePathLiteral(segment.OriginalText)
                 || IsPaletteCaseLabelLiteral(document.OriginalText, segment)
                 || IsQuotedComparisonLiteral(document.OriginalText, segment)))
         {
@@ -819,27 +817,19 @@ public sealed class OutputWriter
         return TranslationQualityRules.NormalizeErbFunctionArgumentSeparators(josaRewritten.Text);
     }
 
-    private void WriteBundledJosaPackage(string rootDirectory, OutputWriteResult result, string? backupRoot)
+    private void WriteBundledJosaPackage(string rootDirectory, OutputWriteResult result, BackupArchiveContext? backupArchive)
     {
         var package = _josaSupportPackageService.LoadBundledPackage();
-        WritePackageFile(_josaSupportPackageService.GetDefaultErbTargetPath(rootDirectory), package.erbText, result, backupRoot);
-        WritePackageFile(_josaSupportPackageService.GetDefaultErhTargetPath(rootDirectory), package.erhText, result, backupRoot);
+        WritePackageFile(_josaSupportPackageService.GetDefaultErbTargetPath(rootDirectory), package.erbText, result, backupArchive);
+        WritePackageFile(_josaSupportPackageService.GetDefaultErhTargetPath(rootDirectory), package.erhText, result, backupArchive);
     }
 
-    private static void WritePackageFile(string targetPath, string content, OutputWriteResult result, string? backupRoot)
+    private static void WritePackageFile(string targetPath, string content, OutputWriteResult result, BackupArchiveContext? backupArchive)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-        if (!string.IsNullOrWhiteSpace(backupRoot) && File.Exists(targetPath))
+        if (backupArchive is not null)
         {
-            var gameRoot = Directory.GetParent(Directory.GetParent(backupRoot)!.FullName)!.FullName;
-            var relativePath = Path.GetRelativePath(gameRoot, targetPath);
-            var backupPath = Path.Combine(backupRoot, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
-            if (!File.Exists(backupPath))
-            {
-                File.Copy(targetPath, backupPath, overwrite: false);
-                result.BackupFiles.Add(backupPath);
-            }
+            backupArchive.BackupFile(targetPath);
         }
 
         File.WriteAllText(targetPath, content, Utf8BomEncoding);
@@ -877,6 +867,65 @@ public sealed class OutputWriter
             DetectedEncodingKind.Unicode => encodingInfo.HasBom ? Utf16LeBomEncoding : Utf16LeNoBomEncoding,
             _ => encodingInfo.Encoding,
         };
+    }
+
+    private sealed class BackupArchiveContext : IDisposable
+    {
+        private readonly string _gameRoot;
+        private readonly string _backupDirectory;
+        private readonly OutputWriteResult _result;
+        private readonly HashSet<string> _entryPaths = new(StringComparer.OrdinalIgnoreCase);
+        private ZipArchive? _archive;
+
+        public BackupArchiveContext(string gameRoot, string backupDirectory, OutputWriteResult result)
+        {
+            _gameRoot = gameRoot;
+            _backupDirectory = backupDirectory;
+            _result = result;
+        }
+
+        public TimeSpan Elapsed { get; private set; }
+
+        public void BackupFile(string sourcePath)
+        {
+            if (!File.Exists(sourcePath))
+            {
+                return;
+            }
+
+            var relativePath = Path.GetRelativePath(_gameRoot, sourcePath)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            if (!_entryPaths.Add(relativePath))
+            {
+                return;
+            }
+
+            EnsureArchiveCreated();
+            var backupStopwatch = Stopwatch.StartNew();
+            _archive!.CreateEntryFromFile(sourcePath, relativePath, CompressionLevel.Optimal);
+            backupStopwatch.Stop();
+            Elapsed += backupStopwatch.Elapsed;
+        }
+
+        public void Dispose()
+        {
+            _archive?.Dispose();
+        }
+
+        private void EnsureArchiveCreated()
+        {
+            if (_archive is not null)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(_backupDirectory);
+            var archivePath = Path.Combine(
+                _backupDirectory,
+                $"backup-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}.zip");
+            _archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+            _result.BackupFiles.Add(archivePath);
+        }
     }
 
     private static bool RangesOverlap(int leftStart, int leftLength, int rightStart, int rightLength)

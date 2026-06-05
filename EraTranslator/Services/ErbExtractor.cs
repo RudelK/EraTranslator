@@ -549,6 +549,7 @@ public sealed partial class ErbExtractor
                     && LooksLikeNaturalPrintTailText(value);
                 if (!TextHeuristics.ContainsTranslatableText(value)
                     || (!isNaturalPrintTail && TextHeuristics.LooksLikeCodeOnly(value))
+                    || TextHeuristics.LooksLikeResourcePathLiteral(value)
                     || LooksLikeErbSymbolExpression(value))
                 {
                     return;
@@ -592,6 +593,12 @@ public sealed partial class ErbExtractor
 
             void ExtractPrintTailSegments(string tailValue, int lineOffset)
             {
+                if (string.IsNullOrWhiteSpace(tailValue))
+                {
+                    return;
+                }
+
+                tailValue = StripInlineComment(tailValue);
                 if (string.IsNullOrWhiteSpace(tailValue))
                 {
                     return;

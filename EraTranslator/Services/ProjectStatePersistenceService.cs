@@ -60,6 +60,28 @@ public sealed class ProjectStatePersistenceService(
         _scanSessionStateService.Delete(projectDataDirectory);
     }
 
+    public bool HasPersistedState(string projectDataDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(projectDataDirectory))
+        {
+            return false;
+        }
+
+        if (_sqliteProjectStateStore.Exists(projectDataDirectory))
+        {
+            return true;
+        }
+
+        var scanStatePath = _scanSessionStateService.GetStateFilePath(projectDataDirectory);
+        if (!string.IsNullOrWhiteSpace(scanStatePath) && File.Exists(scanStatePath))
+        {
+            return true;
+        }
+
+        var progressPath = _translationProgressStateService.GetProgressFilePath(projectDataDirectory);
+        return !string.IsNullOrWhiteSpace(progressPath) && File.Exists(progressPath);
+    }
+
     private void EnsureMigrated(string projectDataDirectory)
     {
         if (string.IsNullOrWhiteSpace(projectDataDirectory) || _sqliteProjectStateStore.Exists(projectDataDirectory))

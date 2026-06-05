@@ -149,6 +149,38 @@ PRINTFORMW GETNUM(CFLAG,"外見年齢")
         }
     }
 
+    [Fact]
+    public void Scan_IgnoresBackupAndStateDirectories()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var erbDir = Path.Combine(tempRoot, "ERB");
+        var backupErbDir = Path.Combine(tempRoot, ".era-translator-backup", "20260604-120000-000", "ERB");
+        var stateCsvDir = Path.Combine(tempRoot, ".era-translator", "cache", "CSV");
+        Directory.CreateDirectory(erbDir);
+        Directory.CreateDirectory(backupErbDir);
+        Directory.CreateDirectory(stateCsvDir);
+        File.WriteAllText(Path.Combine(erbDir, "Main.ERB"), "PRINTFORMW \"현재 파일\"\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(backupErbDir, "Backup.ERB"), "PRINTFORMW \"백업 파일\"\r\n", Encoding.UTF8);
+        File.WriteAllText(Path.Combine(stateCsvDir, "State.csv"), "0,상태파일\r\n", Encoding.UTF8);
+
+        try
+        {
+            var session = new FileScanner().Scan(tempRoot);
+
+            Assert.Single(session.Documents);
+            Assert.Contains(session.Documents.Keys, key => string.Equals(key, "ERB/Main.ERB", StringComparison.Ordinal));
+            Assert.DoesNotContain(session.Documents.Keys, key => key.Contains(".era-translator-backup", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(session.Documents.Keys, key => key.Contains(".era-translator", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
     private static string ProjectSessionSummary(Models.ScanSession session)
     {
         return string.Join(

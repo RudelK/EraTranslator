@@ -93,6 +93,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _isSavingResults;
     private HashSet<string>? _visibleItemSnapshot;
     private bool _buildingVisibleItemSnapshot;
+    private bool _itemsViewRefreshQueued;
+    private bool _handlingManualStatusOverride;
+    private bool _startupProjectContextRestored;
+    private bool _isStartupLoading;
+    private static readonly SaveMode EffectiveSaveMode = SaveMode.ExportCopy;
 
     public MainWindowViewModel(
         FileScanner? fileScanner = null,
@@ -165,12 +170,81 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
         RefreshProjectContext(restoreSession: false, clearSessionWhenMissing: false);
         LoadConfig();
-        RefreshProjectContext(restoreLastSessionOnStartup, clearSessionWhenMissing: false);
+        if (restoreLastSessionOnStartup)
+        {
+            _startupProjectContextRestored = true;
+            RefreshProjectContext(restoreSession: true, clearSessionWhenMissing: false);
+        }
     }
 
     public void FlushPendingConfigSave()
     {
         _appConfigCoordinator.FlushPendingSave();
+    }
+
+    public bool HasStartupProjectContextCandidate()
+    {
+        var projectDataDirectory = GetProjectDataDirectory();
+        return _projectStatePersistenceService.HasPersistedState(projectDataDirectory);
+    }
+
+    public async Task RestoreStartupProjectContextIfAvailableAsync()
+    {
+        if (_startupProjectContextRestored)
+        {
+            return;
+        }
+
+        _startupProjectContextRestored = true;
+        var projectDataDirectory = GetProjectDataDirectory();
+        _activeProjectDataDirectory = projectDataDirectory;
+        ReloadProjectDictionary(projectDataDirectory);
+        RaisePropertyChanged(nameof(UserDictionarySummary));
+
+        if (string.IsNullOrWhiteSpace(projectDataDirectory) || !Directory.Exists(projectDataDirectory))
+        {
+            return;
+        }
+
+        var previousStatusText = StatusText;
+        var previousOperationDetail = CurrentOperationDetail;
+        var previousProgressValue = ProgressValue;
+
+        IsStartupLoading = true;
+        StatusText = "DB를 불러오는 중입니다.";
+        CurrentOperationDetail = "저장된 추출 상태를 확인하는 중입니다.";
+        ProgressValue = 0;
+
+        try
+        {
+            var session = System.Windows.Application.Current is null
+                ? _projectStatePersistenceService.LoadScanSession(projectDataDirectory)
+                : await Task.Run(() => _projectStatePersistenceService.LoadScanSession(projectDataDirectory));
+            if (session is null)
+            {
+                StatusText = previousStatusText;
+                CurrentOperationDetail = previousOperationDetail;
+                ProgressValue = previousProgressValue;
+                return;
+            }
+
+            CurrentOperationDetail = "저장된 진행 상태를 적용하는 중입니다.";
+            ApplySession(session, restoreProgress: true);
+            RefreshSummaryText();
+            StatusText = "마지막 추출 상태를 불러왔습니다.";
+            CurrentOperationDetail = $"복원 완료: {session.Documents.Count}개 문서";
+            ProgressValue = 1.0;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"DB 로드 실패: {ex.Message}";
+            CurrentOperationDetail = "저장된 추출 상태를 불러오지 못했습니다.";
+            ProgressValue = 0;
+        }
+        finally
+        {
+            IsStartupLoading = false;
+        }
     }
 
     public void Dispose()
@@ -205,6 +279,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             if (SetProperty(ref _gameDirectory, value))
             {
+                EnsureOutputDirectoryDistinctFromGameDirectory();
                 OnProjectPathInputsChanged();
             }
         }
@@ -213,13 +288,27 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     public string OutputDirectory
     {
         get => _outputDirectory;
-        set
+        set => TryApplyOutputDirectory(value, out _);
+    }
+
+    public bool TryApplyOutputDirectory(string? value, out string errorMessage)
+    {
+        var normalizedValue = value?.Trim() ?? string.Empty;
+        if (IsOutputDirectorySameAsGameDirectory(normalizedValue))
         {
-            if (SetProperty(ref _outputDirectory, value))
-            {
-                OnProjectPathInputsChanged();
-            }
+            errorMessage = "출력 폴더는 게임 폴더와 같은 경로로 지정할 수 없습니다.";
+            StatusText = errorMessage;
+            CurrentOperationDetail = "출력 폴더 선택이 취소되었습니다.";
+            return false;
         }
+
+        errorMessage = string.Empty;
+        if (SetProperty(ref _outputDirectory, normalizedValue))
+        {
+            OnProjectPathInputsChanged();
+        }
+
+        return true;
     }
 
     public ProviderOption? SelectedProviderOption
@@ -881,11 +970,25 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
-    public bool CanCancel => IsBusy;
+    public bool IsStartupLoading
+    {
+        get => _isStartupLoading;
+        private set
+        {
+            if (SetProperty(ref _isStartupLoading, value))
+            {
+                RaisePropertyChanged(nameof(CanCancel));
+                RaisePropertyChanged(nameof(CanStartActions));
+                RaisePropertyChanged(nameof(CanBrowseDirectories));
+            }
+        }
+    }
 
-    public bool CanStartActions => !IsBusy;
+    public bool CanCancel => IsBusy && !IsStartupLoading;
 
-    public bool CanBrowseDirectories => !IsBusy;
+    public bool CanStartActions => !IsBusy && !IsStartupLoading;
+
+    public bool CanBrowseDirectories => !IsBusy && !IsStartupLoading;
 
     public bool RefreshGridDuringTranslatedTextEdit
     {
@@ -912,16 +1015,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
-    public bool IsExportSaveMode => SelectedSaveMode == SaveMode.ExportCopy;
+    public bool IsExportSaveMode => true;
 
-    public bool IsInPlaceSaveMode => SelectedSaveMode == SaveMode.InPlaceWithBackup;
+    public bool IsInPlaceSaveMode => false;
 
-    public string SaveModeSummary => SelectedSaveMode switch
-    {
-        SaveMode.ExportCopy => "번역 파일을 별도 출력 폴더에 저장합니다. 원본 파일은 변경하지 않습니다.",
-        SaveMode.InPlaceWithBackup => "원본 파일에 바로 저장하고, 저장 전에 .era-translator-backup 폴더에 백업을 만듭니다.",
-        _ => string.Empty,
-    };
+    public string SaveModeSummary => "번역 파일을 별도 출력 폴더에 저장합니다. 원본 파일은 변경하지 않습니다.";
 
     public string FilterText
     {
@@ -1151,7 +1249,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             return;
         }
 
-        if (SelectedSaveMode == SaveMode.ExportCopy && string.IsNullOrWhiteSpace(OutputDirectory))
+        if (EffectiveSaveMode == SaveMode.ExportCopy && string.IsNullOrWhiteSpace(OutputDirectory))
         {
             StatusText = "출력 디렉토리를 지정하세요.";
             return;
@@ -1168,7 +1266,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                     "결과 저장을 시작합니다.",
                     new Dictionary<string, string>
                     {
-                        ["SaveMode"] = SelectedSaveMode.ToString(),
+                        ["ConfiguredSaveMode"] = SelectedSaveMode.ToString(),
+                        ["EffectiveSaveMode"] = EffectiveSaveMode.ToString(),
                         ["GameDirectory"] = GameDirectory,
                         ["OutputDirectory"] = OutputDirectory,
                         ["ProjectDataDirectory"] = GetProjectDataDirectory(_session.GameRoot),
@@ -1182,10 +1281,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 try
                 {
                     var writeResult = await Task.Run(
-                        () => _outputWriter.Save(_session, OutputDirectory, SelectedSaveMode, saveProgress, cancellationToken),
+                        () => _outputWriter.Save(_session, OutputDirectory, EffectiveSaveMode, saveProgress, cancellationToken),
                         cancellationToken);
 
-                    StatusText = SelectedSaveMode == SaveMode.ExportCopy
+                    StatusText = EffectiveSaveMode == SaveMode.ExportCopy
                         ? $"{writeResult.WrittenFiles.Count}개 파일을 출력 폴더에 저장했습니다."
                         : $"{writeResult.WrittenFiles.Count}개 파일을 원본에 반영했고, {writeResult.BackupFiles.Count}개 백업을 생성했습니다.";
                     CurrentOperationDetail = writeResult.WrittenFiles.Count == 0
@@ -1562,7 +1661,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     public void RefreshItemsView()
     {
         RebuildVisibleItemSnapshot();
-        ItemsView.Refresh();
+        if (TryRefreshItemsViewNow())
+        {
+            return;
+        }
+
+        QueueItemsViewRefresh();
     }
 
     public void ApplySameOriginalCorrection()
@@ -1906,6 +2010,20 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         PersistConfig();
     }
 
+    private void EnsureOutputDirectoryDistinctFromGameDirectory()
+    {
+        if (!IsOutputDirectorySameAsGameDirectory(_outputDirectory))
+        {
+            return;
+        }
+
+        if (SetProperty(ref _outputDirectory, string.Empty))
+        {
+            StatusText = "출력 폴더는 게임 폴더와 같은 경로로 둘 수 없어 비웠습니다.";
+            CurrentOperationDetail = "출력 폴더 충돌을 정리했습니다.";
+        }
+    }
+
     private void RefreshProjectContext(bool restoreSession, bool clearSessionWhenMissing)
     {
         var projectDataDirectory = GetProjectDataDirectory();
@@ -1964,7 +2082,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 OutputDirectory = config.OutputDirectory;
             }
 
-            SelectedSaveMode = config.SaveMode;
+            SelectedSaveMode = EffectiveSaveMode;
             SelectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == config.ProviderType)
                 ?? SelectedProviderOption;
 
@@ -2042,7 +2160,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             GameDirectory = GameDirectory,
             OutputDirectory = OutputDirectory,
-            SaveMode = SelectedSaveMode,
+            SaveMode = EffectiveSaveMode,
             ProviderType = SelectedProviderType,
             BaseUrl = BaseUrl,
             Model = Model,
@@ -2357,24 +2475,53 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             RefreshSummaryText();
         }
 
-        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.EditableStatus)))
+        if (MatchesPropertyChange(e, nameof(ExtractedTextItem.ManualStatusOverrideVersion)))
         {
-            var propertyName = string.IsNullOrWhiteSpace(e.PropertyName) ? "(all)" : e.PropertyName;
-            LogResultState(
-                "ITEM_PROPERTY_CHANGED",
-                "번역 진행 상태 저장 대상 속성이 변경되었습니다.",
-                new Dictionary<string, string>
-                {
-                    ["SegmentId"] = item.SegmentId,
-                    ["Property"] = propertyName,
-                    ["Status"] = item.Status,
-                    ["ValidationStatus"] = item.ValidationStatus,
-                    ["CanSave"] = item.CanSave.ToString(),
-                    ["TranslatedLength"] = item.TranslatedText.Length.ToString(),
-                    ["IsSavingResults"] = _isSavingResults.ToString(),
-                });
-            SaveTranslationProgressItems([item], $"ItemOnPropertyChanged:{item.SegmentId}:{propertyName}");
+            HandleManualStatusEdited(item);
+            return;
         }
+    }
+
+    private void HandleManualStatusEdited(ExtractedTextItem item)
+    {
+        if (_handlingManualStatusOverride)
+        {
+            return;
+        }
+
+        var groupItems = GetItemsWithSameOriginalText(item);
+        _handlingManualStatusOverride = true;
+        _suppressItemStatePersistence = true;
+        try
+        {
+            foreach (var groupItem in groupItems)
+            {
+                if (ReferenceEquals(groupItem, item))
+                {
+                    continue;
+                }
+
+                groupItem.ApplyManualStatusOverride(item.Status);
+            }
+        }
+        finally
+        {
+            _suppressItemStatePersistence = false;
+            _handlingManualStatusOverride = false;
+        }
+
+        LogResultState(
+            "ITEM_MANUAL_STATUS_CHANGED",
+            "수동 상태 변경을 동일 원문 항목에 전파하고 저장합니다.",
+            new Dictionary<string, string>
+            {
+                ["SegmentId"] = item.SegmentId,
+                ["Status"] = item.Status,
+                ["ValidationStatus"] = item.ValidationStatus,
+                ["GroupItemCount"] = groupItems.Count.ToString(),
+                ["IsSavingResults"] = _isSavingResults.ToString(),
+            });
+        SaveTranslationProgressItems(groupItems, $"HandleManualStatusEdited:{item.SegmentId}:{item.Status}");
     }
 
     private void RefreshSummaryText()
@@ -3151,24 +3298,70 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void RequestItemsViewRefresh()
     {
+        RebuildVisibleItemSnapshot();
+        if (TryRefreshItemsViewNow())
+        {
+            return;
+        }
+
+        QueueItemsViewRefresh();
+    }
+
+    private bool TryRefreshItemsViewNow()
+    {
+        if (ItemsView is IEditableCollectionView editableCollectionView
+            && (editableCollectionView.IsAddingNew || editableCollectionView.IsEditingItem))
+        {
+            return false;
+        }
+
+        ItemsView.Refresh();
+        _itemsViewRefreshQueued = false;
+        return true;
+    }
+
+    private void QueueItemsViewRefresh()
+    {
+        if (_itemsViewRefreshQueued)
+        {
+            return;
+        }
+
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
-            RefreshItemsView();
+            try
+            {
+                ItemsView.Refresh();
+                _itemsViewRefreshQueued = false;
+            }
+            catch (InvalidOperationException)
+            {
+                // Unit tests can run without an Application dispatcher while a collection edit is still open.
+            }
             return;
         }
+
+        _itemsViewRefreshQueued = true;
+        Action? refreshAction = null;
+        refreshAction = () =>
+        {
+            RebuildVisibleItemSnapshot();
+            if (TryRefreshItemsViewNow())
+            {
+                return;
+            }
+
+            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, refreshAction!);
+        };
 
         if (!dispatcher.CheckAccess())
         {
-            dispatcher.BeginInvoke(
-                DispatcherPriority.ApplicationIdle,
-                new Action(RefreshItemsView));
+            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, refreshAction);
             return;
         }
 
-        dispatcher.BeginInvoke(
-            DispatcherPriority.ApplicationIdle,
-            new Action(RefreshItemsView));
+        dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, refreshAction);
     }
 
     internal string BuildTranslationProgressDetail(string? detail, double progressValue)
@@ -3265,7 +3458,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private string GetProjectDataDirectory(string? fallbackGameDirectory = null)
     {
-        if (SelectedSaveMode == SaveMode.ExportCopy && !string.IsNullOrWhiteSpace(OutputDirectory))
+        if (EffectiveSaveMode == SaveMode.ExportCopy && !string.IsNullOrWhiteSpace(OutputDirectory))
         {
             return OutputDirectory;
         }
@@ -3288,6 +3481,26 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private static string ResolveProgressSaveReason(string? reason, string callerName)
     {
         return string.IsNullOrWhiteSpace(reason) ? callerName : reason;
+    }
+
+    private bool IsOutputDirectorySameAsGameDirectory(string? outputDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(outputDirectory)
+            || string.IsNullOrWhiteSpace(GameDirectory))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            NormalizeDirectoryPath(outputDirectory),
+            NormalizeDirectoryPath(GameDirectory),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        return Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private sealed record TranslationPhasePlan(

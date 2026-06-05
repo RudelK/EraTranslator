@@ -287,6 +287,22 @@ PRINTFORML TALENT:MASTER:気骨
     }
 
     [Fact]
+    public void Extract_SkipsInlineCommentOnlyPrintTailText()
+    {
+        const string source = """
+PRINTFORMW ;新しく何かを追加したい場合は、同ERBの記述を変更してください。
+PRINTFORMW "普通の文章です" ; inline comment
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain("新しく何かを追加したい場合は、同ERBの記述を変更してください。", values);
+        Assert.Contains("普通の文章です", values);
+    }
+
+    [Fact]
     public void Extract_FindsNaturalTextInsideAngleBracketPrintTail()
     {
         const string source = """
@@ -819,6 +835,25 @@ PRINTFORML "普通の文章です"
 
         Assert.DoesNotContain("dat/人物DT_XML.txt", values);
         Assert.DoesNotContain(@"sav/%RESULTS%", values);
+        Assert.Contains("普通の文章です", values);
+    }
+
+    [Fact]
+    public void Extract_SkipsGeneralResourcePathLiteralsAcrossQuotedRawAndPrintSegments()
+    {
+        const string source = """
+PRINTFORMW "EVENT_R18/EV_950107_ナアマ.png"
+LOCALS = @"bgm/ボス戦.ogg"
+PRINTFORML EVENT_R18/EV_950107_ナアマ.png
+PRINTFORML "普通の文章です"
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain("EVENT_R18/EV_950107_ナアマ.png", values);
+        Assert.DoesNotContain("bgm/ボス戦.ogg", values);
         Assert.Contains("普通の文章です", values);
     }
 }

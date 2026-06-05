@@ -13,6 +13,7 @@ public sealed class ExtractedTextItem : BindableBase
     private string _translationSource = string.Empty;
     private string _validationStatus = "검증 전";
     private bool _canSave = true;
+    private int _manualStatusOverrideVersion;
 
     public required string SegmentId { get; init; }
 
@@ -95,6 +96,8 @@ public sealed class ExtractedTextItem : BindableBase
         get => _status;
         set => ApplyManualStatusOverride(value);
     }
+
+    public int ManualStatusOverrideVersion => _manualStatusOverrideVersion;
 
     public bool IsTranslatedSuccessfully =>
         (string.Equals(_status, "번역 완료", StringComparison.Ordinal)
@@ -289,6 +292,8 @@ public sealed class ExtractedTextItem : BindableBase
         }
 
         RaiseStateChangedProperties();
+        _manualStatusOverrideVersion++;
+        RaisePropertyChanged(nameof(ManualStatusOverrideVersion));
     }
 
     public void ApplyTranslationState(

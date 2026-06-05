@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using EraTranslator.Models;
 using EraTranslator.Services;
@@ -84,6 +85,146 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Empty(viewModel.Items);
         Assert.Equal("아직 스캔 전입니다.", viewModel.SummaryText);
         Assert.Equal("저장된 추출 상태가 없는 프로젝트입니다. 새로 추출을 실행하세요.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task RestoreStartupProjectContextIfAvailableAsync_DeferredRestoreLoadsSavedSession()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSession(gameDirectory), gameDirectory);
+        var configRoot = Path.Combine(_rootPath, "Config");
+        var appConfigService = new AppConfigService(configRoot);
+        appConfigService.Save(new AppConfig
+        {
+            GameDirectory = gameDirectory,
+            OutputDirectory = string.Empty,
+        });
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: appConfigService,
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.Empty(viewModel.Items);
+        Assert.Equal(gameDirectory, viewModel.GameDirectory);
+
+        await viewModel.RestoreStartupProjectContextIfAvailableAsync();
+
+        Assert.Single(viewModel.Items);
+        Assert.Equal("마지막 추출 상태를 불러왔습니다.", viewModel.StatusText);
+        Assert.False(viewModel.IsStartupLoading);
+        Assert.True(viewModel.CanStartActions);
+        Assert.True(viewModel.CanBrowseDirectories);
+    }
+
+    [Fact]
+    public void HasStartupProjectContextCandidate_IsFalseWhenOnlyOutputDirectoryExistsWithoutState()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        var outputDirectory = Path.Combine(_rootPath, "Output");
+        Directory.CreateDirectory(gameDirectory);
+        Directory.CreateDirectory(outputDirectory);
+
+        var configRoot = Path.Combine(_rootPath, "Config");
+        var appConfigService = new AppConfigService(configRoot);
+        appConfigService.Save(new AppConfig
+        {
+            GameDirectory = gameDirectory,
+            OutputDirectory = outputDirectory,
+        });
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: appConfigService,
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.False(viewModel.HasStartupProjectContextCandidate());
+    }
+
+    [Fact]
+    public async Task RestoreStartupProjectContextIfAvailableAsync_LoadsStateFromConfiguredOutputDirectory()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        var outputDirectory = Path.Combine(_rootPath, "Output");
+        Directory.CreateDirectory(gameDirectory);
+        Directory.CreateDirectory(outputDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSession(gameDirectory), outputDirectory);
+        var configRoot = Path.Combine(_rootPath, "Config");
+        var appConfigService = new AppConfigService(configRoot);
+        appConfigService.Save(new AppConfig
+        {
+            GameDirectory = gameDirectory,
+            OutputDirectory = outputDirectory,
+        });
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: appConfigService,
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.True(viewModel.HasStartupProjectContextCandidate());
+
+        await viewModel.RestoreStartupProjectContextIfAvailableAsync();
+
+        Assert.Single(viewModel.Items);
+        Assert.Equal("마지막 추출 상태를 불러왔습니다.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public void TryApplyOutputDirectory_RejectsSamePathAsGameDirectory()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        var outputDirectory = Path.Combine(_rootPath, "Output");
+        Directory.CreateDirectory(gameDirectory);
+        Directory.CreateDirectory(outputDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        viewModel.GameDirectory = gameDirectory;
+        viewModel.OutputDirectory = outputDirectory;
+
+        var applied = viewModel.TryApplyOutputDirectory(gameDirectory, out var errorMessage);
+
+        Assert.False(applied);
+        Assert.Equal(outputDirectory, viewModel.OutputDirectory);
+        Assert.Equal("출력 폴더는 게임 폴더와 같은 경로로 지정할 수 없습니다.", errorMessage);
+    }
+
+    [Fact]
+    public void GameDirectoryChange_ClearsOutputDirectoryWhenPathsCollide()
+    {
+        var sharedDirectory = Path.Combine(_rootPath, "Shared");
+        var outputDirectory = Path.Combine(_rootPath, "Output");
+        Directory.CreateDirectory(sharedDirectory);
+        Directory.CreateDirectory(outputDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        viewModel.GameDirectory = Path.Combine(_rootPath, "Game");
+        viewModel.OutputDirectory = outputDirectory;
+
+        viewModel.GameDirectory = outputDirectory;
+
+        Assert.Equal(string.Empty, viewModel.OutputDirectory);
+        Assert.Equal("출력 폴더는 게임 폴더와 같은 경로로 둘 수 없어 비웠습니다.", viewModel.StatusText);
     }
 
     [Fact]
@@ -781,7 +922,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         Directory.CreateDirectory(gameDirectory);
 
         var sessionStateService = new ScanSessionStateService();
-        sessionStateService.Save(BuildSession(gameDirectory), gameDirectory);
+        sessionStateService.Save(BuildSessionWithDuplicateOriginals(gameDirectory), gameDirectory);
         var recordingStore = new RecordingSqliteProjectStateStore();
 
         var viewModel = new MainWindowViewModel(
@@ -796,13 +937,45 @@ public sealed class MainWindowViewModelTests : IDisposable
         viewModel.GameDirectory = gameDirectory;
         recordingStore.ResetCounts();
 
-        var item = Assert.Single(viewModel.Items);
+        var item = viewModel.Items.Single(target => target.SegmentId == "ERB/Test.ERB:0");
         item.ApplyManualStatusOverride("제외됨");
 
         Assert.Equal(0, recordingStore.SnapshotSaveCount);
         Assert.Equal(1, recordingStore.UpsertItemsCallCount);
         Assert.Equal(0, recordingStore.DeleteItemsCallCount);
-        Assert.Equal(1, Assert.Single(recordingStore.UpsertBatchSizes));
+        Assert.Equal(2, Assert.Single(recordingStore.UpsertBatchSizes));
+    }
+
+    [Fact]
+    public void EditableStatusChange_PropagatesToItemsWithSameOriginalText()
+    {
+        var gameDirectory = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(gameDirectory);
+
+        var sessionStateService = new ScanSessionStateService();
+        sessionStateService.Save(BuildSessionWithDuplicateOriginals(gameDirectory), gameDirectory);
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            scanSessionStateService: sessionStateService,
+            translationProgressStateService: new TranslationProgressStateService(),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        viewModel.GameDirectory = gameDirectory;
+
+        var first = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:0");
+        var second = viewModel.Items.Single(item => item.SegmentId == "ERB/Test.ERB:1");
+        first.TranslatedText = "안녕하세요";
+        second.TranslatedText = "안녕하세요";
+
+        first.ApplyManualStatusOverride("번역 완료");
+
+        Assert.Equal("번역 완료", first.Status);
+        Assert.Equal("번역 완료", second.Status);
+        Assert.Equal("통과", first.ValidationStatus);
+        Assert.Equal("통과", second.ValidationStatus);
     }
 
     [Fact]
@@ -922,7 +1095,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         erh.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골");
         identifier.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골식별자");
         erbText.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "기골본문");
-        excluded.ApplyManualStatusOverride("제외됨");
+        excluded.ApplyTranslationState("제외됨", "수동 제외", "수동으로 제외 상태로 표시했습니다.", true, string.Empty);
         recordingStore.ResetCounts();
 
         viewModel.ApplySameOriginalCorrection();
@@ -1083,12 +1256,13 @@ public sealed class MainWindowViewModelTests : IDisposable
     public async Task SaveAsync_CommitsSelectedEditorTextBeforeWritingOutput()
     {
         var gameDirectory = Path.Combine(_rootPath, "Game");
+        var outputDirectory = Path.Combine(_rootPath, "Output");
         Directory.CreateDirectory(Path.Combine(gameDirectory, "ERB"));
         var session = BuildSession(gameDirectory);
         File.WriteAllText(session.Documents["ERB/Test.ERB"].FullPath, session.Documents["ERB/Test.ERB"].OriginalText, new UTF8Encoding(true));
 
         var sessionStateService = new ScanSessionStateService();
-        sessionStateService.Save(session, gameDirectory);
+        sessionStateService.Save(session, outputDirectory);
 
         var viewModel = new MainWindowViewModel(
             appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
@@ -1098,6 +1272,7 @@ public sealed class MainWindowViewModelTests : IDisposable
             detectSampleDirectory: false,
             restoreLastSessionOnStartup: false);
 
+        viewModel.OutputDirectory = outputDirectory;
         viewModel.GameDirectory = gameDirectory;
         viewModel.SelectedSaveMode = SaveMode.InPlaceWithBackup;
         var item = Assert.Single(viewModel.Items);
@@ -1107,7 +1282,33 @@ public sealed class MainWindowViewModelTests : IDisposable
         await viewModel.SaveAsync();
 
         Assert.Equal("수동 수정", item.Status);
-        Assert.Contains("안녕하네요", File.ReadAllText(Path.Combine(gameDirectory, "ERB", "Test.ERB"), Encoding.UTF8), StringComparison.Ordinal);
+        Assert.Contains("안녕하네요", File.ReadAllText(Path.Combine(outputDirectory, "ERB", "Test.ERB"), Encoding.UTF8), StringComparison.Ordinal);
+        Assert.DoesNotContain("안녕하네요", File.ReadAllText(Path.Combine(gameDirectory, "ERB", "Test.ERB"), Encoding.UTF8), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadConfig_IgnoresPersistedInPlaceSaveModeAndUsesExportCopyBehavior()
+    {
+        var configRoot = Path.Combine(_rootPath, "Config");
+        Directory.CreateDirectory(configRoot);
+        var appConfigService = new AppConfigService(configRoot);
+        appConfigService.Save(new AppConfig
+        {
+            GameDirectory = @"D:\Games\Emuera",
+            OutputDirectory = @"D:\Games\Emuera\translated",
+            SaveMode = SaveMode.InPlaceWithBackup,
+        });
+
+        var viewModel = new MainWindowViewModel(
+            appConfigService: appConfigService,
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+
+        Assert.Equal(SaveMode.ExportCopy, viewModel.SelectedSaveMode);
+        Assert.True(viewModel.IsExportSaveMode);
+        Assert.False(viewModel.IsInPlaceSaveMode);
+        Assert.Equal(@"D:\Games\Emuera\translated", viewModel.OutputDirectory);
     }
 
     [Fact]
@@ -1270,6 +1471,43 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal("필터값", viewModel.FilterText);
         Assert.True(viewModel.UseRegexFilter);
         Assert.Equal("반가워하세요", item.TranslatedText);
+    }
+
+    [Fact]
+    public void RefreshItemsView_DoesNotThrowDuringEditTransaction()
+    {
+        var viewModel = new MainWindowViewModel(
+            appConfigService: new AppConfigService(Path.Combine(_rootPath, "Config")),
+            userDictionaryService: new UserDictionaryService(Path.Combine(_rootPath, "AppData")),
+            detectSampleDirectory: false,
+            restoreLastSessionOnStartup: false);
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "ERB\\Test.ERB",
+            EncodingName = "UTF-8",
+            SegmentType = "quoted-string",
+            LineNumber = 1,
+            OriginalText = "こんにちは",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+            TranslatedText = "안녕하세요",
+            Status = "번역 완료",
+            ValidationStatus = "통과",
+            WarningText = string.Empty,
+        };
+        viewModel.Items.Add(item);
+
+        var editableCollectionView = Assert.IsAssignableFrom<IEditableCollectionView>(viewModel.ItemsView);
+        editableCollectionView.EditItem(item);
+
+        var exception = Record.Exception(() => viewModel.RefreshItemsView());
+
+        editableCollectionView.CommitEdit();
+        viewModel.RefreshItemsView();
+
+        Assert.Null(exception);
     }
 
     [Fact]

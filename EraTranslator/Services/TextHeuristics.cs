@@ -5,6 +5,25 @@ namespace EraTranslator.Services;
 
 public static partial class TextHeuristics
 {
+    private static readonly HashSet<string> ResourcePathExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".apng",
+        ".ogg",
+        ".wav",
+        ".mp3",
+        ".mid",
+        ".midi",
+        ".txt",
+        ".dat",
+        ".xml",
+    };
+
     public static bool ContainsTranslatableText(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -80,6 +99,48 @@ public static partial class TextHeuristics
 
         return Regex.IsMatch(trimmed, @"^[\p{L}\p{N}_\-]+$", RegexOptions.CultureInvariant)
             && !ContainsTranslatableText(trimmed);
+    }
+
+    public static bool LooksLikeResourcePathLiteral(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.StartsWith("@\"", StringComparison.Ordinal) && normalized.EndsWith('"'))
+        {
+            normalized = normalized[2..^1];
+        }
+        else if (normalized.Length >= 2
+                 && normalized[0] == '"'
+                 && normalized[^1] == '"')
+        {
+            normalized = normalized[1..^1];
+        }
+
+        normalized = PlaceholderOnlyPattern().Replace(normalized, "SEG");
+        if (!normalized.Contains('/') && !normalized.Contains('\\'))
+        {
+            return false;
+        }
+
+        var path = normalized.Replace('\\', '/');
+        var lastSlashIndex = path.LastIndexOf('/');
+        if (lastSlashIndex < 0 || lastSlashIndex == path.Length - 1)
+        {
+            return false;
+        }
+
+        var fileName = path[(lastSlashIndex + 1)..].Trim();
+        if (fileName.Length == 0)
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        return extension.Length > 0 && ResourcePathExtensions.Contains(extension);
     }
 
     private static bool IsJapaneseRune(int value)

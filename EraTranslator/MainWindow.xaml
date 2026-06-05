@@ -4,17 +4,12 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:app="clr-namespace:EraTranslator"
-        xmlns:models="clr-namespace:EraTranslator.Models"
         mc:Ignorable="d"
         Title="{x:Static app:ApplicationInfo.WindowTitle}"
         Width="1440"
         Height="900"
         MinWidth="1180"
         MinHeight="760">
-    <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-    </Window.Resources>
-
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -27,15 +22,16 @@
 
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="2.2*" />
                 <ColumnDefinition Width="12" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="1.7*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="1.2*" />
             </Grid.ColumnDefinitions>
 
             <GroupBox Header="프로젝트">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -64,58 +60,39 @@
                               IsEnabled="{Binding CanBrowseDirectories}"
                               Text="{Binding GameDirectory, UpdateSourceTrigger=LostFocus}" />
 
-                    <TextBlock Grid.Row="1"
-                               Grid.Column="0"
-                               Margin="0,0,8,8"
-                               VerticalAlignment="Center"
-                               Text="저장 모드" />
-                    <ComboBox Grid.Row="1"
-                              Grid.Column="1"
-                              Grid.ColumnSpan="2"
-                              Margin="0,0,0,8"
-                              SelectedValue="{Binding SelectedSaveMode}"
-                              SelectedValuePath="Tag">
-                        <ComboBoxItem Content="별도 출력 폴더" Tag="{x:Static models:SaveMode.ExportCopy}" />
-                        <ComboBoxItem Content="원본 덮어쓰기 + 백업" Tag="{x:Static models:SaveMode.InPlaceWithBackup}" />
-                    </ComboBox>
+                    <Grid Grid.Row="1"
+                          Grid.Column="0"
+                          Grid.ColumnSpan="3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Margin="0,0,8,8"
+                                   VerticalAlignment="Center"
+                                   Text="출력 폴더" />
+                        <Button Grid.Column="1"
+                                Width="80"
+                                Margin="0,0,8,8"
+                                IsEnabled="{Binding CanBrowseDirectories}"
+                                Click="BrowseOutputDirectory_Click"
+                                Content="찾아보기" />
+                         <TextBox Grid.Column="2"
+                                  Margin="0,0,0,8"
+                                  IsEnabled="{Binding CanBrowseDirectories}"
+                                  Text="{Binding OutputDirectory, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
 
-                    <StackPanel Grid.Row="2"
-                                Grid.Column="0"
-                                Grid.ColumnSpan="3"
-                                Visibility="{Binding IsExportSaveMode, Converter={StaticResource BooleanToVisibilityConverter}}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0"
-                                       Margin="0,0,8,8"
-                                       VerticalAlignment="Center"
-                                       Text="출력 폴더" />
-                            <Button Grid.Column="1"
-                                    Width="80"
-                                    Margin="0,0,8,8"
-                                    IsEnabled="{Binding CanBrowseDirectories}"
-                                    Click="BrowseOutputDirectory_Click"
-                                    Content="찾아보기" />
-                             <TextBox Grid.Column="2"
-                                      Margin="0,0,0,8"
-                                      IsEnabled="{Binding CanBrowseDirectories}"
-                                      Text="{Binding OutputDirectory, UpdateSourceTrigger=LostFocus}" />
-                        </Grid>
-                    </StackPanel>
-
-                    <TextBlock Grid.Row="3"
-                               Grid.Column="0"
-                               Grid.ColumnSpan="3"
+                    <TextBlock Grid.Row="2"
+                               Grid.Column="2"
                                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                Text="{Binding SaveModeSummary}"
                                TextWrapping="Wrap" />
                 </Grid>
             </GroupBox>
 
-            <GroupBox Grid.Column="2" Header="작업">
+            <GroupBox Grid.Column="2" Header="설정 / 상태">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -123,7 +100,42 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                    <StackPanel Grid.Row="0"
+                                Orientation="Horizontal"
+                                Margin="0,0,0,8">
+                        <Button Width="110"
+                                Margin="0,0,8,0"
+                                IsEnabled="{Binding CanStartActions}"
+                                Click="OpenTranslationSettings_Click"
+                                Content="번역 설정..." />
+                        <Button Width="110"
+                                Margin="0,0,8,0"
+                                IsEnabled="{Binding CanStartActions}"
+                                Click="OpenUserDictionary_Click"
+                                Content="사용자 사전..." />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="1"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding TranslationSettingsSummary}"
+                               TextWrapping="Wrap" />
+
+                    <StackPanel Grid.Row="2"
+                                Margin="0,8,0,0">
+                        <TextBlock Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Text="{Binding UserDictionarySummary}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Margin="0,4,0,0"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Text="{Binding SummaryText}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Column="4" Header="작업">
+                <Grid Margin="8">
+                    <WrapPanel>
                         <Button Width="110"
                                 Margin="0,0,8,8"
                                 IsEnabled="{Binding CanStartActions}"
@@ -170,31 +182,6 @@
                                 Click="Cancel_Click"
                                 Content="중지" />
                     </WrapPanel>
-
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button Width="110"
-                                Margin="0,0,8,0"
-                                IsEnabled="{Binding CanStartActions}"
-                                Click="OpenTranslationSettings_Click"
-                                Content="번역 설정..." />
-                        <Button Width="110"
-                                Margin="0,0,8,0"
-                                IsEnabled="{Binding CanStartActions}"
-                                Click="OpenUserDictionary_Click"
-                                Content="사용자 사전..." />
-                        <TextBlock VerticalAlignment="Center"
-                                   Text="{Binding TranslationSettingsSummary}" />
-                    </StackPanel>
-
-                    <StackPanel Grid.Row="2">
-                        <TextBlock Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                   Text="{Binding UserDictionarySummary}"
-                                   TextWrapping="Wrap" />
-                        <TextBlock Margin="0,4,0,0"
-                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                   Text="{Binding SummaryText}"
-                                   TextWrapping="Wrap" />
-                    </StackPanel>
                 </Grid>
             </GroupBox>
         </Grid>
@@ -268,11 +255,6 @@
                             IsEnabled="{Binding CanStartActions}"
                             Click="ApplyJosaRewrite_Click"
                             Content="조사처리" />
-                    <Button Width="92"
-                            Margin="0,0,8,0"
-                            IsEnabled="{Binding CanStartActions}"
-                            Click="ApplyErbFunctionCorrection_Click"
-                            Content="함수 교정" />
                 </StackPanel>
             </Grid>
         </GroupBox>

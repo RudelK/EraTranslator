@@ -13,12 +13,13 @@ namespace EraTranslator;
 
 public partial class MainWindow : Window
 {
-    private readonly MainWindowViewModel _viewModel = new();
+    private readonly MainWindowViewModel _viewModel = new(restoreLastSessionOnStartup: false);
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
+        ContentRendered += MainWindow_ContentRendered;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -178,7 +179,15 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog() == Forms.DialogResult.OK)
         {
-            _viewModel.OutputDirectory = dialog.SelectedPath;
+            if (!_viewModel.TryApplyOutputDirectory(dialog.SelectedPath, out var errorMessage))
+            {
+                System.Windows.MessageBox.Show(
+                    this,
+                    errorMessage,
+                    "출력 폴더 선택 오류",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
         }
     }
 
@@ -265,5 +274,37 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning,
                 MessageBoxResult.No)
             == MessageBoxResult.Yes;
+    }
+
+    private void MainWindow_ContentRendered(object? sender, EventArgs e)
+    {
+        ContentRendered -= MainWindow_ContentRendered;
+        if (!_viewModel.HasStartupProjectContextCandidate())
+        {
+            return;
+        }
+
+        var loadingWindow = new StartupLoadingWindow
+        {
+            Owner = this,
+            DataContext = _viewModel,
+        };
+
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(async () =>
+            {
+                try
+                {
+                    await _viewModel.RestoreStartupProjectContextIfAvailableAsync();
+                }
+                finally
+                {
+                    loadingWindow.AllowClose();
+                    loadingWindow.Close();
+                }
+            }));
+
+        loadingWindow.ShowDialog();
     }
 }

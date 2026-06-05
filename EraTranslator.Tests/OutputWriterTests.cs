@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using EraTranslator.Models;
 using EraTranslator.Services;
@@ -455,8 +456,12 @@ CASE 売春一括指示_FALSE, 売春一括指示_生
 
         Assert.Equal(3, result.WrittenFiles.Count);
         Assert.Single(result.BackupFiles);
+        Assert.EndsWith(".zip", result.BackupFiles[0], StringComparison.OrdinalIgnoreCase);
         Assert.Contains("タイトル,era마계목장", File.ReadAllText(filePath, Encoding.UTF8), StringComparison.Ordinal);
-        Assert.Contains("タイトル,era魔界牧場", File.ReadAllText(result.BackupFiles[0], Encoding.UTF8), StringComparison.Ordinal);
+        using var archive = ZipFile.OpenRead(result.BackupFiles[0]);
+        var entry = Assert.Single(archive.Entries, item => string.Equals(item.FullName, "CSV/GameBase.csv", StringComparison.Ordinal));
+        using var reader = new StreamReader(entry.Open(), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        Assert.Contains("タイトル,era魔界牧場", reader.ReadToEnd(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3078,6 +3083,64 @@ PRINTFORMW %CALLNAME:MASTER%(은)는 왔다
         {
             var start = document.OriginalText.IndexOf(original, StringComparison.Ordinal);
             var segmentId = $"{document.DocumentId}:stale-{suffix}";
+            document.Segments.Add(new TextSegment
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                SegmentType = "quoted-string",
+                AbsoluteStart = start,
+                Length = original.Length,
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+            });
+            session.Items.Add(new ExtractedTextItem
+            {
+                SegmentId = segmentId,
+                DocumentId = document.DocumentId,
+                FileType = "ERB",
+                RelativePath = document.RelativePath,
+                EncodingName = "UTF-8",
+                SegmentType = "quoted-string",
+                LineNumber = document.OriginalText[..start].Count(static ch => ch == '\n') + 1,
+                OriginalText = original,
+                TranslatedText = translated,
+                Status = "번역 완료",
+                ValidationStatus = "통과",
+                WarningText = string.Empty,
+            });
+        }
+    }
+
+    [Fact]
+    public void ExportCopy_IgnoresStaleGeneralResourcePathTranslations()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "EraTranslatorTests", Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(tempRoot, "game");
+        var exportRoot = Path.Combine(tempRoot, "out");
+        var erbDir = Path.Combine(gameRoot, "ERB");
+        Directory.CreateDirectory(erbDir);
+
+        var erbText = "PRINTFORMW \"EVENT_R18/EV_950107_ナアマ.png\"\r\nPRINTFORMW \"普通の文章です\"\r\n";
+        File.WriteAllText(Path.Combine(erbDir, "Test.ERB"), erbText, Encoding.UTF8);
+
+        var session = new FileScanner().Scan(gameRoot);
+        var document = session.Documents.Values.Single(document => document.RelativePath.EndsWith("Test.ERB", StringComparison.Ordinal));
+        AddStaleItem(session, document, "EVENT_R18/EV_950107_ナアマ.png", "EVENT_R18/EV_950107_나아마.png", "resource");
+        var normalItem = Assert.Single(session.Items, item => item.OriginalText == "普通の文章です");
+        normalItem.ApplyTranslationState("번역 완료", "통과", string.Empty, true, "평범한 문장입니다");
+
+        var writer = new OutputWriter();
+        writer.Save(session, exportRoot, SaveMode.ExportCopy);
+
+        var writtenErb = File.ReadAllText(Path.Combine(exportRoot, "ERB", "Test.ERB"), Encoding.UTF8);
+        Assert.Contains("PRINTFORMW \"EVENT_R18/EV_950107_ナアマ.png\"", writtenErb, StringComparison.Ordinal);
+        Assert.Contains("PRINTFORMW \"평범한 문장입니다\"", writtenErb, StringComparison.Ordinal);
+        Assert.DoesNotContain("EVENT_R18/EV_950107_나아마.png", writtenErb, StringComparison.Ordinal);
+
+        static void AddStaleItem(ScanSession session, SourceFileDocument document, string original, string translated, string suffix)
+        {
+            var start = document.OriginalText.IndexOf(original, StringComparison.Ordinal);
+            var segmentId = $"{document.DocumentId}:stale-resource-{suffix}";
             document.Segments.Add(new TextSegment
             {
                 SegmentId = segmentId,
