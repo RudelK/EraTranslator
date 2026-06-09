@@ -1,5 +1,23 @@
 # 변경 기록
 
+## 미출시 - 2026-06-10
+
+### 기능
+
+- 팀 번역 협업 서버를 `server/` 아래 별도 FastAPI 프로젝트로 추가하고, PostgreSQL/Alembic 기반 DB 모델과 Windows/Linux 실행 스크립트를 구성했다.
+- 서버 웹 관리 UI에 최초 관리자 설정, 로그인, 사용자 관리, 프로젝트 관리, 멤버십/할당, source snapshot, scan manifest, 공통 참조키, 충돌, 제출 이력 화면을 추가했다.
+- 서버 API에 로그인 토큰 인증, 프로젝트 목록, 클라이언트 등록, source archive 업로드/다운로드/활성화, scan manifest 업로드/검증, sync, submit, conflict resolve, shared key update 흐름을 추가했다.
+- WPF 클라이언트에 `로컬 작업`/`팀 작업` 모드, 팀 작업 설정 창, 팀 workspace 분리, 서버 프로젝트 목록 선택, source snapshot 다운로드/검증/압축 해제, scan manifest 생성/업로드, sync/submit/offline queue 흐름을 추가했다.
+- 팀 모드에서는 서버 source snapshot을 받아 `workspace/source`를 게임 폴더로, `workspace/output`을 출력 폴더로 자동 사용하도록 구성했다.
+- 팀 작업의 공통 CSV 관리는 특정 파일 목록이 아니라 `IsReferenceBearingKey` 참조키 전체를 shared key로 동기화하도록 구성했다.
+
+### 수정
+
+- 팀 작업 설정 UI에서 프로젝트 선택을 우선하고, 프로젝트 ID는 선택 항목에서 자동 반영하되 필요할 때만 수동 입력할 수 있도록 정리했다.
+- 팀 서버 인증 토큰은 프로젝트 `user_id`가 아니라 `/api/auth/login`에서 발급된 `access_token`을 넣는 구조임을 문서와 handoff에 명확히 했다.
+- 팀 서버 `HttpClient` 호출은 요청별 절대 URL과 요청별 Bearer 헤더를 사용하도록 고정하고, 같은 클라이언트 인스턴스로 프로젝트 목록을 반복 갱신해도 `BaseAddress` 변경 예외가 나지 않도록 회귀 테스트를 추가했다.
+- 서버 DB 세션에서 PostgreSQL schema search path를 요청별로 설정해, 지정 schema 사용 시 `users` 등 테이블을 찾지 못하던 문제를 보강했다.
+
 ## 0.7.1 - 2026-06-05
 
 ### 기능

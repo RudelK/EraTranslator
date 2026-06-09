@@ -8,6 +8,20 @@ public sealed class AppConfig
 
     public SaveMode SaveMode { get; init; } = SaveMode.ExportCopy;
 
+    public ProjectMode ProjectMode { get; init; } = ProjectMode.Local;
+
+    public string TeamServerUrl { get; init; } = string.Empty;
+
+    public string TeamProjectId { get; init; } = string.Empty;
+
+    public string TeamDisplayName { get; init; } = string.Empty;
+
+    public string ClientId { get; init; } = string.Empty;
+
+    public string TeamWorkspaceRoot { get; init; } = string.Empty;
+
+    public string TeamAuthToken { get; init; } = string.Empty;
+
     public TranslationProviderType ProviderType { get; init; } = TranslationProviderType.OpenAi;
 
     public string BaseUrl { get; init; } = "https://api.openai.com/v1";

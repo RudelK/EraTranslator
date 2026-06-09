@@ -71,9 +71,12 @@ public sealed class AppSecrets
 {
     public string PapagoClientSecret { get; init; } = string.Empty;
 
+    public string TeamAuthToken { get; init; } = string.Empty;
+
     public Dictionary<TranslationProviderType, string> ProviderApiKeys { get; init; } = [];
 
     public bool HasAnySecrets =>
         !string.IsNullOrWhiteSpace(PapagoClientSecret)
+        || !string.IsNullOrWhiteSpace(TeamAuthToken)
         || ProviderApiKeys.Any(pair => !string.IsNullOrWhiteSpace(pair.Value));
 }

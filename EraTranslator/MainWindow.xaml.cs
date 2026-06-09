@@ -151,6 +151,30 @@ public partial class MainWindow : Window
         _viewModel.ApplyJosaRewriteToCurrentScope();
     }
 
+    private async void TeamSync_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        await _viewModel.TeamSyncAsync();
+    }
+
+    private async void TeamManifestUpload_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        await _viewModel.UploadTeamScanManifestAsync();
+    }
+
+    private async void TeamSubmit_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        await _viewModel.SubmitTeamChangesAsync();
+    }
+
+    private async void TeamRetryQueue_Click(object sender, RoutedEventArgs e)
+    {
+        CommitPendingTranslationEdits();
+        await _viewModel.RetryTeamOfflineQueueAsync();
+    }
+
     private void ApplyErbFunctionCorrection_Click(object sender, RoutedEventArgs e)
     {
         CommitPendingTranslationEdits();
@@ -221,6 +245,17 @@ public partial class MainWindow : Window
         }
 
         dictionaryViewModel.RestorePersistedEntries();
+    }
+
+    private void OpenTeamSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new TeamSettingsWindow
+        {
+            Owner = this,
+            DataContext = _viewModel,
+        };
+
+        dialog.ShowDialog();
     }
 
     private void TranslationGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)

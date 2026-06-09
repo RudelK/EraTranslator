@@ -1,0 +1,2 @@
+"""Admin web UI package."""
+

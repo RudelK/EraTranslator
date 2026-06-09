@@ -35,6 +35,11 @@
 - `#DIMS` lookup arrays, split lookup arrays discovered from `SPLIT_STRING`, CSV-name `SELECTCASE`, key-list functions, and adjacent `"namespace","key"` function arguments are treated as symbol references rather than free text.
 - Natural angle-bracket print tokens such as `PRINT <愛液>` extract the inner text, while HTML-like ASCII tags such as `<br>` remain protected.
 - Result saving is now always effective `ExportCopy`; the output directory must be different from the game directory.
+- Team collaboration support is now implemented as a separate FastAPI server under `server/` plus WPF client-side team mode.
+- Team mode uses `TeamWorkspaceRoot/<ProjectId>/source` as the game directory and `TeamWorkspaceRoot/<ProjectId>/output` as the output directory after downloading the active server source snapshot.
+- Team server authentication uses `/api/auth/login` access tokens in `Authorization: Bearer <token>`. Do not put a project membership `user_id` in the client token field.
+- `ClientId` is a device/workspace identifier only. It is registered through `/api/clients/register` and does not replace authentication.
+- Shared team keys are based on all `IsReferenceBearingKey` scan items, not a hardcoded CSV list.
 
 ## Recent Major Changes
 
@@ -116,19 +121,31 @@
 - Optimized automatic translation progress persistence to save changed rows rather than full snapshots after every provider batch.
 - Replaced the old team package note with a TODO plan for a FastAPI-based multi-project team collaboration server.
 - Improved same-original automatic translation reuse so conflicting existing automatic translations are not picked arbitrarily, while resolved automatic translations still synchronize matching rows outside the current filter unless they are manual edits or manual exclusions.
+- Added the FastAPI team server project under `server/` with SQLAlchemy 2.x, Alembic, Pydantic v2, PostgreSQL configuration, source archive storage, and Windows/Linux run scripts.
+- Added server API routes for auth, projects, memberships, assignments, source snapshots, scan manifests, sync, submit, conflicts, and shared keys.
+- Added server-rendered admin UI for first-run setup, login, users, projects, memberships/assignments, source snapshots, manifests, shared keys, conflicts, and submission history.
+- Added WPF client team mode models/services: project contexts, team project state, server DTOs/client, source sync, scan manifest builder, collaboration sync/submit, and offline submission queue state.
+- Added a dedicated team settings window with local/team mode switching, server URL, project list refresh, selected project ID, display name, auth token, workspace root, and client ID.
+- Changed team project selection so the combo box drives `TeamProjectId` by default, while manual project ID entry is explicitly opt-in.
+- Added tests for project context creation, team state persistence, source sync, scan manifest generation, team collaboration apply/submit, and repeated `TeamServerClient` project refresh calls.
+- Fixed the team server/client auth mental model: the WPF auth token field expects an API access token, while server-side project membership uses the user resolved from that token.
 
 ## Important Files
 
 - UI/ViewModel: `EraTranslator/MainWindow.xaml`, `EraTranslator/MainWindow.xaml.cs`, `EraTranslator/ViewModels/MainWindowViewModel.cs`
+- Team UI: `EraTranslator/TeamSettingsWindow.xaml`, `EraTranslator/TeamSettingsWindow.xaml.cs`
 - Version info: `EraTranslator/ApplicationInfo.cs`, `EraTranslator/EraTranslator.csproj`
 - Persistence: `EraTranslator/Services/SqliteProjectStateStore.cs`, `EraTranslator/Services/ProjectStatePersistenceService.cs`
+- Team client services: `EraTranslator/Services/ProjectContextFactory.cs`, `EraTranslator/Services/TeamServerClient.cs`, `EraTranslator/Services/TeamSourceSyncService.cs`, `EraTranslator/Services/TeamScanManifestBuilder.cs`, `EraTranslator/Services/TeamCollaborationService.cs`, `EraTranslator/Services/TeamProjectStateService.cs`
+- Team models: `EraTranslator/Models/ProjectMode.cs`, `EraTranslator/Models/ProjectContext.cs`, `EraTranslator/Models/TeamProjectState.cs`, `EraTranslator/Models/TeamScanManifest.cs`, `EraTranslator/Models/TeamServerDtos.cs`
+- Team server: `server/app/main.py`, `server/app/api/routes/`, `server/app/web/router.py`, `server/app/models/`, `server/alembic/versions/`, `server/scripts/`
 - Extraction: `EraTranslator/Services/ErbExtractor.cs`, `EraTranslator/Services/ErbReferenceExtractor.cs`, `EraTranslator/Services/ErbIdentifierExtractor.cs`, `EraTranslator/Services/ErbDimsLookupRegistry.cs`, `EraTranslator/Services/CsvSchemaClassifier.cs`
 - Save/rewrite: `EraTranslator/Services/OutputWriter.cs`, `EraTranslator/Services/SymbolRewritePlanner.cs`, `EraTranslator/Services/IdentifierRewritePlanner.cs`, `EraTranslator/Services/InlineSymbolReferenceRewriter.cs`
 - Quality rules: `EraTranslator/Services/TranslationQualityRules.cs`, `EraTranslator/Services/TranslationPromptTemplates.cs`, `EraTranslator/Services/PhaseScopedGlossaryBuilder.cs`
 - Shared file/particle helpers: `EraTranslator/Services/DocumentFileTypes.cs`, `EraTranslator/Services/KoreanParticleClassifier.cs`
 - Provider stack: `EraTranslator/Services/OpenAiCompatibleTranslationProvider.cs`, `EraTranslator/Services/DictionaryFirstTranslationService.cs`, `EraTranslator/Services/LmStudioSamplingDefaults.cs`, `EraTranslator/Services/ModelCatalogService.cs`, `EraTranslator/Services/EzTransXpTranslationProvider.cs`, `EraTranslator/Services/EzTransXpWorkerProcessClient.cs`
 - Release notes: `CHANGELOG.md`
-- Saved plans: `docs/plans/team-translation-support-plan.md`
+- Saved plans: `docs/plans/team-translation-support-plan.md`, `docs/plans/team-translation-server-plan.md`
 
 ## Behavior Notes
 
@@ -174,6 +191,13 @@
 - Release zip packaging should exclude `EraTranslator.config.json`, `.pdb`, logs, caches, and local state folders, and should keep the EzTransXP worker under `workers/EzTransXP/`.
 - Startup loading should only show when persisted project state files actually exist under the effective project data directory.
 - Output-folder-only save mode is intentional even if older configs still contain `InPlaceWithBackup`.
+- Team mode should continue to support fully local work as a separate path; do not make server settings mandatory for local projects.
+- Team mode source sync should work even when the user has no original game files locally, as long as the server has an active source snapshot.
+- In team mode, the client token field must contain an API access token returned by `/api/auth/login`; server `user_id` values are internal DB identifiers and are not valid Bearer tokens.
+- Admin users can see all projects; non-admin users only see projects where their token-resolved user has an active membership.
+- `TeamServerClient` deliberately avoids mutating `HttpClient.BaseAddress` or `DefaultRequestHeaders` after construction. Keep requests as absolute URIs with per-request Authorization headers.
+- PostgreSQL deployments use the configured schema, default `eratranslator`; request sessions set the search path so raw table names resolve correctly.
+- Current team mode gap: assignment/out-of-scope items are rejected on submit by the server, but the WPF grid does not yet mark unassigned items read-only because sync responses do not expose editable flags yet.
 
 ## Validation
 
@@ -183,10 +207,20 @@
 dotnet test .\EraTranslator.Tests\EraTranslator.Tests.csproj
 ```
 
-- Latest passing result in this thread: `489/489`.
+- Latest passing result in this thread: `501/501`.
+- Latest debug app build in this thread:
+
+```powershell
+dotnet build .\EraTranslator\EraTranslator.csproj -c Debug --no-restore
+```
+
+- Latest debug build result: success, `0` warnings, `0` errors.
+- Latest server test result in this thread: `38/38` passing under `server`.
 - Build/release may fail if `EraTranslator.exe` is currently running and locking the output path. In that case, do not fall back to a temporary output folder; skip and report the lock.
 
 ## Suggested Next Work
 
 - Consider adding a release packaging target that outputs only user-facing files plus internal worker folders.
 - Add visible version information to an About dialog if one is introduced later.
+- Add a client-side username/password login flow so users do not have to manually paste `/api/auth/login` access tokens into the team settings window.
+- Extend sync responses with assignment/editability metadata and make out-of-scope team items read-only in the WPF grid.

@@ -24,6 +24,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private readonly TranslationProgressCarryoverService _translationProgressCarryoverService;
     private readonly TranslationTextExchangeService _translationTextExchangeService;
     private readonly SourceLanguageFilterService _sourceLanguageFilterService;
+    private readonly ProjectContextFactory _projectContextFactory;
+    private readonly TeamSourceSyncService _teamSourceSyncService;
+    private readonly TeamCollaborationService _teamCollaborationService;
+    private readonly TeamProjectStateService _teamProjectStateService;
+    private readonly TeamScanManifestBuilder _teamScanManifestBuilder;
     private readonly PhaseScopedGlossaryBuilder _phaseScopedGlossaryBuilder = new();
     private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly FileResultStateLogger _resultStateLogger = new();
@@ -35,6 +40,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _isLoadingConfig;
     private string _gameDirectory = string.Empty;
     private string _outputDirectory = string.Empty;
+    private string _localGameDirectory = string.Empty;
+    private string _localOutputDirectory = string.Empty;
+    private ProjectMode _projectMode = ProjectMode.Local;
+    private string _teamServerUrl = string.Empty;
+    private string _teamProjectId = string.Empty;
+    private string _teamDisplayName = string.Empty;
+    private string _clientId = string.Empty;
+    private string _teamWorkspaceRoot = string.Empty;
+    private string _teamAuthToken = string.Empty;
+    private string _teamStatusSummary = "로컬 작업 모드";
+    private TeamProjectSummary? _selectedTeamProject;
+    private bool _isManualTeamProjectId = true;
     private string _statusText = "게임 디렉토리를 지정한 뒤 텍스트를 추출하세요.";
     private string _summaryText = "아직 스캔 전입니다.";
     private string _currentOperationDetail = "대기 중";
@@ -110,6 +127,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         TranslationProgressCarryoverService? translationProgressCarryoverService = null,
         TranslationTextExchangeService? translationTextExchangeService = null,
         SourceLanguageFilterService? sourceLanguageFilterService = null,
+        ProjectContextFactory? projectContextFactory = null,
+        TeamSourceSyncService? teamSourceSyncService = null,
+        TeamCollaborationService? teamCollaborationService = null,
+        TeamProjectStateService? teamProjectStateService = null,
+        TeamScanManifestBuilder? teamScanManifestBuilder = null,
         TranslationProgressStateService? translationProgressStateService = null,
         EzTransXpInstallationService? ezTransXpInstallationService = null,
         SqliteProjectStateStore? sqliteProjectStateStore = null,
@@ -129,6 +151,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         _translationProgressCarryoverService = translationProgressCarryoverService ?? new TranslationProgressCarryoverService();
         _translationTextExchangeService = translationTextExchangeService ?? new TranslationTextExchangeService();
         _sourceLanguageFilterService = sourceLanguageFilterService ?? new SourceLanguageFilterService();
+        _projectContextFactory = projectContextFactory ?? new ProjectContextFactory();
+        _teamSourceSyncService = teamSourceSyncService ?? new TeamSourceSyncService();
+        _teamCollaborationService = teamCollaborationService ?? new TeamCollaborationService();
+        _teamProjectStateService = teamProjectStateService ?? new TeamProjectStateService();
+        _teamScanManifestBuilder = teamScanManifestBuilder ?? new TeamScanManifestBuilder();
         _ezTransXpInstallationService = ezTransXpInstallationService ?? new EzTransXpInstallationService();
         ProviderOptions = new ObservableCollection<ProviderOption>(BuildProviderOptions());
         _selectedProviderOption = ProviderOptions.FirstOrDefault(option => option.ProviderType == TranslationProviderType.OpenAi);
@@ -260,6 +287,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public ObservableCollection<ProviderOption> ProviderOptions { get; }
 
+    public ObservableCollection<TeamProjectSummary> TeamProjects { get; } = [];
+
     public IReadOnlyList<string> FileTypeFilters { get; }
 
     public IReadOnlyList<string> SearchFieldFilters { get; }
@@ -279,6 +308,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             if (SetProperty(ref _gameDirectory, value))
             {
+                if (!IsTeamMode)
+                {
+                    _localGameDirectory = value;
+                }
+
                 EnsureOutputDirectoryDistinctFromGameDirectory();
                 OnProjectPathInputsChanged();
             }
@@ -290,6 +324,162 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         get => _outputDirectory;
         set => TryApplyOutputDirectory(value, out _);
     }
+
+    public bool IsTeamMode
+    {
+        get => _projectMode == ProjectMode.Team;
+        set
+        {
+            var nextMode = value ? ProjectMode.Team : ProjectMode.Local;
+            if (_projectMode == nextMode)
+            {
+                return;
+            }
+
+            _projectMode = nextMode;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(IsLocalMode));
+            RaisePropertyChanged(nameof(CanBrowseDirectories));
+            RaisePropertyChanged(nameof(CanUseTeamActions));
+            RaisePropertyChanged(nameof(CanEditTeamProjectId));
+            TeamStatusSummary = IsTeamMode ? "팀 작업 모드: 서버와 프로젝트를 설정하세요." : "로컬 작업 모드";
+            if (IsTeamMode)
+            {
+                ApplyTeamWorkspacePaths(restoreSession: true);
+            }
+            else
+            {
+                SetProperty(ref _gameDirectory, _localGameDirectory, nameof(GameDirectory));
+                SetProperty(ref _outputDirectory, _localOutputDirectory, nameof(OutputDirectory));
+                OnProjectPathInputsChanged();
+            }
+
+            PersistConfig();
+        }
+    }
+
+    public bool IsLocalMode
+    {
+        get => !IsTeamMode;
+        set
+        {
+            if (value)
+            {
+                IsTeamMode = false;
+            }
+        }
+    }
+
+    public string TeamServerUrl
+    {
+        get => _teamServerUrl;
+        set
+        {
+            if (SetProperty(ref _teamServerUrl, value?.Trim() ?? string.Empty))
+            {
+                PersistConfig();
+                RaisePropertyChanged(nameof(TeamStatusSummary));
+            }
+        }
+    }
+
+    public string TeamProjectId
+    {
+        get => _teamProjectId;
+        set
+        {
+            if (SetProperty(ref _teamProjectId, value?.Trim() ?? string.Empty))
+            {
+                ApplyTeamWorkspacePaths(restoreSession: true);
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool IsManualTeamProjectId
+    {
+        get => _isManualTeamProjectId;
+        set
+        {
+            if (SetProperty(ref _isManualTeamProjectId, value))
+            {
+                RaisePropertyChanged(nameof(CanEditTeamProjectId));
+            }
+        }
+    }
+
+    public bool CanEditTeamProjectId => IsTeamMode && IsManualTeamProjectId;
+
+    public TeamProjectSummary? SelectedTeamProject
+    {
+        get => _selectedTeamProject;
+        set
+        {
+            if (SetProperty(ref _selectedTeamProject, value) && value is not null)
+            {
+                IsManualTeamProjectId = false;
+                TeamProjectId = value.Id;
+            }
+        }
+    }
+
+    public string TeamDisplayName
+    {
+        get => _teamDisplayName;
+        set
+        {
+            if (SetProperty(ref _teamDisplayName, value?.Trim() ?? string.Empty))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public string ClientId
+    {
+        get => _clientId;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? Guid.NewGuid().ToString("N") : value.Trim();
+            if (SetProperty(ref _clientId, normalized))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public string TeamWorkspaceRoot
+    {
+        get => _teamWorkspaceRoot;
+        set
+        {
+            if (SetProperty(ref _teamWorkspaceRoot, value?.Trim() ?? string.Empty))
+            {
+                ApplyTeamWorkspacePaths(restoreSession: true);
+                PersistConfig();
+            }
+        }
+    }
+
+    public string TeamAuthToken
+    {
+        get => _teamAuthToken;
+        set
+        {
+            if (SetProperty(ref _teamAuthToken, value?.Trim() ?? string.Empty))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
+    public string TeamStatusSummary
+    {
+        get => _teamStatusSummary;
+        private set => SetProperty(ref _teamStatusSummary, value);
+    }
+
+    public bool CanUseTeamActions => CanStartActions && IsTeamMode;
 
     public bool TryApplyOutputDirectory(string? value, out string errorMessage)
     {
@@ -305,6 +495,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         errorMessage = string.Empty;
         if (SetProperty(ref _outputDirectory, normalizedValue))
         {
+            if (!IsTeamMode)
+            {
+                _localOutputDirectory = normalizedValue;
+            }
+
             OnProjectPathInputsChanged();
         }
 
@@ -966,6 +1161,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 RaisePropertyChanged(nameof(CanCancel));
                 RaisePropertyChanged(nameof(CanStartActions));
                 RaisePropertyChanged(nameof(CanBrowseDirectories));
+                RaisePropertyChanged(nameof(CanUseTeamActions));
             }
         }
     }
@@ -980,6 +1176,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 RaisePropertyChanged(nameof(CanCancel));
                 RaisePropertyChanged(nameof(CanStartActions));
                 RaisePropertyChanged(nameof(CanBrowseDirectories));
+                RaisePropertyChanged(nameof(CanUseTeamActions));
             }
         }
     }
@@ -988,7 +1185,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public bool CanStartActions => !IsBusy && !IsStartupLoading;
 
-    public bool CanBrowseDirectories => !IsBusy && !IsStartupLoading;
+    public bool CanBrowseDirectories => !IsBusy && !IsStartupLoading && !IsTeamMode;
 
     public bool RefreshGridDuringTranslatedTextEdit
     {
@@ -1127,6 +1324,335 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 CurrentOperationDetail = $"스캔 완료: {scanResult.Session.Metrics.GetValueOrDefault("Documents")}개 문서";
                 ProgressValue = 1.0;
                 RefreshItemsView();
+            });
+    }
+
+    public async Task<bool> TeamSyncAsync()
+    {
+        if (!TryValidateTeamSettings(out var errorMessage))
+        {
+            StatusText = errorMessage;
+            return false;
+        }
+
+        return await RunBusyAsync(
+            "팀 서버와 동기화 중입니다...",
+            async cancellationToken =>
+            {
+                var context = CreateTeamProjectContext();
+                _projectContextFactory.EnsureWorkspace(context);
+                ApplyTeamWorkspacePaths(restoreSession: false);
+
+                ProgressValue = 0.05;
+                CurrentOperationDetail = "source snapshot 확인 중";
+                var sourceResult = await _teamSourceSyncService.EnsureSourceAsync(context, TeamAuthToken, cancellationToken);
+
+                var projectDataDirectory = context.TeamProjectDataDirectory;
+                var shouldScan = sourceResult.Downloaded
+                    || _session is null
+                    || !string.Equals(_session.GameRoot, context.SourceDirectory, StringComparison.OrdinalIgnoreCase);
+                if (shouldScan)
+                {
+                    ProgressValue = 0.25;
+                    CurrentOperationDetail = sourceResult.Downloaded
+                        ? "새 source snapshot 추출 중"
+                        : "팀 source 작업본 추출 중";
+                    var scanProgress = new Progress<(double value, string detail)>(tuple =>
+                    {
+                        ProgressValue = 0.25 + tuple.value * 0.45;
+                        CurrentOperationDetail = tuple.detail;
+                    });
+                    var scanResult = await Task.Run(() =>
+                    {
+                        var previousSession = _projectStatePersistenceService.LoadScanSession(projectDataDirectory);
+                        var previousProgress = _projectStatePersistenceService.LoadTranslationProgress(projectDataDirectory);
+                        var session = _fileScanner.Scan(context.SourceDirectory, scanProgress, cancellationToken);
+                        return new ScanExecutionResult(session, previousSession, previousProgress);
+                    }, cancellationToken);
+
+                    var restoreResult = ApplySession(scanResult.Session, restoreProgress: false, scanResult.PreviousSession, scanResult.PreviousProgress);
+                    await Task.Run(() => _projectStatePersistenceService.SaveScanSession(scanResult.Session, projectDataDirectory), cancellationToken);
+                    CurrentOperationDetail = $"팀 source 추출 완료: 복원 {restoreResult.RestoredCount}개";
+                }
+
+                ProgressValue = 0.75;
+                CurrentOperationDetail = "서버 work item/shared key 적용 중";
+                var sync = await _teamCollaborationService.SyncAsync(context, TeamAuthToken, cancellationToken);
+                var state = _teamProjectStateService.Load(context);
+                _suppressItemStatePersistence = true;
+                TeamSyncApplyResult applyResult;
+                try
+                {
+                    applyResult = _teamCollaborationService.ApplySyncResponse(context, sync, Items, state);
+                }
+                finally
+                {
+                    _suppressItemStatePersistence = false;
+                }
+
+                SaveTranslationProgressSnapshot(force: true, reason: "TeamSyncAsync completed");
+                RefreshSummaryText();
+                RefreshItemsView();
+                TeamStatusSummary = $"팀 동기화 완료: {context.ProjectId} / source {sync.ScanRevisionId} / work {applyResult.WorkItemMetadataCount} / shared {applyResult.SharedKeyMetadataCount}";
+                StatusText = applyResult.SourceRevisionMismatch
+                    ? "서버 source revision이 로컬과 달라 재동기화가 필요합니다."
+                    : "팀 동기화가 완료되었습니다.";
+                CurrentOperationDetail = $"서버 번역 적용: 일반 {applyResult.AppliedWorkItemTranslations}개, 공통키 {applyResult.AppliedSharedKeyTranslations}개";
+                ProgressValue = 1.0;
+            });
+    }
+
+    public async Task<bool> RefreshTeamProjectsAsync()
+    {
+        if (!IsTeamMode)
+        {
+            StatusText = "팀 작업 모드가 아닙니다.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(TeamServerUrl) || string.IsNullOrWhiteSpace(TeamAuthToken))
+        {
+            StatusText = "팀 서버 URL과 인증 토큰을 먼저 입력하세요.";
+            return false;
+        }
+
+        return await RunBusyAsync(
+            "팀 프로젝트 목록을 불러오는 중입니다...",
+            async cancellationToken =>
+            {
+                if (!string.IsNullOrWhiteSpace(TeamDisplayName))
+                {
+                    await _teamCollaborationService.RegisterClientAsync(
+                        TeamServerUrl,
+                        TeamAuthToken,
+                        ClientId,
+                        TeamDisplayName,
+                        cancellationToken);
+                }
+
+                var projects = await _teamCollaborationService.GetProjectsAsync(TeamServerUrl, TeamAuthToken, cancellationToken);
+                TeamProjects.Clear();
+                foreach (var project in projects.OrderBy(project => project.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    TeamProjects.Add(project);
+                }
+
+                SelectedTeamProject = TeamProjects.FirstOrDefault(project => string.Equals(project.Id, TeamProjectId, StringComparison.Ordinal))
+                    ?? TeamProjects.FirstOrDefault();
+                if (TeamProjects.Count == 0)
+                {
+                    IsManualTeamProjectId = true;
+                }
+
+                StatusText = TeamProjects.Count == 0
+                    ? "팀 서버에서 선택 가능한 프로젝트를 찾지 못했습니다."
+                    : $"{TeamProjects.Count}개 팀 프로젝트를 불러왔습니다.";
+                CurrentOperationDetail = SelectedTeamProject is null
+                    ? "프로젝트 미선택"
+                    : $"선택: {SelectedTeamProject.Name} ({SelectedTeamProject.Id})";
+                TeamStatusSummary = CurrentOperationDetail;
+                ProgressValue = 1.0;
+            });
+    }
+
+    public async Task<bool> UploadTeamScanManifestAsync()
+    {
+        if (!TryValidateTeamSettings(out var errorMessage))
+        {
+            StatusText = errorMessage;
+            return false;
+        }
+
+        if (_session is null)
+        {
+            StatusText = "먼저 팀 동기화 또는 텍스트 추출을 실행하세요.";
+            return false;
+        }
+
+        return await RunBusyAsync(
+            "팀 scan manifest를 업로드 중입니다...",
+            async cancellationToken =>
+            {
+                var context = CreateTeamProjectContext();
+                var state = _teamProjectStateService.Load(context);
+                var scanRevisionId = string.IsNullOrWhiteSpace(state.LocalSourceScanRevisionId)
+                    ? state.LastSyncedScanRevisionId
+                    : state.LocalSourceScanRevisionId;
+                if (string.IsNullOrWhiteSpace(scanRevisionId) || string.IsNullOrWhiteSpace(state.SourceArchiveSha256))
+                {
+                    throw new InvalidOperationException("source snapshot revision/hash 정보가 없습니다. 먼저 팀 동기화를 실행하세요.");
+                }
+
+                ProgressValue = 0.25;
+                CurrentOperationDetail = "manifest 생성 중";
+                var manifest = _teamScanManifestBuilder.Build(_session, scanRevisionId, state.SourceArchiveSha256);
+                ProgressValue = 0.55;
+                CurrentOperationDetail = "manifest 업로드 중";
+                var validation = await _teamCollaborationService.UploadScanManifestAsync(context, TeamAuthToken, manifest, cancellationToken);
+                TeamStatusSummary = $"Manifest: {validation.ValidationStatus} / 문서 {validation.DocumentCount} / 항목 {validation.ItemCount} / 공통키 {validation.SharedKeyCount}";
+                StatusText = "팀 scan manifest 업로드가 완료되었습니다.";
+                CurrentOperationDetail = validation.ValidationMessages.Count == 0
+                    ? "manifest validation: valid"
+                    : $"manifest validation: {validation.ValidationMessages.Count}개 메시지";
+                ProgressValue = 1.0;
+            });
+    }
+
+    public async Task<bool> SubmitTeamChangesAsync()
+    {
+        CommitSelectedItemTranslatedTextEdit();
+
+        if (!TryValidateTeamSettings(out var errorMessage))
+        {
+            StatusText = errorMessage;
+            return false;
+        }
+
+        if (_session is null)
+        {
+            StatusText = "먼저 팀 동기화 또는 텍스트 추출을 실행하세요.";
+            return false;
+        }
+
+        return await RunBusyAsync(
+            "팀 서버에 변경분을 제출 중입니다...",
+            async cancellationToken =>
+            {
+                var context = CreateTeamProjectContext();
+                var state = _teamProjectStateService.Load(context);
+                if (!string.Equals(state.LocalSourceScanRevisionId, state.LastSyncedScanRevisionId, StringComparison.Ordinal))
+                {
+                    StatusText = "source revision이 바뀐 상태라 제출하지 않았습니다. 먼저 팀 동기화를 다시 실행하세요.";
+                    CurrentOperationDetail = $"local={state.LocalSourceScanRevisionId}, server={state.LastSyncedScanRevisionId}";
+                    return;
+                }
+
+                var submitBuild = _teamCollaborationService.BuildSubmitRequest(
+                    context,
+                    state.LastSyncedScanRevisionId,
+                    ClientId,
+                    Items,
+                    state);
+                if (submitBuild.WorkItemChangeCount == 0 && submitBuild.SharedKeyChangeCount == 0)
+                {
+                    StatusText = "팀 서버에 제출할 변경분이 없습니다.";
+                    CurrentOperationDetail = "dirty change 0개";
+                    ProgressValue = 1.0;
+                    return;
+                }
+
+                try
+                {
+                    ProgressValue = 0.45;
+                    CurrentOperationDetail = $"제출 중: 일반 {submitBuild.WorkItemChangeCount}개, 공통키 {submitBuild.SharedKeyChangeCount}개";
+                    var response = await _teamCollaborationService.SubmitAsync(context, TeamAuthToken, submitBuild.Request, cancellationToken);
+                    _suppressItemStatePersistence = true;
+                    TeamSubmitApplyResult applyResult;
+                    try
+                    {
+                        applyResult = _teamCollaborationService.ApplySubmitResponse(context, submitBuild.Request, response, Items, state);
+                    }
+                    finally
+                    {
+                        _suppressItemStatePersistence = false;
+                    }
+
+                    SaveTranslationProgressSnapshot(force: true, reason: "SubmitTeamChangesAsync completed");
+                    RefreshItemsView();
+                    StatusText = "팀 서버 제출이 완료되었습니다.";
+                    CurrentOperationDetail = $"Applied {applyResult.AppliedCount}, NoOp {applyResult.NoopCount}, Conflict {applyResult.ConflictCount}, Rejected {applyResult.RejectedCount}";
+                    ProgressValue = 1.0;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                {
+                    _teamCollaborationService.EnqueueOfflineSubmission(context, submitBuild.Request, Items, state);
+                    StatusText = "팀 서버 제출 실패로 변경분을 offline queue에 보관했습니다.";
+                    CurrentOperationDetail = ex.Message;
+                    ProgressValue = 1.0;
+                }
+            });
+    }
+
+    public async Task<bool> RetryTeamOfflineQueueAsync()
+    {
+        if (!TryValidateTeamSettings(out var errorMessage))
+        {
+            StatusText = errorMessage;
+            return false;
+        }
+
+        if (_session is null)
+        {
+            StatusText = "먼저 팀 동기화 또는 텍스트 추출을 실행하세요.";
+            return false;
+        }
+
+        return await RunBusyAsync(
+            "offline queue를 재전송 중입니다...",
+            async cancellationToken =>
+            {
+                var context = CreateTeamProjectContext();
+                var state = _teamProjectStateService.Load(context);
+                var retryableQueue = state.OfflineSubmissionQueue
+                    .Where(submission => string.Equals(submission.ScanRevisionId, state.LocalSourceScanRevisionId, StringComparison.Ordinal))
+                    .ToList();
+                if (retryableQueue.Count == 0)
+                {
+                    StatusText = state.OfflineSubmissionQueue.Count == 0
+                        ? "재전송할 offline queue가 없습니다."
+                        : "source revision이 달라 offline queue를 자동 제출하지 않았습니다. 먼저 팀 동기화를 실행하세요.";
+                    CurrentOperationDetail = $"queue {state.OfflineSubmissionQueue.Count}개";
+                    return;
+                }
+
+                var succeededSubmissionIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var submission in retryableQueue)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var request = new TeamSubmitRequest
+                    {
+                        SubmissionId = submission.SubmissionId,
+                        ScanRevisionId = submission.ScanRevisionId,
+                        ClientId = ClientId,
+                        WorkItems = submission.WorkItems.Select(change => new TeamSubmitChange
+                        {
+                            Id = change.Id,
+                            BaseRevision = change.BaseRevision,
+                            Translation = change.TranslatedText,
+                        }).ToList(),
+                        SharedKeys = submission.SharedKeys.Select(change => new TeamSubmitChange
+                        {
+                            Id = change.Id,
+                            BaseRevision = change.BaseRevision,
+                            Translation = change.TranslatedText,
+                        }).ToList(),
+                    };
+                    var response = await _teamCollaborationService.SubmitAsync(context, TeamAuthToken, request, cancellationToken);
+                    _teamCollaborationService.ApplySubmitResponse(context, request, response, Items, state);
+                    succeededSubmissionIds.Add(submission.SubmissionId);
+                    ProgressValue = Math.Min(0.95, ProgressValue + 1.0 / retryableQueue.Count);
+                }
+
+                var updatedState = _teamProjectStateService.Load(context);
+                _teamProjectStateService.Save(context, new TeamProjectState
+                {
+                    LastSyncedScanRevisionId = updatedState.LastSyncedScanRevisionId,
+                    LocalSourceScanRevisionId = updatedState.LocalSourceScanRevisionId,
+                    TeamProjectDictionaryPath = updatedState.TeamProjectDictionaryPath,
+                    SourceArchiveSha256 = updatedState.SourceArchiveSha256,
+                    WorkItemsBySegmentId = updatedState.WorkItemsBySegmentId,
+                    SharedKeysByLookupKey = updatedState.SharedKeysByLookupKey,
+                    ConflictIdsByTargetId = updatedState.ConflictIdsByTargetId,
+                    OfflineSubmissionQueue = updatedState.OfflineSubmissionQueue
+                        .Where(submission => !succeededSubmissionIds.Contains(submission.SubmissionId))
+                        .ToList(),
+                });
+
+                SaveTranslationProgressSnapshot(force: true, reason: "RetryTeamOfflineQueueAsync completed");
+                RefreshItemsView();
+                StatusText = $"{succeededSubmissionIds.Count}개 offline submission을 재전송했습니다.";
+                CurrentOperationDetail = $"남은 queue: {updatedState.OfflineSubmissionQueue.Count - succeededSubmissionIds.Count}개";
+                ProgressValue = 1.0;
             });
     }
 
@@ -2010,6 +2536,79 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         PersistConfig();
     }
 
+    private void ApplyTeamWorkspacePaths(bool restoreSession)
+    {
+        if (!IsTeamMode || string.IsNullOrWhiteSpace(TeamProjectId))
+        {
+            return;
+        }
+
+        var context = CreateTeamProjectContext();
+        var gameChanged = SetProperty(ref _gameDirectory, context.SourceDirectory, nameof(GameDirectory));
+        var outputChanged = SetProperty(ref _outputDirectory, context.TeamOutputDirectory, nameof(OutputDirectory));
+        TeamStatusSummary = $"팀 작업 모드: {context.ProjectId} / {context.SourceDirectory}";
+
+        if ((gameChanged || outputChanged) && !_isLoadingConfig)
+        {
+            RefreshProjectContext(restoreSession, clearSessionWhenMissing: true);
+        }
+
+        RaisePropertyChanged(nameof(UserDictionarySummary));
+    }
+
+    private TeamProjectContext CreateTeamProjectContext()
+    {
+        var context = _projectContextFactory.Create(new AppConfig
+        {
+            ProjectMode = ProjectMode.Team,
+            TeamServerUrl = TeamServerUrl,
+            TeamProjectId = TeamProjectId,
+            TeamDisplayName = TeamDisplayName,
+            ClientId = ClientId,
+            TeamWorkspaceRoot = TeamWorkspaceRoot,
+        });
+
+        return context is TeamProjectContext teamContext
+            ? teamContext
+            : throw new InvalidOperationException("팀 프로젝트 컨텍스트를 만들 수 없습니다.");
+    }
+
+    private bool TryValidateTeamSettings(out string errorMessage)
+    {
+        if (!IsTeamMode)
+        {
+            errorMessage = "팀 작업 모드가 아닙니다.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(TeamServerUrl))
+        {
+            errorMessage = "팀 서버 URL을 입력하세요.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(TeamProjectId))
+        {
+            errorMessage = "팀 프로젝트 ID를 입력하세요.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(ClientId))
+        {
+            errorMessage = "클라이언트 ID가 비어 있습니다.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(TeamAuthToken))
+        {
+            errorMessage = "팀 서버 인증 토큰을 입력하세요.";
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
     private void EnsureOutputDirectoryDistinctFromGameDirectory()
     {
         if (!IsOutputDirectorySameAsGameDirectory(_outputDirectory))
@@ -2072,14 +2671,42 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         try
         {
             var config = _appConfigCoordinator.Load();
-            if (!string.IsNullOrWhiteSpace(config.GameDirectory))
-            {
-                GameDirectory = config.GameDirectory;
-            }
+            _projectMode = config.ProjectMode;
+            _teamServerUrl = config.TeamServerUrl;
+            _teamProjectId = config.TeamProjectId;
+            _teamDisplayName = config.TeamDisplayName;
+            _clientId = string.IsNullOrWhiteSpace(config.ClientId) ? Guid.NewGuid().ToString("N") : config.ClientId;
+            _teamWorkspaceRoot = config.TeamWorkspaceRoot;
+            _teamAuthToken = config.TeamAuthToken;
+            _localGameDirectory = config.GameDirectory;
+            _localOutputDirectory = config.OutputDirectory;
+            _isManualTeamProjectId = true;
+            RaisePropertyChanged(nameof(IsTeamMode));
+            RaisePropertyChanged(nameof(IsLocalMode));
+            RaisePropertyChanged(nameof(IsManualTeamProjectId));
+            RaisePropertyChanged(nameof(CanEditTeamProjectId));
+            RaisePropertyChanged(nameof(TeamServerUrl));
+            RaisePropertyChanged(nameof(TeamProjectId));
+            RaisePropertyChanged(nameof(TeamDisplayName));
+            RaisePropertyChanged(nameof(ClientId));
+            RaisePropertyChanged(nameof(TeamWorkspaceRoot));
+            RaisePropertyChanged(nameof(TeamAuthToken));
 
-            if (!string.IsNullOrWhiteSpace(config.OutputDirectory))
+            if (IsTeamMode && !string.IsNullOrWhiteSpace(TeamProjectId))
             {
-                OutputDirectory = config.OutputDirectory;
+                ApplyTeamWorkspacePaths(restoreSession: false);
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(config.GameDirectory))
+                {
+                    GameDirectory = config.GameDirectory;
+                }
+
+                if (!string.IsNullOrWhiteSpace(config.OutputDirectory))
+                {
+                    OutputDirectory = config.OutputDirectory;
+                }
             }
 
             SelectedSaveMode = EffectiveSaveMode;
@@ -2158,9 +2785,16 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
         _appConfigCoordinator.ScheduleSave(new AppConfig
         {
-            GameDirectory = GameDirectory,
-            OutputDirectory = OutputDirectory,
+            GameDirectory = IsTeamMode ? _localGameDirectory : GameDirectory,
+            OutputDirectory = IsTeamMode ? _localOutputDirectory : OutputDirectory,
             SaveMode = EffectiveSaveMode,
+            ProjectMode = _projectMode,
+            TeamServerUrl = TeamServerUrl,
+            TeamProjectId = TeamProjectId,
+            TeamDisplayName = TeamDisplayName,
+            ClientId = ClientId,
+            TeamWorkspaceRoot = TeamWorkspaceRoot,
+            TeamAuthToken = TeamAuthToken,
             ProviderType = SelectedProviderType,
             BaseUrl = BaseUrl,
             Model = Model,
@@ -3458,6 +4092,11 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private string GetProjectDataDirectory(string? fallbackGameDirectory = null)
     {
+        if (IsTeamMode && !string.IsNullOrWhiteSpace(TeamProjectId))
+        {
+            return CreateTeamProjectContext().TeamProjectDataDirectory;
+        }
+
         if (EffectiveSaveMode == SaveMode.ExportCopy && !string.IsNullOrWhiteSpace(OutputDirectory))
         {
             return OutputDirectory;

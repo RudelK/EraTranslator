@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Users</h1>
+  <p class="muted">작업자 계정과 등록된 ClientId를 관리합니다.</p>
+  {% if error %}<p style="color:#b00020">{{ error }}</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Create Worker</h2>
+  <form method="post" action="/admin/users">
+    <input name="username" placeholder="username" required>
+    <input name="display_name" placeholder="display name" required>
+    <select name="role">
+      <option value="translator">translator</option>
+      <option value="reviewer">reviewer</option>
+      <option value="admin">admin</option>
+    </select>
+    <input name="password" type="password" placeholder="password" required>
+    <input name="password_confirm" type="password" placeholder="password confirm" required>
+    <button type="submit">Create User</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Workers</h2>
+  <table>
+    <thead><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Status</th><th>Created</th><th>Status</th><th>Password Reset</th></tr></thead>
+    <tbody>
+      {% for worker in users %}
+      <tr>
+        <td>{{ worker.username }}</td>
+        <td>{{ worker.display_name }}</td>
+        <td>{{ worker.role }}</td>
+        <td>{{ worker.status }}</td>
+        <td>{{ worker.created_at_utc }}</td>
+        <td>
+          <form method="post" action="/admin/users/{{ worker.id }}/status">
+            <select name="status_value">
+              <option value="active" {% if worker.status == "active" %}selected{% endif %}>active</option>
+              <option value="inactive" {% if worker.status == "inactive" %}selected{% endif %}>inactive</option>
+            </select>
+            <button type="submit">Update</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/admin/users/{{ worker.id }}/password">
+            <input name="password" type="password" placeholder="new password" required>
+            <input name="password_confirm" type="password" placeholder="confirm" required>
+            <button type="submit">Reset</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Client Devices</h2>
+  <table>
+    <thead><tr><th>ClientId</th><th>Display Name</th><th>Status</th><th>Last Seen</th></tr></thead>
+    <tbody>
+      {% for client in clients %}
+      <tr>
+        <td>{{ client.client_id }}</td>
+        <td>{{ client.display_name }}</td>
+        <td>{{ client.status }}</td>
+        <td>{{ client.last_seen_at_utc }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

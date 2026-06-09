@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Projects</h1>
+  <p class="muted">역할에 따라 접근 가능한 프로젝트만 표시됩니다.</p>
+  {% if user.role == "admin" %}
+  <form method="post" action="/admin/projects">
+    <input name="name" placeholder="New project name">
+    <button type="submit">Create</button>
+  </form>
+  {% endif %}
+</section>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Current ScanRevisionId</th>
+      <th>Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for project in projects %}
+    <tr>
+      <td><a href="/admin/projects/{{ project.id }}">{{ project.name }}</a></td>
+      <td>{{ project.status }}</td>
+      <td>{{ project.current_scan_revision_id or "-" }}</td>
+      <td>{{ project.updated_at_utc }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

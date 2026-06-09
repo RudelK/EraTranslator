@@ -1,136 +1,236 @@
 # 팀 작업 지원 TODO
 
-## 목표
+상세 설계는 [team-translation-server-plan.md](team-translation-server-plan.md)를 기준으로 한다.
 
-- [ ] 기존 WPF 클라이언트를 유지한 채 팀 단위 협업을 지원한다.
-- [ ] 협업 서버는 별도 소스로 분리한다.
-- [ ] 서버는 Windows/Linux 모두에서 실행 가능해야 한다.
-- [ ] 서버는 여러 프로젝트를 동시에 관리할 수 있어야 한다.
-- [ ] 서버 관리 UI는 웹으로 제공한다.
+## 공통 결정 사항
 
-## 서버 아키텍처
+- [x] 기존 WPF 클라이언트는 로컬 단독 작업과 팀 협업 작업을 모두 지원한다.
+- [x] 팀 협업 서버는 앱 코드와 분리된 별도 소스로 구현한다.
+- [x] 서버는 `Python 3.12+ + FastAPI`로 구현하고 Windows/Linux 실행을 지원한다.
+- [x] 서버 DB 기본값은 `PostgreSQL`로 한다.
+- [x] 서버 관리 UI는 웹으로 제공한다.
+- [x] 서버는 여러 프로젝트를 동시에 관리한다.
+- [x] source snapshot 동기화 단위는 v1에서 전체 프로젝트 작업본으로 한다.
+- [x] 서버 work item은 클라이언트가 생성한 scan manifest 업로드로 만든다.
+- [x] 공통 관리 대상은 특정 CSV 목록이 아니라 `참조키(reference-bearing key)` 전체로 한다.
+- [x] v1은 실시간 공동 편집이 아니라 sync/submit 기반 협업으로 한다.
+- [x] P2P/grid 구조는 v1 소스 오브 트루스로 사용하지 않는다.
 
-- [ ] 서버 루트를 앱 코드와 분리된 별도 디렉터리로 추가한다.
-- [ ] 서버 스택을 `Python 3.12+ + FastAPI`로 고정한다.
-- [ ] 서버 내부를 `api / models / schemas / services / repositories / web / templates / static / tests` 구조로 나눈다.
-- [ ] 클라이언트-서버 계약은 공용 C# 라이브러리 대신 OpenAPI + 명시 DTO 문서 기준으로 관리한다.
-- [ ] 서버는 sync API와 관리 UI를 같은 서비스 안에서 제공한다.
-- [ ] 관리 UI는 내부 관리도구 성격에 맞게 서버 렌더링 웹 화면으로 구현한다.
-- [ ] v1에서는 P2P/grid 구조를 소스 오브 트루스로 사용하지 않는다.
+## 서버 구현 TODO
 
-## 서버 DB
+### 서버 프로젝트 / 인프라
 
-- [ ] 운영 DB 기본값을 `PostgreSQL`로 확정한다.
-- [ ] 개발/테스트 전용 대체 DB가 필요하면 별도 검토하되, 기준 구현은 PostgreSQL 기준으로 설계한다.
-- [ ] Alembic 기반 마이그레이션 체계를 추가한다.
-- [ ] 프로젝트, 작업자, 할당, 일반 항목, 공통 참조키, 제출 이력, 충돌, 충돌 해소 이력을 분리된 테이블로 설계한다.
-- [ ] 충돌 payload, 제출 원본, 비교 스냅샷 저장에 필요한 구조화 필드를 포함한다.
+- [x] 서버 루트를 앱 코드와 분리된 별도 디렉터리로 추가한다.
+- [x] FastAPI 서버 구조를 `api / models / schemas / services / repositories / web / templates / static / tests`로 나눈다.
+- [x] SQLAlchemy 2.x, Alembic, Pydantic v2 기반을 구성한다.
+- [x] PostgreSQL 연결 설정과 마이그레이션 실행 흐름을 추가한다.
+- [x] OpenAPI 문서를 클라이언트-서버 계약 기준으로 관리한다.
+- [x] 서버 설정 파일 또는 환경변수로 DB 연결, archive 저장 위치, 업로드 제한값을 관리한다.
 
-## 프로젝트 / 작업자 관리
+### 서버 인증 / 권한
 
-- [ ] 서버는 `ProjectId` 단위로 여러 프로젝트를 동시에 관리한다.
-- [ ] 프로젝트별로 현재 기준 원문 스냅샷 버전 `ScanRevisionId`를 유지한다.
-- [ ] 클라이언트는 config에 고정 `ClientId`를 저장하고 서버 식별자로 사용한다.
-- [ ] 같은 `ClientId`가 여러 프로젝트에 참가할 수 있게 한다.
-- [ ] sync/submit은 항상 단일 `ProjectId` 기준으로만 수행한다.
-- [ ] 관리자 UI에 프로젝트 목록/생성/수정/비활성화 화면을 추가한다.
-- [ ] 관리자 UI에 작업자 목록, 최근 접속, 프로젝트 참여 현황 화면을 추가한다.
+- [x] v1 권한을 `admin`, `reviewer`, `translator` 3단계로 정의한다.
+- [x] API 인증 토큰을 추가한다.
+- [x] `ClientId`는 장치/작업자 식별용으로만 쓰고 인증 토큰을 대체하지 않게 한다.
+- [x] 관리 UI 로그인 화면을 추가한다.
+- [x] `admin`은 프로젝트, source snapshot, scan manifest, 멤버십, 할당, 충돌 해소를 관리할 수 있게 한다.
+- [x] `reviewer`는 공통 참조키 승인/수정과 허용된 충돌 해소를 수행할 수 있게 한다.
+- [x] `translator`는 할당 범위 내 일반 항목과 공통 참조키 제안을 제출할 수 있게 한다.
+- [x] 관리 UI는 로그인 후 역할에 따라 메뉴와 작업 버튼을 제한한다.
 
-## 할당 범위
+### 서버 데이터 모델
 
-- [ ] 작업 할당은 프로젝트별로 관리한다.
-- [ ] v1 기본 할당 단위는 `RelativePath` prefix 또는 glob 패턴으로 한다.
-- [ ] 할당 밖 항목은 클라이언트에서 읽기 전용으로 표시한다.
-- [ ] 할당 밖 수정 제출은 서버에서 `AssignmentConflict` 또는 reject로 처리한다.
-- [ ] 관리자 UI에서 프로젝트별 작업자 할당을 편집할 수 있게 한다.
+- [x] 프로젝트, 작업자, 멤버십, 할당 테이블을 설계한다.
+- [x] source snapshot 메타데이터 테이블을 설계한다.
+- [x] 일반 work item과 공통 참조키 테이블을 설계한다.
+- [x] 제출 이력과 제출 변경 항목 테이블을 설계한다.
+- [x] 충돌과 충돌 해소 이력 테이블을 설계한다.
+- [x] 충돌 payload, 제출 원본, 비교 스냅샷 저장에 필요한 구조화 필드를 포함한다.
+- [x] 모든 핵심 데이터는 `ProjectId` 기준으로 격리한다.
 
-## 공통 키 관리
+### 서버 프로젝트 / 작업자 관리
 
-- [ ] 공통 관리 대상은 특정 CSV 파일 목록이 아니라 `참조키(reference-bearing key)` 전체로 정의한다.
-- [ ] 기준 판정은 클라이언트 추출 결과의 `IsReferenceBearingKey`, `SymbolNamespace`, `OriginalSymbolKey`를 사용한다.
-- [ ] built-in namespace와 custom CSV/ERD namespace 모두 동일 규칙으로 처리한다.
-- [ ] 공통 키 식별자는 `ProjectId + SymbolNamespace + OriginalSymbolKey`로 고정한다.
-- [ ] 공통 키는 프로젝트별 서버 마스터 데이터로 유지한다.
-- [ ] 클라이언트 sync 시 공통 키 snapshot을 일반 항목보다 먼저 받도록 한다.
-- [ ] 클라이언트는 로컬 참조키 항목에만 서버 공통 키 값을 매핑한다.
-- [ ] 관리자 UI에 namespace/key 기준 공통 키 검색, 수정, 이력 화면을 추가한다.
+- [x] 프로젝트 생성/수정/비활성화 API를 추가한다.
+- [x] 프로젝트별 현재 `CurrentScanRevisionId`를 유지한다.
+- [x] `ClientId` 등록 API를 추가한다.
+- [x] 같은 `ClientId`가 여러 프로젝트에 참가할 수 있게 한다.
+- [x] 프로젝트별 멤버십과 역할을 관리한다.
+- [x] 프로젝트별 작업 할당을 `RelativePath` prefix 또는 glob 패턴으로 관리한다.
+- [x] 할당 밖 제출은 `AssignmentConflict` 또는 reject로 처리한다.
 
-## 버전 관리
+### 서버 Source Snapshot
 
-- [ ] 프로젝트별 현재 기준 원문 버전 `CurrentScanRevisionId`를 유지한다.
-- [ ] 일반 항목은 `ProjectId + SegmentId + OriginalText` 기준으로 매칭한다.
-- [ ] 일반 항목에는 서버 내부 `ItemId`와 `ItemRevision` 정수 버전을 둔다.
-- [ ] 공통 참조키에는 `SharedRevision` 정수 버전을 둔다.
-- [ ] 클라이언트 제출 항목마다 `BaseRevision`을 포함한다.
-- [ ] `BaseRevision == CurrentRevision`일 때만 자동 반영한다.
-- [ ] 제출 번역이 현재 서버 번역과 완전히 같으면 stale 상태여도 `NoOp`로 처리한다.
-- [ ] 같은 제출 재전송은 idempotent하게 처리한다.
+- [x] source snapshot을 `ProjectId + ScanRevisionId` 단위로 저장한다.
+- [x] snapshot archive 형식은 zip으로 한다.
+- [x] archive 메타데이터에 경로, sha256, 크기, 파일 수, 업로더, 업로드 시각, 활성 여부를 저장한다.
+- [x] source archive에는 `.era-translator`, `.era-translator-backup`, output 폴더, 로그/캐시 폴더를 포함하지 않는다.
+- [x] 업로드 시 archive 크기, 파일 수, 허용 경로, 제외 경로를 검증한다.
+- [x] active source snapshot archive는 삭제할 수 없게 한다.
+- [x] snapshot 보존 기본값은 프로젝트별 최근 3개로 한다.
+- [x] orphan archive 정리 기능은 관리자 승인 작업으로 둔다.
 
-## 충돌 정책
+### 서버 Scan Manifest / Work Item 생성
 
-- [ ] 기본 정책은 자동 덮어쓰기 금지로 유지한다.
-- [ ] 충돌 유형을 최소한 아래처럼 나눈다.
-- [ ] `StaleRevisionConflict`
-- [ ] `SourceChangedConflict`
-- [ ] `SharedNamespaceConflict`
-- [ ] `AssignmentConflict`
-- [ ] `ProjectScopeConflict`
-- [ ] `DuplicateSubmissionConflict`
-- [ ] 서버는 충돌 발생 시 현재 승인값을 유지하고 충돌 레코드를 생성한다.
-- [ ] 충돌 레코드에는 서버값, 제출값, 서버 revision, client base revision, client id를 저장한다.
-- [ ] 클라이언트와 관리자 UI 모두 `검수 필요 / 충돌` 상태를 볼 수 있게 한다.
-- [ ] 충돌 해소 방식은 `KeepServer`, `AcceptIncoming`, `ManualMerge` 3가지로 고정한다.
-- [ ] 어떤 방식으로 해소하더라도 최종 채택값 기준으로 revision을 증가시킨다.
+- [x] scan manifest 업로드 API를 추가한다.
+- [x] manifest가 없는 source snapshot은 다운로드는 가능하지만 팀 sync/submit 대상으로 활성화할 수 없게 한다.
+- [x] manifest 업로드 시 source archive 해시와 `ScanRevisionId`를 검증한다.
+- [x] manifest에서 일반 work item을 생성/갱신한다.
+- [x] manifest에서 `IsReferenceBearingKey` 항목을 공통 참조키로 생성/갱신한다.
+- [x] source snapshot 변경 시 이전 `ScanRevisionId`의 번역 상태를 새 manifest에 carryover한다.
+- [x] carryover 우선순위는 `SegmentId + OriginalText`, strong key, occurrence, same-original 순서로 둔다.
+- [x] carryover된 항목은 기본적으로 `검수 필요` 상태로 표시한다.
+- [x] scan manifest validation 결과를 조회하는 API를 추가한다.
 
-## 클라이언트 연동
+### 서버 버전 / 제출 / 충돌
 
-- [ ] WPF 앱에 팀 서버 설정 `TeamServerUrl`, `TeamProjectId`, `TeamDisplayName`, `ClientId`를 추가한다.
-- [ ] 팀 모드에서 startup 또는 명시 sync 시 서버 snapshot을 내려받도록 한다.
-- [ ] 로컬 `state.db`에는 기존 진행 상태와 함께 서버 메타데이터를 저장한다.
-- [ ] 최소 저장 메타데이터:
-- [ ] `LastSyncedScanRevisionId`
-- [ ] 일반 항목별 `ServerItemId`, `ServerRevision`
-- [ ] 공통 키별 `ServerSharedRevision`
-- [ ] 충돌이 연결된 경우 `ServerConflictId`
-- [ ] 기존 동일 원문 교정, symbol rewrite, identifier rewrite는 로컬 기능으로 유지한다.
-- [ ] submit 시에는 로컬 최종 상태만 서버 change 집합으로 전송한다.
+- [x] 일반 항목은 `ItemRevision`, 공통 참조키는 `SharedRevision` 정수 버전을 사용한다.
+- [x] 제출 API는 `SubmissionId`, `ProjectId`, `ScanRevisionId`, 항목별 `BaseRevision`을 필수로 받는다.
+- [x] `BaseRevision == CurrentRevision`이고 `ScanRevisionId`가 현재 source snapshot과 같을 때만 자동 반영한다.
+- [x] 제출값이 현재 서버값과 같으면 stale 상태여도 `NoOp`로 처리한다.
+- [x] 같은 `SubmissionId` 재전송 시 기존 처리 결과를 반환한다.
+- [x] 충돌 유형을 `StaleRevisionConflict`, `SourceChangedConflict`, `SharedNamespaceConflict`, `AssignmentConflict`, `ProjectScopeConflict`, `DuplicateSubmissionConflict`로 나눈다.
+- [x] v1 submit 경로에서 `StaleRevisionConflict`, `SourceChangedConflict`, `SharedNamespaceConflict`, `AssignmentConflict`, `ProjectScopeConflict`, `DuplicateSubmissionConflict`를 생성한다.
+- [x] 충돌 발생 시 서버 현재 승인값을 유지하고 충돌 레코드를 생성한다.
+- [x] 충돌 해소 방식은 `KeepServer`, `AcceptIncoming`, `ManualMerge` 3가지로 구현한다.
+- [x] 충돌 해소 후 최종 채택값 기준으로 revision을 증가시킨다.
 
-## 서버 API
+### 서버 API
 
-- [ ] `POST /api/clients/register`
-- [ ] `GET /api/projects`
-- [ ] `GET /api/projects/{project_id}/sync`
-- [ ] `POST /api/projects/{project_id}/submit`
-- [ ] `GET /api/projects/{project_id}/conflicts`
-- [ ] `POST /api/projects/{project_id}/conflicts/{conflict_id}/resolve`
-- [ ] `GET /api/projects/{project_id}/shared-keys`
-- [ ] `POST /api/projects/{project_id}/shared-keys/{entry_id}`
+- [x] `POST /api/auth/bootstrap-admin`
+- [x] `POST /api/auth/login`
+- [x] `GET /api/auth/me`
+- [x] `GET /api/projects`
+- [x] `POST /api/projects`
+- [x] `PATCH /api/projects/{project_id}`
+- [x] `GET /api/projects/{project_id}/memberships`
+- [x] `POST /api/projects/{project_id}/memberships`
+- [x] `GET /api/projects/{project_id}/assignments`
+- [x] `POST /api/projects/{project_id}/assignments`
+- [x] `GET /api/projects/{project_id}/source`
+- [x] `GET /api/projects/{project_id}/source/download`
+- [x] `POST /api/projects/{project_id}/source`
+- [x] `POST /api/projects/{project_id}/source/{scan_revision_id}/activate`
+- [x] `POST /api/clients/register`
+- [x] `GET /api/projects/{project_id}/sync`
+- [x] `POST /api/projects/{project_id}/source/{scan_revision_id}/scan-manifest`
+- [x] `GET /api/projects/{project_id}/source/{scan_revision_id}/scan-manifest/validation`
+- [x] `POST /api/projects/{project_id}/submit`
+- [x] `GET /api/projects/{project_id}/conflicts`
+- [x] `POST /api/projects/{project_id}/conflicts/{conflict_id}/resolve`
+- [x] `GET /api/projects/{project_id}/shared-keys`
+- [x] `POST /api/projects/{project_id}/shared-keys/{entry_id}`
 
-## 관리자 웹 UI
+### 서버 관리 UI
 
-- [ ] 프로젝트 목록/생성/수정/비활성화 화면
-- [ ] 프로젝트 상세 대시보드
-- [ ] 현재 `ScanRevisionId`, 문서 수, 항목 수, 공통 키 수, 작업자 수, 미해결 충돌 수 표시
-- [ ] 작업자 목록/상세 화면
-- [ ] 프로젝트별 멤버십/할당 관리 화면
-- [ ] 공통 참조키 검색/수정/이력 화면
-- [ ] 충돌 목록/필터/비교/해소 화면
-- [ ] 제출 이력 조회 화면
+- [x] 프로젝트 목록/생성/수정/비활성화 화면을 추가한다.
+- [x] 프로젝트 상세 대시보드에 현재 `ScanRevisionId`, 문서 수, 항목 수, 공통 키 수, 작업자 수, 미해결 충돌 수를 표시한다.
+- [x] 작업자 목록/상세 화면을 추가한다.
+- [x] 프로젝트별 멤버십/할당 관리 화면을 추가한다.
+- [x] source snapshot 업로드/활성화/다운로드/이력 화면을 추가한다.
+- [x] scan manifest 업로드/검증/활성화 화면을 추가한다.
+- [x] 공통 참조키 검색/수정/이력 화면을 추가한다.
+- [x] 충돌 목록/필터/비교/해소 화면을 추가한다.
+- [x] 제출 이력 조회 화면을 추가한다.
 
-## 테스트
+### 서버 테스트
 
-- [ ] 같은 `SegmentId + OriginalText`라도 프로젝트가 다르면 서로 분리되는지 확인
-- [ ] 같은 `Namespace + Key`라도 프로젝트가 다르면 공통 키가 섞이지 않는지 확인
-- [ ] 일반 항목 동시 수정 시 `StaleRevisionConflict`가 발생하는지 확인
-- [ ] 공통 키 동시 수정 시 `SharedNamespaceConflict`가 발생하는지 확인
-- [ ] `ScanRevisionId` 변경 뒤 제출하면 `SourceChangedConflict`가 발생하는지 확인
-- [ ] 할당 밖 제출이 차단되거나 충돌로 집계되는지 확인
-- [ ] 동일값 재제출이 `NoOp`로 처리되는지 확인
-- [ ] `KeepServer`, `AcceptIncoming`, `ManualMerge` 해소 결과가 모두 올바르게 반영되는지 확인
-- [ ] Windows/Linux에서 FastAPI 서버 실행이 가능한지 확인
+- [ ] Windows/Linux에서 FastAPI 서버 실행과 source archive 저장/다운로드가 가능한지 확인한다.
+- [x] 같은 `SegmentId + OriginalText`라도 프로젝트가 다르면 work item이 분리되는지 확인한다.
+- [x] 같은 `Namespace + Key`라도 프로젝트가 다르면 공통 참조키가 섞이지 않는지 확인한다.
+- [x] scan manifest가 없는 source snapshot은 sync 대상으로 활성화되지 않는지 확인한다.
+- [x] scan manifest 업로드 후 work item과 shared key가 생성되는지 확인한다.
+- [x] source archive에 zip slip 경로가 포함되면 업로드 또는 압축 해제가 차단되는지 확인한다.
+- [x] 일반 항목 동시 수정 시 `StaleRevisionConflict`가 발생하는지 확인한다.
+- [x] 공통 참조키 동시 수정 시 `SharedNamespaceConflict`가 발생하는지 확인한다.
+- [x] `ScanRevisionId` 변경 뒤 제출하면 `SourceChangedConflict`가 발생하는지 확인한다.
+- [x] 할당 밖 제출이 차단되거나 충돌로 집계되는지 확인한다.
+- [x] 동일값 재제출이 `NoOp`로 처리되는지 확인한다.
+- [x] 같은 `SubmissionId` 재전송이 중복 반영 없이 기존 결과를 반환하는지 확인한다.
+- [x] `KeepServer`, `AcceptIncoming`, `ManualMerge` 해소 결과가 올바르게 반영되는지 확인한다.
 
-## 메모
+## 클라이언트 구현 TODO
 
-- [ ] v1은 실시간 공동 편집이 아니라 sync/submit 기반 협업으로 본다.
-- [ ] 팀 패키지 export/import 계획은 폐기하지 않고 오프라인 보조 기능 후보로 남겨둘 수 있다.
-- [ ] 서버 기준 진실 원본은 중앙 서버이며, 로컬 `state.db`는 개인 작업 캐시로 유지한다.
+### 클라이언트 모드 / 설정
+
+- [x] 프로젝트 단위 `ProjectMode = Local | Team` 개념을 추가한다.
+- [x] 로컬 모드는 현재 게임 폴더/출력 폴더 기반 동작을 그대로 유지한다.
+- [x] 팀 모드는 서버 URL과 프로젝트를 선택해 workspace를 구성하는 별도 흐름으로 둔다.
+- [x] `TeamServerUrl`, `TeamProjectId`, `TeamDisplayName`, `ClientId`, `TeamWorkspaceRoot` 설정을 추가한다.
+- [x] `ClientId`는 최초 실행 시 생성하고 이후 config에서 유지한다.
+- [x] 프로젝트 시작 UI에 `로컬 프로젝트 열기`와 `팀 프로젝트 열기` 흐름을 모두 제공한다.
+- [x] 로컬 프로젝트와 팀 프로젝트의 최근 사용 문맥을 분리한다.
+
+### 클라이언트 Project Context / 상태 격리
+
+- [x] `ProjectContext`, `LocalProjectContext`, `TeamProjectContext` 모델을 추가한다.
+- [x] 로컬 모드와 팀 모드의 `state.db`, 경로, 캐시를 서로 섞이지 않게 분리한다.
+- [x] 팀 모드 state에 `LastSyncedScanRevisionId`, `LocalSourceScanRevisionId`, `OfflineSubmissionQueue`, `TeamProjectDictionaryPath`를 저장한다.
+- [x] 일반 항목별 `ServerItemId`, `ServerRevision`을 저장한다.
+- [x] 공통 키별 `ServerSharedRevision`을 저장한다.
+- [x] 충돌이 연결된 항목에는 `ServerConflictId`를 저장한다.
+- [x] 로컬 모드 프로젝트 사전은 현재 게임 폴더 기준으로 유지한다.
+- [x] 팀 모드 프로젝트 사전은 `TeamWorkspaceRoot/<ProjectId>/.era-translator/dictionaries/` 아래에 저장한다.
+
+### 클라이언트 Team Workspace / Source Sync
+
+- [x] 팀 workspace 기본 구조를 `source/`, `output/`, `.era-translator/`로 만든다.
+- [x] 팀 모드에서 `GameDirectory`는 `source/`, `OutputDirectory`는 `output/`를 가리키게 한다.
+- [x] 프로젝트 접속 시 서버 `CurrentScanRevisionId`와 로컬 source revision을 비교한다.
+- [x] 로컬 source가 없거나 revision이 다르면 source snapshot을 다운로드한다.
+- [x] source archive 다운로드 후 sha256을 검증한다.
+- [x] 압축 해제 시 zip slip 방지와 경로 정규화를 수행한다.
+- [x] 압축 해제 시 최대 크기와 최대 파일 수 검사를 수행한다.
+- [x] source revision이 같으면 기존 작업본을 재사용한다.
+- [x] source revision이 바뀌면 재다운로드, 재추출, 상태 carryover 흐름을 제공한다.
+
+### 클라이언트 Scan Manifest
+
+- [x] 기존 `FileScanner` 결과로 scan manifest를 생성하는 서비스를 추가한다.
+- [x] manifest에 `scan_revision_id`, `documents`, `items`, `identifier_occurrences`, `symbol_references`를 포함한다.
+- [x] 각 item에 `segment_id`, `relative_path`, `line_number`, `file_type`, `segment_type`, `original_text`, `source_key`, `symbol_namespace`, `original_symbol_key`, `is_reference_bearing_key`를 포함한다.
+- [x] scan manifest 업로드와 validation 조회용 팀 서버 client 메서드를 추가한다.
+- [x] 권한 있는 팀 사용자에게 scan manifest 업로드 흐름을 제공한다.
+- [x] manifest 업로드 결과와 validation 결과를 UI에 표시한다.
+
+### 클라이언트 Sync / Shared Key
+
+- [x] 팀 모드 startup 또는 명시 sync 시 서버 snapshot을 내려받는다.
+- [x] sync 응답의 `ScanRevisionId`가 로컬 source와 다르면 source 재동기화 필요 상태로 표시한다.
+- [x] 서버 shared key sync가 완료되면 로컬 참조키 항목에 즉시 반영한다.
+- [x] 저장 시 기존 symbol rewrite가 서버 shared key 값을 기준으로 동작하게 한다.
+- [ ] 팀 모드에서 할당 밖 항목은 읽기 전용으로 표시한다.
+- [x] 팀 모드에서 충돌 항목은 `검수 필요 / 충돌` 상태로 표시한다.
+- [ ] 서버 sync 응답에 assignment 범위 또는 item별 editable flag를 추가해 할당 밖 읽기 전용 표시를 정확히 구현한다.
+
+### 클라이언트 Submit / Offline Queue
+
+- [x] 팀 모드 dirty change 추적을 추가한다.
+- [x] submit payload에 `SubmissionId`, `ProjectId`, `ScanRevisionId`, 대상 revision, 변경 payload를 포함한다.
+- [x] 서버 연결 실패 시 dirty change를 local offline queue에 보관한다.
+- [x] source revision이 바뀐 상태에서는 queue를 자동 제출하지 않고 재동기화 필요 상태로 표시한다.
+- [x] 같은 `SubmissionId` 재전송 시 서버 결과를 기존 제출 결과로 반영한다.
+- [x] submit 결과의 `Applied`, `NoOp`, `Conflict`, `SourceMismatch`, `OutOfScope` 집계를 UI에 표시한다.
+
+### 클라이언트 UI
+
+- [x] 팀 프로젝트 열기 화면을 추가한다.
+- [x] 팀 서버 URL, 표시 이름, workspace root 설정 화면을 추가한다.
+- [x] 팀 프로젝트 목록 선택 UI를 추가한다.
+- [x] source snapshot 다운로드/압축 해제 진행 표시를 추가한다.
+- [x] 팀 sync/submit 버튼 또는 메뉴를 추가한다.
+- [x] 팀 모드 상태 요약에 서버, 프로젝트, source revision, 미제출 변경 수, 충돌 수를 표시한다.
+- [x] 로컬 모드에서는 팀 전용 UI를 숨기거나 비활성화한다.
+
+### 클라이언트 테스트
+
+- [x] 로컬 모드에서 서버 설정 없이 기존 추출/번역/저장이 그대로 동작하는지 확인한다.
+- [x] 팀 모드에서 로컬 원본 파일 없이 source snapshot 다운로드 후 바로 추출 가능한지 확인한다.
+- [x] 로컬 모드와 팀 모드의 `state.db`, 경로, 최근 상태가 서로 섞이지 않는지 확인한다.
+- [x] 팀 모드 프로젝트 사전이 로컬 모드 프로젝트 사전과 분리되는지 확인한다.
+- [x] source revision이 같으면 재다운로드 없이 기존 작업본을 재사용하는지 확인한다.
+- [x] source revision이 바뀌면 재다운로드와 재추출이 요구되는지 확인한다.
+- [x] scan manifest 생성 결과가 서버 DTO 요구 필드를 모두 포함하는지 확인한다.
+- [x] 서버 shared key sync 후 로컬 참조키 항목에 즉시 반영되는지 확인한다.
+- [ ] 할당 밖 항목이 읽기 전용으로 표시되는지 확인한다.
+- [x] 네트워크 실패 후 같은 `SubmissionId`를 재전송하면 중복 반영 없이 기존 결과가 반영되는지 확인한다.
+- [x] source revision 변경 후 offline queue가 자동 제출되지 않는지 확인한다.

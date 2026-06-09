@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>EraTranslator Team Server</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 0; background: #f6f4ef; color: #222; }
+    header { background: #263238; color: white; padding: 14px 24px; display: flex; justify-content: space-between; }
+    main { padding: 24px; }
+    a { color: #0f5f8f; text-decoration: none; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    .card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .stat { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 14px; }
+    .muted { color: #667; }
+    button { padding: 6px 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <a href="/admin/projects" style="color:white">EraTranslator Team Server</a>
+      {% if user and user.role == "admin" %}
+      <span> / </span><a href="/admin/users" style="color:white">Users</a>
+      {% endif %}
+    </div>
+    {% if user %}
+    <form method="post" action="/admin/logout">
+      <span>{{ user.display_name }} / {{ user.role }}</span>
+      <button type="submit">Logout</button>
+    </form>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

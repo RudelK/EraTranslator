@@ -35,6 +35,8 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="100" />
@@ -98,22 +100,37 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0"
-                                Orientation="Horizontal"
-                                Margin="0,0,0,8">
-                        <Button Width="110"
-                                Margin="0,0,8,0"
+                    <Grid Grid.Row="0"
+                          Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Orientation="Horizontal">
+                            <Button Width="110"
+                                    Margin="0,0,8,0"
+                                    IsEnabled="{Binding CanStartActions}"
+                                    Click="OpenTranslationSettings_Click"
+                                    Content="번역 설정..." />
+                            <Button Width="110"
+                                    Margin="0,0,8,0"
+                                    IsEnabled="{Binding CanStartActions}"
+                                    Click="OpenUserDictionary_Click"
+                                    Content="사용자 사전..." />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Width="120"
+                                HorizontalAlignment="Right"
                                 IsEnabled="{Binding CanStartActions}"
-                                Click="OpenTranslationSettings_Click"
-                                Content="번역 설정..." />
-                        <Button Width="110"
-                                Margin="0,0,8,0"
-                                IsEnabled="{Binding CanStartActions}"
-                                Click="OpenUserDictionary_Click"
-                                Content="사용자 사전..." />
-                    </StackPanel>
+                                Click="OpenTeamSettings_Click"
+                                Content="팀 작업 설정..." />
+                    </Grid>
 
                     <TextBlock Grid.Row="1"
                                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
@@ -130,6 +147,12 @@
                                    Text="{Binding SummaryText}"
                                    TextWrapping="Wrap" />
                     </StackPanel>
+
+                    <TextBlock Grid.Row="3"
+                               Margin="0,8,0,0"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding TeamStatusSummary}"
+                               TextWrapping="Wrap" />
                 </Grid>
             </GroupBox>
 
@@ -176,6 +199,26 @@
                                 IsEnabled="{Binding CanStartActions}"
                                 Click="ResetExtraction_Click"
                                 Content="추출 리셋" />
+                        <Button Width="110"
+                                Margin="0,0,8,8"
+                                IsEnabled="{Binding CanUseTeamActions}"
+                                Click="TeamSync_Click"
+                                Content="팀 동기화" />
+                        <Button Width="110"
+                                Margin="0,0,8,8"
+                                IsEnabled="{Binding CanUseTeamActions}"
+                                Click="TeamManifestUpload_Click"
+                                Content="Manifest 업로드" />
+                        <Button Width="110"
+                                Margin="0,0,8,8"
+                                IsEnabled="{Binding CanUseTeamActions}"
+                                Click="TeamSubmit_Click"
+                                Content="팀 제출" />
+                        <Button Width="110"
+                                Margin="0,0,8,8"
+                                IsEnabled="{Binding CanUseTeamActions}"
+                                Click="TeamRetryQueue_Click"
+                                Content="Queue 재전송" />
                         <Button Width="80"
                                 Margin="0,0,0,8"
                                 IsEnabled="{Binding CanCancel}"

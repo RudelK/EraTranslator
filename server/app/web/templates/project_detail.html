@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>{{ project.name }}</h1>
+  <p class="muted">Current ScanRevisionId: {{ project.current_scan_revision_id or "-" }}</p>
+  {% if user.role == "admin" %}
+  <form method="post" action="/admin/projects/{{ project.id }}">
+    <input name="name" value="{{ project.name }}">
+    <select name="status_value">
+      <option value="active" {% if project.status == "active" %}selected{% endif %}>active</option>
+      <option value="inactive" {% if project.status == "inactive" %}selected{% endif %}>inactive</option>
+    </select>
+    <button type="submit">Update Project</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="grid">
+  {% for label, value in stats.items() %}
+  <div class="stat">
+    <strong>{{ label }}</strong>
+    <div>{{ value }}</div>
+  </div>
+  {% endfor %}
+</section>
+
+{% if user.role == "admin" %}
+<section class="card">
+  <h2>Memberships</h2>
+  <form method="post" action="/admin/projects/{{ project.id }}/memberships">
+    <select name="user_id">
+      {% for worker in users %}
+      <option value="{{ worker.id }}">{{ worker.username }} / {{ worker.display_name }}</option>
+      {% endfor %}
+    </select>
+    <select name="role">
+      <option value="translator">translator</option>
+      <option value="reviewer">reviewer</option>
+      <option value="admin">admin</option>
+    </select>
+    <button type="submit">Add/Update Membership</button>
+  </form>
+  <table>
+    <thead><tr><th>UserId</th><th>Role</th><th>Status</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for membership in memberships %}
+      <tr>
+        <td>{{ membership.user_id }}</td>
+        <td>{{ membership.role }}</td>
+        <td>{{ membership.status }}</td>
+        <td>{{ membership.updated_at_utc }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Assignments</h2>
+  <form method="post" action="/admin/projects/{{ project.id }}/assignments">
+    <select name="user_id">
+      {% for worker in users %}
+      <option value="{{ worker.id }}">{{ worker.username }} / {{ worker.display_name }}</option>
+      {% endfor %}
+    </select>
+    <select name="pattern_kind">
+      <option value="prefix">prefix</option>
+      <option value="glob">glob</option>
+    </select>
+    <input name="pattern" placeholder="ERB/ or ERB/**/*.ERB">
+    <button type="submit">Add Assignment</button>
+  </form>
+  <table>
+    <thead><tr><th>UserId</th><th>Kind</th><th>Pattern</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for assignment in assignments %}
+      <tr>
+        <td>{{ assignment.user_id }}</td>
+        <td>{{ assignment.pattern_kind }}</td>
+        <td>{{ assignment.pattern }}</td>
+        <td>{{ assignment.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Source Snapshots</h2>
+  {% if user.role == "admin" %}
+  <form method="post" action="/admin/projects/{{ project.id }}/source" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".zip">
+    <button type="submit">Upload Source Zip</button>
+  </form>
+  {% endif %}
+  <table>
+    <thead><tr><th>ScanRevisionId</th><th>Status</th><th>Manifest</th><th>Files</th><th>Uploaded</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for snapshot in snapshots %}
+      <tr>
+        <td>{{ snapshot.scan_revision_id }}</td>
+        <td>{{ snapshot.status }}</td>
+        <td>{{ snapshot.has_scan_manifest }}</td>
+        <td>{{ snapshot.archive_file_count }}</td>
+        <td>{{ snapshot.created_at_utc }}</td>
+        <td>
+          <a href="/admin/projects/{{ project.id }}/source/{{ snapshot.scan_revision_id }}/download">Download</a>
+          {% if user.role == "admin" %}
+          <form method="post" action="/admin/projects/{{ project.id }}/source/{{ snapshot.scan_revision_id }}/activate">
+            <button type="submit">Activate</button>
+          </form>
+          <details>
+            <summary>Upload Manifest JSON</summary>
+            <form method="post" action="/admin/projects/{{ project.id }}/source/{{ snapshot.scan_revision_id }}/scan-manifest">
+              <textarea name="manifest_json" rows="6" style="width:100%"></textarea>
+              <button type="submit">Upload Manifest</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Recent Shared Keys</h2>
+  <table>
+    <thead><tr><th>Namespace</th><th>Key</th><th>Status</th><th>Revision</th><th>Translation</th></tr></thead>
+    <tbody>
+      {% for key in shared_keys %}
+      <tr>
+        <td>{{ key.namespace }}</td>
+        <td>{{ key.key }}</td>
+        <td>{{ key.status }}</td>
+        <td>{{ key.shared_revision }}</td>
+        <td>
+          {% if user.role in ["admin", "reviewer"] %}
+          <form method="post" action="/admin/projects/{{ project.id }}/shared-keys/{{ key.id }}">
+            <input name="translation" value="{{ key.translation or '' }}">
+            <button type="submit">Approve</button>
+          </form>
+          {% else %}
+          {{ key.translation or "-" }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Recent Conflicts</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Target</th><th>Status</th><th>Created</th><th>Resolve</th></tr></thead>
+    <tbody>
+      {% for conflict in conflicts %}
+      <tr>
+        <td>{{ conflict.conflict_type }}</td>
+        <td>{{ conflict.target_kind }} / {{ conflict.target_id }}</td>
+        <td>{{ conflict.status }}</td>
+        <td>{{ conflict.created_at_utc }}</td>
+        <td>
+          {% if conflict.status == "open" and user.role in ["admin", "reviewer"] %}
+          <form method="post" action="/admin/projects/{{ project.id }}/conflicts/{{ conflict.id }}/resolve">
+            <select name="resolution_kind">
+              <option value="KeepServer">KeepServer</option>
+              <option value="AcceptIncoming">AcceptIncoming</option>
+              <option value="ManualMerge">ManualMerge</option>
+            </select>
+            <input name="resolved_value" placeholder="Manual merge value">
+            <button type="submit">Resolve</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Recent Submissions</h2>
+  <table>
+    <thead><tr><th>SubmissionId</th><th>Status</th><th>Applied</th><th>NoOp</th><th>Conflicts</th><th>Rejected</th></tr></thead>
+    <tbody>
+      {% for submission in submissions %}
+      <tr>
+        <td>{{ submission.submission_id }}</td>
+        <td>{{ submission.status }}</td>
+        <td>{{ submission.applied_count }}</td>
+        <td>{{ submission.noop_count }}</td>
+        <td>{{ submission.conflict_count }}</td>
+        <td>{{ submission.rejected_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

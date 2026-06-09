@@ -5,6 +5,8 @@ TestResults/
 *.user
 *.suo
 *.cache
+__pycache__/
+*.pyc
 *.log
 *_wpftmp.csproj
 EraTranslator.config.json
@@ -12,6 +14,11 @@ EraTranslator.config.json
 .era-translator-backup/
 .codex-tmp/
 release/
+server/.venv/
+server/.pytest_cache/
+server/.env
+server/logs/
+server/run/
 sample/
 TODO.md
 AUDIT_TODO.md

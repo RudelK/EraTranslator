@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Initial Setup - EraTranslator Team Server</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; background: #f6f4ef; display: grid; place-items: center; min-height: 100vh; }
+    form { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 24px; width: min(560px, 92vw); }
+    label { display: block; margin: 12px 0 6px; font-weight: 600; }
+    input { box-sizing: border-box; width: 100%; padding: 8px; }
+    button { margin-top: 18px; width: 100%; padding: 10px; }
+    .error { color: #b00020; }
+    .hint { color: #667; font-size: 0.9rem; line-height: 1.45; }
+    fieldset { border: 1px solid #ddd; margin: 18px 0 0; padding: 14px; }
+    legend { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/admin/setup">
+    <h1>초기 서버 설정</h1>
+    <p class="hint">사용자가 하나도 없을 때만 표시됩니다. 설정값은 서버 `.env`에 저장되고, 관리자 계정은 DB에 생성됩니다.</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    <fieldset>
+      <legend>관리자 계정</legend>
+      <label>Username</label>
+      <input name="username" autocomplete="username" required>
+      <label>Display name</label>
+      <input name="display_name" required>
+      <label>Password</label>
+      <input name="password" type="password" autocomplete="new-password" required>
+      <label>Password confirm</label>
+      <input name="password_confirm" type="password" autocomplete="new-password" required>
+    </fieldset>
+
+    <fieldset>
+      <legend>서버 설정</legend>
+      <label>Bootstrap token</label>
+      <input name="bootstrap_token" value="{{ bootstrap_token }}">
+      <p class="hint">API bootstrap에도 사용할 수 있는 토큰입니다. 비워두면 `.env`에는 빈 값으로 저장됩니다.</p>
+      <label>Database URL</label>
+      <input name="database_url" value="{{ database_url }}">
+      <p class="hint">현재 실행 중인 DB 연결은 즉시 바뀌지 않습니다. 변경값은 다음 서버 재시작부터 적용됩니다.</p>
+      <label>Database schema</label>
+      <input name="database_schema" value="{{ database_schema }}">
+      <label>Archive root</label>
+      <input name="archive_root" value="{{ archive_root }}">
+    </fieldset>
+
+    <button type="submit">설정 저장 및 관리자 생성</button>
+  </form>
+</body>
+</html>

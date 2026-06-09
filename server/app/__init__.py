@@ -1,0 +1,2 @@
+"""EraTranslator team server package."""
+

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Login - EraTranslator Team Server</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; background: #f6f4ef; display: grid; place-items: center; min-height: 100vh; }
+    form { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 24px; width: 320px; }
+    label { display: block; margin: 12px 0 6px; }
+    input { box-sizing: border-box; width: 100%; padding: 8px; }
+    button { margin-top: 16px; width: 100%; padding: 9px; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/admin/login">
+    <h1>관리 UI 로그인</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <label>Username</label>
+    <input name="username" autocomplete="username">
+    <label>Password</label>
+    <input name="password" type="password" autocomplete="current-password">
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>

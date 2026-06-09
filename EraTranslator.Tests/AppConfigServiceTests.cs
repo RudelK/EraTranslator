@@ -77,6 +77,13 @@ public sealed class AppConfigServiceTests : IDisposable
             GameDirectory = @"D:\Games\Emuera",
             OutputDirectory = @"D:\Games\Emuera\translated",
             SaveMode = SaveMode.InPlaceWithBackup,
+            ProjectMode = ProjectMode.Team,
+            TeamServerUrl = "http://localhost:8000",
+            TeamProjectId = "project-1",
+            TeamDisplayName = "translator",
+            ClientId = "client-1",
+            TeamWorkspaceRoot = @"D:\EraTranslatorTeam",
+            TeamAuthToken = "team-token",
             ProviderType = TranslationProviderType.LmStudio,
             BaseUrl = "http://127.0.0.1:1234/v1",
             Model = "gemma",
@@ -122,6 +129,13 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.GameDirectory, actual.GameDirectory);
         Assert.Equal(expected.OutputDirectory, actual.OutputDirectory);
         Assert.Equal(expected.SaveMode, actual.SaveMode);
+        Assert.Equal(expected.ProjectMode, actual.ProjectMode);
+        Assert.Equal(expected.TeamServerUrl, actual.TeamServerUrl);
+        Assert.Equal(expected.TeamProjectId, actual.TeamProjectId);
+        Assert.Equal(expected.TeamDisplayName, actual.TeamDisplayName);
+        Assert.Equal(expected.ClientId, actual.ClientId);
+        Assert.Equal(expected.TeamWorkspaceRoot, actual.TeamWorkspaceRoot);
+        Assert.Equal(expected.TeamAuthToken, actual.TeamAuthToken);
         Assert.Equal(expected.ProviderType, actual.ProviderType);
         Assert.Equal(expected.BaseUrl, actual.BaseUrl);
         Assert.Equal(expected.Model, actual.Model);
@@ -155,6 +169,7 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal("openai-key", actual.ProviderApiKeys[TranslationProviderType.OpenAi]);
         Assert.DoesNotContain("openai-key", configText, StringComparison.Ordinal);
         Assert.DoesNotContain("papago-secret", configText, StringComparison.Ordinal);
+        Assert.DoesNotContain("team-token", configText, StringComparison.Ordinal);
         Assert.True(File.Exists(service.SecretPath));
     }
 
@@ -202,5 +217,19 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.DoesNotContain("legacy-secret", configText, StringComparison.Ordinal);
         Assert.DoesNotContain("legacy-openai-key", configText, StringComparison.Ordinal);
         Assert.True(File.Exists(service.SecretPath));
+    }
+
+    [Fact]
+    public void Load_GeneratesAndPersistsClientIdWhenMissing()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+
+        var first = service.Load();
+        var second = service.Load();
+
+        Assert.False(string.IsNullOrWhiteSpace(first.ClientId));
+        Assert.Equal(first.ClientId, second.ClientId);
+        Assert.Contains(first.ClientId, File.ReadAllText(service.ConfigPath), StringComparison.Ordinal);
     }
 }

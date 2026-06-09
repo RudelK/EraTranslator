@@ -23,7 +23,9 @@ public sealed class AppConfigService(string? baseDirectory = null)
     {
         if (!File.Exists(ConfigPath))
         {
-            return MergeSecrets(new AppConfig(), _secretStore.Load());
+            var config = MergeSecrets(new AppConfig(), _secretStore.Load());
+            Save(config);
+            return config;
         }
 
         try
@@ -36,6 +38,13 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 GameDirectory = loaded.GameDirectory,
                 OutputDirectory = loaded.OutputDirectory,
                 SaveMode = loaded.SaveMode,
+                ProjectMode = loaded.ProjectMode,
+                TeamServerUrl = loaded.TeamServerUrl,
+                TeamProjectId = loaded.TeamProjectId,
+                TeamDisplayName = loaded.TeamDisplayName,
+                ClientId = string.IsNullOrWhiteSpace(loaded.ClientId) ? Guid.NewGuid().ToString("N") : loaded.ClientId,
+                TeamWorkspaceRoot = loaded.TeamWorkspaceRoot,
+                TeamAuthToken = mergedSecrets.TeamAuthToken,
                 ProviderType = loaded.ProviderType,
                 BaseUrl = loaded.BaseUrl,
                 Model = loaded.Model,
@@ -73,7 +82,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 ProviderApiKeys = mergedSecrets.ProviderApiKeys,
             };
 
-            if (HasLegacyPlaintextSecrets(loaded))
+            if (HasLegacyPlaintextSecrets(loaded)
+                || string.IsNullOrWhiteSpace(loaded.ClientId))
             {
                 Save(mergedConfig);
             }
@@ -97,6 +107,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
         _secretStore.Save(new AppSecrets
         {
             PapagoClientSecret = config.PapagoClientSecret,
+            TeamAuthToken = config.TeamAuthToken,
             ProviderApiKeys = new Dictionary<TranslationProviderType, string>(config.ProviderApiKeys),
         });
 
@@ -105,6 +116,12 @@ public sealed class AppConfigService(string? baseDirectory = null)
             GameDirectory = config.GameDirectory,
             OutputDirectory = config.OutputDirectory,
             SaveMode = config.SaveMode,
+            ProjectMode = config.ProjectMode,
+            TeamServerUrl = config.TeamServerUrl,
+            TeamProjectId = config.TeamProjectId,
+            TeamDisplayName = config.TeamDisplayName,
+            ClientId = string.IsNullOrWhiteSpace(config.ClientId) ? Guid.NewGuid().ToString("N") : config.ClientId,
+            TeamWorkspaceRoot = config.TeamWorkspaceRoot,
             ProviderType = config.ProviderType,
             BaseUrl = config.BaseUrl,
             Model = config.Model,
@@ -153,10 +170,14 @@ public sealed class AppConfigService(string? baseDirectory = null)
         var papagoClientSecret = !string.IsNullOrWhiteSpace(storedSecrets.PapagoClientSecret)
             ? storedSecrets.PapagoClientSecret
             : loaded.PapagoClientSecret;
+        var teamAuthToken = !string.IsNullOrWhiteSpace(storedSecrets.TeamAuthToken)
+            ? storedSecrets.TeamAuthToken
+            : loaded.TeamAuthToken;
 
         var mergedSecrets = new AppSecrets
         {
             PapagoClientSecret = papagoClientSecret,
+            TeamAuthToken = teamAuthToken,
             ProviderApiKeys = new Dictionary<TranslationProviderType, string>(providerApiKeys),
         };
 
@@ -175,6 +196,13 @@ public sealed class AppConfigService(string? baseDirectory = null)
             GameDirectory = config.GameDirectory,
             OutputDirectory = config.OutputDirectory,
             SaveMode = config.SaveMode,
+            ProjectMode = config.ProjectMode,
+            TeamServerUrl = config.TeamServerUrl,
+            TeamProjectId = config.TeamProjectId,
+            TeamDisplayName = config.TeamDisplayName,
+            ClientId = string.IsNullOrWhiteSpace(config.ClientId) ? Guid.NewGuid().ToString("N") : config.ClientId,
+            TeamWorkspaceRoot = config.TeamWorkspaceRoot,
+            TeamAuthToken = secrets.TeamAuthToken,
             ProviderType = config.ProviderType,
             BaseUrl = config.BaseUrl,
             Model = config.Model,
@@ -216,6 +244,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
     private static bool HasLegacyPlaintextSecrets(AppConfig config)
     {
         return !string.IsNullOrWhiteSpace(config.PapagoClientSecret)
+            || !string.IsNullOrWhiteSpace(config.TeamAuthToken)
             || config.ProviderApiKeys.Any(pair => !string.IsNullOrWhiteSpace(pair.Value));
     }
 
@@ -244,6 +273,18 @@ public sealed class AppConfigService(string? baseDirectory = null)
         public string OutputDirectory { get; init; } = string.Empty;
 
         public SaveMode SaveMode { get; init; } = SaveMode.ExportCopy;
+
+        public ProjectMode ProjectMode { get; init; } = ProjectMode.Local;
+
+        public string TeamServerUrl { get; init; } = string.Empty;
+
+        public string TeamProjectId { get; init; } = string.Empty;
+
+        public string TeamDisplayName { get; init; } = string.Empty;
+
+        public string ClientId { get; init; } = string.Empty;
+
+        public string TeamWorkspaceRoot { get; init; } = string.Empty;
 
         public TranslationProviderType ProviderType { get; init; } = TranslationProviderType.OpenAi;
 
