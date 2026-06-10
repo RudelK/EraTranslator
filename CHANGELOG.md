@@ -22,7 +22,7 @@
 - SRS 가져오기 기본 적용 방식을 `치환`이 아니라 `프롬프팅`으로 변경했다.
 - 기존 glossary 캐시 DB에 `scope_version` 컬럼이 없을 때 마이그레이션보다 인덱스 생성이 먼저 실행되어 로딩이 실패하던 문제를 수정했다.
 - 번역 설정 창의 `LLM Glossary` 추가 옵션들이 겹쳐 보이던 레이아웃 문제를 수정했다.
-- Windows 전용 배포 zip에서 Linux/macOS/browser runtime asset을 제외하고 Windows runtime만 포함하도록 정리했다.
+- Windows x64 배포 zip에서 Linux/macOS/browser 및 x86/ARM runtime asset과 중복 publish 폴더를 제외하도록 정리했다.
 - `print-tail` 순수 주석 오검출, 리소스 문자열 보호, 심볼 namespace 보호, placeholder/품질검사 중복 패턴을 문법 카탈로그 기준으로 정리했다.
 
 ## 0.7.1 - 2026-06-05
