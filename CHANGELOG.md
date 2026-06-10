@@ -1,22 +1,27 @@
 # 변경 기록
 
-## 미출시 - 2026-06-10
+## 0.7.2 - 2026-06-10
 
 ### 기능
 
-- 팀 번역 협업 서버를 `server/` 아래 별도 FastAPI 프로젝트로 추가하고, PostgreSQL/Alembic 기반 DB 모델과 Windows/Linux 실행 스크립트를 구성했다.
-- 서버 웹 관리 UI에 최초 관리자 설정, 로그인, 사용자 관리, 프로젝트 관리, 멤버십/할당, source snapshot, scan manifest, 공통 참조키, 충돌, 제출 이력 화면을 추가했다.
-- 서버 API에 로그인 토큰 인증, 프로젝트 목록, 클라이언트 등록, source archive 업로드/다운로드/활성화, scan manifest 업로드/검증, sync, submit, conflict resolve, shared key update 흐름을 추가했다.
-- WPF 클라이언트에 `로컬 작업`/`팀 작업` 모드, 팀 작업 설정 창, 팀 workspace 분리, 서버 프로젝트 목록 선택, source snapshot 다운로드/검증/압축 해제, scan manifest 생성/업로드, sync/submit/offline queue 흐름을 추가했다.
-- 팀 모드에서는 서버 source snapshot을 받아 `workspace/source`를 게임 폴더로, `workspace/output`을 출력 폴더로 자동 사용하도록 구성했다.
-- 팀 작업의 공통 CSV 관리는 특정 파일 목록이 아니라 `IsReferenceBearingKey` 참조키 전체를 shared key로 동기화하도록 구성했다.
+- 앱 버전을 `0.7.2`로 올리고, 실행 파일 메타데이터와 창 제목 표기를 함께 갱신했다.
+- emuera/EM+EE 문법 카탈로그를 추가해 내장 변수/명령/함수, 특수 주석, 리소스 확장자, HTML 엔티티, 보호 패턴을 추출/치환/검증 경로에서 공통으로 쓰도록 정리했다.
+- 사용자 사전 교환용 `.etdict` TSV 포맷과 가져오기/내보내기 UI를 추가하고, `.simplesrs`/`.srs` 가져오기를 지원했다.
+- 탑재 일본어 사전을 현재 batch 문장 기준 glossary hint로 활용하는 경로를 추가해, 문장 속 용어도 LLM 프롬프트에 소수 후보로 전달할 수 있게 했다.
+- glossary 후보 캐시를 프로젝트 `state.db`에 저장하고, 번역 직전에는 현재 batch 원문 기준 first-char 역조회만 수행하도록 최적화했다.
+- 성능 디버그 로그 옵션을 추가해 glossary DB 조회, 탑재 사전 조회, provider 호출 직전/직후 병목을 추적할 수 있게 했다.
 
 ### 수정
 
-- 팀 작업 설정 UI에서 프로젝트 선택을 우선하고, 프로젝트 ID는 선택 항목에서 자동 반영하되 필요할 때만 수동 입력할 수 있도록 정리했다.
-- 팀 서버 인증 토큰은 프로젝트 `user_id`가 아니라 `/api/auth/login`에서 발급된 `access_token`을 넣는 구조임을 문서와 handoff에 명확히 했다.
-- 팀 서버 `HttpClient` 호출은 요청별 절대 URL과 요청별 Bearer 헤더를 사용하도록 고정하고, 같은 클라이언트 인스턴스로 프로젝트 목록을 반복 갱신해도 `BaseAddress` 변경 예외가 나지 않도록 회귀 테스트를 추가했다.
-- 서버 DB 세션에서 PostgreSQL schema search path를 요청별로 설정해, 지정 schema 사용 시 `users` 등 테이블을 찾지 못하던 문제를 보강했다.
+- `;!;`, `;#;`, `;^;` 특수 주석 뒤 코드는 일반 주석처럼 버리지 않고 분석하며, 순수 주석과 `PRINT`/`FORM` 계열 세미콜론 처리를 더 보수적으로 분리했다.
+- `GETNUM 변수, 인덱스`, `'=` 문자열 대입, `VARI`/`VARS` 선언 대입, `ERDNAME`, `DAY/TIME/MONEY` 계열 이름 참조 인식을 보강했다.
+- 슬래시가 없는 이미지/사운드/폰트/HTML/XML 파일명과 `&amp;`, `&#123;`, `&#xABCD;` HTML 엔티티가 번역 중 손상되지 않도록 보호했다.
+- `{...}` 일반 줄 연속을 논리 라인으로 전처리해 추출/참조 분석의 누락을 줄였다.
+- 사용자 전역 사전 저장 위치를 실행 파일 기준 `UserSettings` 하위로 옮기고, 구버전 파일만 있는 경우 새 위치로 자동 이전하도록 했다.
+- 사용자 사전 창에서 취소 버튼을 제거하고, 다중 삭제 시 한 항목마다 파일을 쓰지 않도록 저장 흐름을 정리했다.
+- SRS 가져오기 기본 적용 방식을 `치환`이 아니라 `프롬프팅`으로 변경했다.
+- 기존 glossary 캐시 DB에 `scope_version` 컬럼이 없을 때 마이그레이션보다 인덱스 생성이 먼저 실행되어 로딩이 실패하던 문제를 수정했다.
+- `print-tail` 순수 주석 오검출, 리소스 문자열 보호, 심볼 namespace 보호, placeholder/품질검사 중복 패턴을 문법 카탈로그 기준으로 정리했다.
 
 ## 0.7.1 - 2026-06-05
 

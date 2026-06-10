@@ -39,12 +39,22 @@ public sealed class TranslationSettingsViewModel : BindableBase
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
     private bool _enableDictionaryHitLogging = false;
+    private bool _enablePerformanceDebugLogging = false;
     private bool _excludeNonSourceText = true;
     private bool _enableBundledDictionaryFirstPass = true;
     private bool _enableKanaTransliterationFallback = false;
     private bool _enableNaverJapaneseDictionaryLookup = false;
     private bool _enableKanjiReadingFallback = false;
     private int _dictionaryFirstMaxTermLength = 6;
+    private bool _enableGlossaryHints = true;
+    private int _glossaryMaxHintsPerBatch = 8;
+    private int _glossaryCharacterBudget = 360;
+    private int _glossaryMinSourceLength = 2;
+    private bool _enableBundledDictionaryGlossaryHints = true;
+    private int _bundledDictionaryGlossaryMaxHintsPerBatch = 4;
+    private int _bundledDictionaryGlossaryCharacterBudget = 160;
+    private int _bundledDictionaryGlossaryMinTermLength = 2;
+    private int _bundledDictionaryGlossaryMaxTermLength = 12;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _papagoClientId = string.Empty;
@@ -99,6 +109,20 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public IReadOnlyList<int> BatchSizeOptions { get; } = [1, 2, 5, 10, 15, 20, 30, 50];
 
     public IReadOnlyList<int> RetryCountOptions { get; } = [0, 1, 2, 3, 5, 10];
+
+    public IReadOnlyList<int> GlossaryMaxHintsOptions { get; } = [0, 4, 8, 12, 20];
+
+    public IReadOnlyList<int> GlossaryCharacterBudgetOptions { get; } = [0, 240, 360, 600, 1000];
+
+    public IReadOnlyList<int> GlossaryMinSourceLengthOptions { get; } = [1, 2, 3, 4];
+
+    public IReadOnlyList<int> BundledDictionaryGlossaryMaxHintsOptions { get; } = [0, 2, 4, 8, 12];
+
+    public IReadOnlyList<int> BundledDictionaryGlossaryCharacterBudgetOptions { get; } = [0, 80, 160, 240, 360];
+
+    public IReadOnlyList<int> BundledDictionaryGlossaryMinTermLengthOptions { get; } = [1, 2, 3, 4];
+
+    public IReadOnlyList<int> BundledDictionaryGlossaryMaxTermLengthOptions { get; } = [6, 8, 12, 16, 20];
 
     public IReadOnlyList<int> EzTransProcessCountOptions { get; } = [1, 2, 3, 4, 6, 8, 12, 16];
 
@@ -484,6 +508,12 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set => SetProperty(ref _enableDictionaryHitLogging, value);
     }
 
+    public bool EnablePerformanceDebugLogging
+    {
+        get => _enablePerformanceDebugLogging;
+        set => SetProperty(ref _enablePerformanceDebugLogging, value);
+    }
+
     public bool ExcludeNonSourceText
     {
         get => _excludeNonSourceText;
@@ -520,6 +550,60 @@ public sealed class TranslationSettingsViewModel : BindableBase
         set => SetProperty(ref _dictionaryFirstMaxTermLength, Math.Clamp(value, 1, 12));
     }
 
+    public bool EnableGlossaryHints
+    {
+        get => _enableGlossaryHints;
+        set => SetProperty(ref _enableGlossaryHints, value);
+    }
+
+    public int GlossaryMaxHintsPerBatch
+    {
+        get => _glossaryMaxHintsPerBatch;
+        set => SetProperty(ref _glossaryMaxHintsPerBatch, Math.Clamp(value, 0, 50));
+    }
+
+    public int GlossaryCharacterBudget
+    {
+        get => _glossaryCharacterBudget;
+        set => SetProperty(ref _glossaryCharacterBudget, Math.Clamp(value, 0, 4000));
+    }
+
+    public int GlossaryMinSourceLength
+    {
+        get => _glossaryMinSourceLength;
+        set => SetProperty(ref _glossaryMinSourceLength, Math.Clamp(value, 1, 20));
+    }
+
+    public bool EnableBundledDictionaryGlossaryHints
+    {
+        get => _enableBundledDictionaryGlossaryHints;
+        set => SetProperty(ref _enableBundledDictionaryGlossaryHints, value);
+    }
+
+    public int BundledDictionaryGlossaryMaxHintsPerBatch
+    {
+        get => _bundledDictionaryGlossaryMaxHintsPerBatch;
+        set => SetProperty(ref _bundledDictionaryGlossaryMaxHintsPerBatch, Math.Clamp(value, 0, 50));
+    }
+
+    public int BundledDictionaryGlossaryCharacterBudget
+    {
+        get => _bundledDictionaryGlossaryCharacterBudget;
+        set => SetProperty(ref _bundledDictionaryGlossaryCharacterBudget, Math.Clamp(value, 0, 4000));
+    }
+
+    public int BundledDictionaryGlossaryMinTermLength
+    {
+        get => _bundledDictionaryGlossaryMinTermLength;
+        set => SetProperty(ref _bundledDictionaryGlossaryMinTermLength, Math.Clamp(value, 1, 20));
+    }
+
+    public int BundledDictionaryGlossaryMaxTermLength
+    {
+        get => _bundledDictionaryGlossaryMaxTermLength;
+        set => SetProperty(ref _bundledDictionaryGlossaryMaxTermLength, Math.Clamp(value, BundledDictionaryGlossaryMinTermLength, 40));
+    }
+
     public string SystemPromptTemplate
     {
         get => _systemPromptTemplate;
@@ -537,6 +621,8 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public string ResultStateLogPath => new FileResultStateLogger().LogFilePath;
 
     public string DictionaryHitLogPath => new FileDictionaryHitLogger().LogFilePath;
+
+    public string PerformanceDebugLogPath => new FilePerformanceDebugLogger().LogFilePath;
 
     public string BundledDictionarySnapshotText => _bundledJapaneseLexiconService.GetSnapshotSummary();
 
@@ -685,12 +771,22 @@ public sealed class TranslationSettingsViewModel : BindableBase
         EnableRequestResponseLogging = source.EnableRequestResponseLogging;
         EnableResultStateLogging = source.EnableResultStateLogging;
         EnableDictionaryHitLogging = source.EnableDictionaryHitLogging;
+        EnablePerformanceDebugLogging = source.EnablePerformanceDebugLogging;
         ExcludeNonSourceText = source.ExcludeNonSourceText;
         EnableBundledDictionaryFirstPass = source.EnableBundledDictionaryFirstPass;
         EnableKanaTransliterationFallback = source.EnableKanaTransliterationFallback;
         EnableNaverJapaneseDictionaryLookup = source.EnableNaverJapaneseDictionaryLookup;
         EnableKanjiReadingFallback = source.EnableKanjiReadingFallback;
         DictionaryFirstMaxTermLength = source.DictionaryFirstMaxTermLength;
+        EnableGlossaryHints = source.EnableGlossaryHints;
+        GlossaryMaxHintsPerBatch = source.GlossaryMaxHintsPerBatch;
+        GlossaryCharacterBudget = source.GlossaryCharacterBudget;
+        GlossaryMinSourceLength = source.GlossaryMinSourceLength;
+        EnableBundledDictionaryGlossaryHints = source.EnableBundledDictionaryGlossaryHints;
+        BundledDictionaryGlossaryMaxHintsPerBatch = source.BundledDictionaryGlossaryMaxHintsPerBatch;
+        BundledDictionaryGlossaryCharacterBudget = source.BundledDictionaryGlossaryCharacterBudget;
+        BundledDictionaryGlossaryMinTermLength = source.BundledDictionaryGlossaryMinTermLength;
+        BundledDictionaryGlossaryMaxTermLength = source.BundledDictionaryGlossaryMaxTermLength;
         SystemPromptTemplate = source.SystemPromptTemplate;
         RetryPromptTemplate = source.RetryPromptTemplate;
         PapagoClientId = source.PapagoClientId;
@@ -763,12 +859,22 @@ public sealed class TranslationSettingsViewModel : BindableBase
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             EnableDictionaryHitLogging = EnableDictionaryHitLogging,
+            EnablePerformanceDebugLogging = EnablePerformanceDebugLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
             EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
             EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
             EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
             EnableKanjiReadingFallback = EnableKanjiReadingFallback,
             DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
+            EnableGlossaryHints = EnableGlossaryHints,
+            GlossaryMaxHintsPerBatch = GlossaryMaxHintsPerBatch,
+            GlossaryCharacterBudget = GlossaryCharacterBudget,
+            GlossaryMinSourceLength = GlossaryMinSourceLength,
+            EnableBundledDictionaryGlossaryHints = EnableBundledDictionaryGlossaryHints,
+            BundledDictionaryGlossaryMaxHintsPerBatch = BundledDictionaryGlossaryMaxHintsPerBatch,
+            BundledDictionaryGlossaryCharacterBudget = BundledDictionaryGlossaryCharacterBudget,
+            BundledDictionaryGlossaryMinTermLength = BundledDictionaryGlossaryMinTermLength,
+            BundledDictionaryGlossaryMaxTermLength = BundledDictionaryGlossaryMaxTermLength,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
             PapagoClientId = PapagoClientId,
@@ -829,6 +935,15 @@ public sealed class TranslationSettingsViewModel : BindableBase
         EnableNaverJapaneseDictionaryLookup = false;
         EnableKanjiReadingFallback = false;
         DictionaryFirstMaxTermLength = 6;
+        EnableGlossaryHints = true;
+        GlossaryMaxHintsPerBatch = 8;
+        GlossaryCharacterBudget = 360;
+        GlossaryMinSourceLength = 2;
+        EnableBundledDictionaryGlossaryHints = true;
+        BundledDictionaryGlossaryMaxHintsPerBatch = 4;
+        BundledDictionaryGlossaryCharacterBudget = 160;
+        BundledDictionaryGlossaryMinTermLength = 2;
+        BundledDictionaryGlossaryMaxTermLength = 12;
         Seed = null;
 
         if (SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade)

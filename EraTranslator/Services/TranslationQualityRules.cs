@@ -275,7 +275,7 @@ public static partial class TranslationQualityRules
         }
 
         var sanitized = ErbIndexedFunctionReferencePattern().Replace(text, string.Empty);
-        sanitized = ErbSymbolReferencePattern().Replace(sanitized, string.Empty);
+        sanitized = ErbSyntaxCatalog.CreateSymbolReferencePattern(SymbolNamespaceRegistry.Default).Replace(sanitized, string.Empty);
         return sanitized;
     }
 
@@ -407,6 +407,4 @@ public static partial class TranslationQualityRules
     [GeneratedRegex(@"(?<![\p{L}\p{N}_])[\p{L}_][\p{L}\p{N}_]*:\((?:[^()\r\n]|\([^()\r\n]*\))*\)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex ErbIndexedFunctionReferencePattern();
 
-    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|ITEMSALES|BASE|MAXBASE|DOWNBASE|ABL|CUP|PALAM|CDOWN|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|TCVAR|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
-    private static partial Regex ErbSymbolReferencePattern();
 }

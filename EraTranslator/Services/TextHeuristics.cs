@@ -5,25 +5,6 @@ namespace EraTranslator.Services;
 
 public static partial class TextHeuristics
 {
-    private static readonly HashSet<string> ResourcePathExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".webp",
-        ".bmp",
-        ".apng",
-        ".ogg",
-        ".wav",
-        ".mp3",
-        ".mid",
-        ".midi",
-        ".txt",
-        ".dat",
-        ".xml",
-    };
-
     public static bool ContainsTranslatableText(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -56,7 +37,7 @@ public static partial class TextHeuristics
             return false;
         }
 
-        var sanitized = ErbSymbolReferencePattern().Replace(value, string.Empty);
+        var sanitized = ErbSyntaxCatalog.CreateSymbolReferencePattern(SymbolNamespaceRegistry.Default).Replace(value, string.Empty);
         if (string.Equals(sanitized, value, StringComparison.Ordinal))
         {
             return false;
@@ -121,26 +102,17 @@ public static partial class TextHeuristics
         }
 
         normalized = PlaceholderOnlyPattern().Replace(normalized, "SEG");
-        if (!normalized.Contains('/') && !normalized.Contains('\\'))
-        {
-            return false;
-        }
-
         var path = normalized.Replace('\\', '/');
-        var lastSlashIndex = path.LastIndexOf('/');
-        if (lastSlashIndex < 0 || lastSlashIndex == path.Length - 1)
-        {
-            return false;
-        }
-
-        var fileName = path[(lastSlashIndex + 1)..].Trim();
-        if (fileName.Length == 0)
+        var fileName = path.Contains('/')
+            ? path[(path.LastIndexOf('/') + 1)..].Trim()
+            : path.Trim();
+        if (fileName.Length == 0 || fileName.Contains(' ') || fileName.Contains('\t'))
         {
             return false;
         }
 
         var extension = Path.GetExtension(fileName);
-        return extension.Length > 0 && ResourcePathExtensions.Contains(extension);
+        return extension.Length > 0 && ErbSyntaxCatalog.ResourcePathExtensions.Contains(extension);
     }
 
     private static bool IsJapaneseRune(int value)
@@ -174,6 +146,4 @@ public static partial class TextHeuristics
     [GeneratedRegex(@"(%[^%\r\n]+%|\{[^{}\r\n]+\}|<[^\r\n<>]+>)", RegexOptions.Compiled)]
     private static partial Regex PlaceholderOnlyPattern();
 
-    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|ITEMSALES|BASE|MAXBASE|DOWNBASE|ABL|CUP|PALAM|CDOWN|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|TCVAR|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled)]
-    private static partial Regex ErbSymbolReferencePattern();
 }

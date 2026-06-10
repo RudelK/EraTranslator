@@ -6,7 +6,17 @@
 - App: `EraTranslator/EraTranslator.csproj`
 - Tests: `EraTranslator.Tests/EraTranslator.Tests.csproj`
 - EzTransXP worker: `EraTranslator.EzTransWorker/EraTranslator.EzTransWorker.csproj`
-- Current app version: `0.7.1`
+- Current app version: `0.7.2`
+
+## 0.7.2 Release Handoff
+
+- Release focus: emuera/EM+EE syntax hardening, user dictionary import/export, SimpleSRS import defaults, glossary lookup performance, bundled Japanese lexicon glossary hints, and SQLite glossary cache migration safety.
+- Team collaboration code exists in the tree from the previous local commit, but team-related main-window buttons/status are hidden for this release. Keep team collaboration out of `CHANGELOG.md` and public release notes until the next version.
+- `CHANGELOG.md` for `0.7.2` intentionally excludes team server/client details.
+- SimpleSRS imports now create enabled `프롬프팅` dictionary entries by default.
+- Global user dictionary/config-adjacent user files now prefer the executable-local user settings location, with legacy migration kept.
+- Glossary cache uses project `state.db` rows with `scope_version`; existing DBs without the column should migrate before creating the `scope_version` index.
+- Automatic translation should no longer run a full project glossary refresh before provider calls. It should use per-batch DB lookup and incremental cache updates.
 
 ## Current State
 
@@ -16,13 +26,14 @@
 - Manual edits set `수동 수정`, and duplicate `OriginalText` items are updated together across the full item set, not only the current filter.
 - Filtered automatic translation still sends only visible/filter-scoped rows to the provider, but same-original reuse/propagation checks all rows.
 - Automatic translation now internally runs in `CSV reference keys -> CSV general -> ERB identifiers -> ERH -> ERB` order inside the current filtered scope, with forced progress saves between phases.
-- Phase-boundary glossary hints are rebuilt from current translated items instead of being stored separately; `ERH` can consume `CSV` hints, and `ERB` can consume `CSV + ERH` hints.
+- Project reference glossary hints are stored as a scoped cache in project `state.db` and looked up per current batch; `ERH` can consume translated reference hints, and `ERB` can consume translated reference/identifier hints.
 - Manual exclusions are persisted and restored as excluded items.
 - Translation reset now preserves excluded rows instead of clearing them back into the pending pool.
 - Scan-time and translation-time source-language filtering can auto-fill rows whose entire meaningful content is already in the target language, while still applying the normal translation post-processing/validation path.
 - Persisted completed/review/manual rows with blank translations are now converted back to a failure state during restore so stop/resume cannot leave empty successful rows behind.
 - Provider results with broken placeholder tokens such as missing/reordered `__PH0__` are now terminal `번역 실패` items, not saveable review items.
 - Dictionary-first translation is now available for short `ja -> ko` terms before LLM/provider calls, using bundled lexicon lookup, kana/kanji fallback, and optional Naver dictionary lookup.
+- The bundled Japanese lexicon is also available as low-priority LLM glossary hints for terms found inside the current batch text; this does not force direct replacement.
 - Grid live refresh is optional; manual refresh keeps the visible row set stable while editing.
 - The main window title is driven by `ApplicationInfo.WindowTitle`.
 - The app now opens first and restores persisted project DB state afterward via a startup loading modal only when persisted state actually exists.
@@ -35,6 +46,7 @@
 - `#DIMS` lookup arrays, split lookup arrays discovered from `SPLIT_STRING`, CSV-name `SELECTCASE`, key-list functions, and adjacent `"namespace","key"` function arguments are treated as symbol references rather than free text.
 - Natural angle-bracket print tokens such as `PRINT <愛液>` extract the inner text, while HTML-like ASCII tags such as `<br>` remain protected.
 - Result saving is now always effective `ExportCopy`; the output directory must be different from the game directory.
+- Team collaboration main-window entry points are currently hidden. Do not advertise or release-note team collaboration until the next public version.
 - Team collaboration support is now implemented as a separate FastAPI server under `server/` plus WPF client-side team mode.
 - Team mode uses `TeamWorkspaceRoot/<ProjectId>/source` as the game directory and `TeamWorkspaceRoot/<ProjectId>/output` as the output directory after downloading the active server source snapshot.
 - Team server authentication uses `/api/auth/login` access tokens in `Authorization: Bearer <token>`. Do not put a project membership `user_id` in the client token field.
@@ -43,7 +55,7 @@
 
 ## Recent Major Changes
 
-- Bumped app version metadata and title display to `EraTranslator 0.7.1`.
+- Bumped app version metadata and title display to `EraTranslator 0.7.2`.
 - Added `CHANGELOG.md` and expanded `README.md` with release/workflow documentation.
 - Added parallel scanning, throttled scan progress, optimized scan-session SQLite saves, and index-based reference analysis.
 - Added `ERH` file support and `#DIM/#DIMS` string extraction.

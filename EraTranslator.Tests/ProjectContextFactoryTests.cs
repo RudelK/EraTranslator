@@ -56,4 +56,22 @@ public sealed class ProjectContextFactoryTests : IDisposable
         Assert.Equal(Path.Combine(workspaceRoot, "era_project_alpha", ".era-translator"), teamContext.TeamProjectDataDirectory);
         Assert.Equal(Path.Combine(workspaceRoot, "era_project_alpha", ".era-translator", "dictionaries"), teamContext.TeamProjectDictionaryDirectory);
     }
+
+    [Fact]
+    public void Create_TeamMode_UsesProgramTeamWorkspacesFolderByDefault()
+    {
+        var factory = new ProjectContextFactory(_rootPath);
+
+        var context = factory.Create(new AppConfig
+        {
+            ProjectMode = ProjectMode.Team,
+            TeamServerUrl = "http://localhost:8000",
+            TeamProjectId = "team-1",
+            ClientId = "client-1",
+        });
+
+        var teamContext = Assert.IsType<TeamProjectContext>(context);
+        Assert.Equal(Path.Combine(_rootPath, "TeamWorkspaces"), teamContext.WorkspaceRoot);
+        Assert.Equal(Path.Combine(_rootPath, "TeamWorkspaces", "team-1", "source"), teamContext.SourceDirectory);
+    }
 }

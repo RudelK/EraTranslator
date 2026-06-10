@@ -1004,7 +1004,7 @@ public sealed class TranslationCoordinatorTests
             CancellationToken.None);
 
         Assert.Single(provider.GlossaryHistory);
-        Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
+        Assert.Equal(["快楽値"], provider.GlossaryHistory[0].Select(static hint => hint.Source).ToList());
     }
 
     [Fact]

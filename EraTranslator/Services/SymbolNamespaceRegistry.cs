@@ -2,64 +2,11 @@ namespace EraTranslator.Services;
 
 public sealed class SymbolNamespaceRegistry
 {
-    private static readonly Dictionary<string, string> BuiltInFileNamespaceByFileName = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Cflag.csv"] = "CFLAG",
-        ["Tflag.csv"] = "TFLAG",
-        ["Flag.csv"] = "FLAG",
-        ["Cstr.csv"] = "CSTR",
-        ["Str.csv"] = "STR",
-        ["Savestr.csv"] = "SAVESTR",
-        ["Item.csv"] = "ITEM",
-        ["Base.csv"] = "BASE",
-        ["Abl.csv"] = "ABL",
-        ["Palam.csv"] = "PALAM",
-        ["Exp.csv"] = "EXP",
-        ["Mark.csv"] = "MARK",
-        ["Talent.csv"] = "TALENT",
-        ["Source.csv"] = "SOURCE",
-        ["Juel.csv"] = "JUEL",
-        ["Tequip.csv"] = "TEQUIP",
-        ["Nowex.csv"] = "NOWEX",
-        ["Ex.csv"] = "EX",
-        ["Tcvar.csv"] = "TCVAR",
-    };
-
-    private static readonly string[] BuiltInNamespaces =
-    [
-        "CALLNAME",
-        "CFLAG",
-        "TFLAG",
-        "FLAG",
-        "CSTR",
-        "STR",
-        "ITEM",
-        "ITEMPRICE",
-        "ITEMSALES",
-        "BASE",
-        "MAXBASE",
-        "DOWNBASE",
-        "ABL",
-        "CUP",
-        "PALAM",
-        "CDOWN",
-        "EXP",
-        "MARK",
-        "TALENT",
-        "SOURCE",
-        "JUEL",
-        "TEQUIP",
-        "NOWEX",
-        "EX",
-        "TCVAR",
-        "SAVESTR",
-    ];
-
     private readonly Dictionary<string, string> _canonicalNamespaces = new(StringComparer.OrdinalIgnoreCase);
 
     public SymbolNamespaceRegistry(IEnumerable<string>? dynamicNamespaces = null)
     {
-        foreach (var builtInNamespace in BuiltInNamespaces)
+        foreach (var builtInNamespace in ErbSyntaxCatalog.BuiltInNamespaces)
         {
             AddNamespace(builtInNamespace);
         }
@@ -100,7 +47,7 @@ public sealed class SymbolNamespaceRegistry
             return string.Empty;
         }
 
-        if (BuiltInFileNamespaceByFileName.TryGetValue(fileName, out var builtInNamespace))
+        if (ErbSyntaxCatalog.BuiltInFileNamespaceByFileName.TryGetValue(fileName, out var builtInNamespace))
         {
             return builtInNamespace;
         }

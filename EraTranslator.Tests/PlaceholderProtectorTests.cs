@@ -132,4 +132,16 @@ public sealed class PlaceholderProtectorTests
         Assert.Equal("__PH0__……그런 얼굴 하지 마.__PH1__도와달라고 할 생각은 없어.__PH2__", normalized);
         Assert.True(protector.HasAllTokens(normalized, placeholders, out _));
     }
+
+    [Fact]
+    public void Protect_PreservesHtmlEntities()
+    {
+        var protector = new PlaceholderProtector();
+        var original = "A&amp;B &#123; &#xABCD; 설명";
+
+        var protectedText = protector.Protect(original);
+
+        Assert.Equal("A__PH0__B __PH1__ __PH2__ 설명", protectedText.Text);
+        Assert.Equal(["&amp;", "&#123;", "&#xABCD;"], protectedText.Placeholders);
+    }
 }

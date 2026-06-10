@@ -116,8 +116,9 @@ public sealed partial class PlaceholderProtector
             PercentPlaceholderPattern(),
             BracePlaceholderPattern(),
             AnglePlaceholderPattern(),
+            ErbSyntaxCatalog.HtmlEntityPattern(),
             ErbIndexedFunctionReferencePattern(),
-            ErbSymbolReferencePattern(),
+            ErbSyntaxCatalog.CreateSymbolReferencePattern(SymbolNamespaceRegistry.Default),
             ChoiceLabelPattern(),
         };
         if (_fullWidthSpecialCharacterPattern is not null)
@@ -181,9 +182,6 @@ public sealed partial class PlaceholderProtector
 
     [GeneratedRegex(@"(?<![\p{L}\p{N}_])[\p{L}_][\p{L}\p{N}_]*:\((?:[^()\r\n]|\([^()\r\n]*\))*\)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex ErbIndexedFunctionReferencePattern();
-
-    [GeneratedRegex(@"(?<![\p{L}\p{N}_])(?:CALLNAME|CFLAG|TFLAG|FLAG|CSTR|STR|ITEM|ITEMPRICE|ITEMSALES|BASE|MAXBASE|DOWNBASE|ABL|CUP|PALAM|CDOWN|EXP|MARK|TALENT|SOURCE|JUEL|TEQUIP|NOWEX|EX|TCVAR|SAVESTR):(?:\{[^{}\r\n]+\}|[A-Za-z_][A-Za-z0-9_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
-    private static partial Regex ErbSymbolReferencePattern();
 
     [GeneratedRegex(@"\[\s*\d+\s*\]", RegexOptions.Compiled)]
     private static partial Regex ChoiceLabelPattern();

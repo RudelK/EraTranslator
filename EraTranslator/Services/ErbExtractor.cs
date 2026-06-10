@@ -4,29 +4,6 @@ namespace EraTranslator.Services;
 
 public sealed partial class ErbExtractor
 {
-    private static readonly string[] ReservedScriptVariables = ["LOCAL", "LOCALS", "ARG", "ARGS", "RESULT", "RESULTS"];
-    // These arguments carry code/data syntax. CSV key-list entries are still rewritten
-    // later through ErbReferenceExtractor symbol references, not through free text MT.
-    private static readonly string[] ProtectedCodeArgumentFunctionNames =
-    [
-        "GETCONFIG",
-        "VARSIZE",
-        "LOADTEXT",
-        "SAVETEXT",
-        "CALC_CHARA_SINGLE_DATA",
-        "CALC_CHARA_SINGLE_DATA_RULED",
-        "CALC_CHARA_MULTIPLE_DATA",
-        "CALC_CHARA_MULTIPLE_DATA_BASE",
-        "CALC_CHARA_RANGED_DATA",
-        "GET_NONEXISTABLE_CHARA_NO_DEFAULTABLE_SINGLE_DATA",
-        "GET_NONEXISTABLE_VALUES_BYNAME",
-        "GET_NONEXISTABLE_TALENT_BYNAME",
-        "GET_NONEXISTABLE_ABL_BYNAME",
-        "GET_NONEXISTABLE_CFLAG_BYNAME",
-        "GET_NONEXISTABLE_EXP_BYNAME",
-        "GET_NONEXISTABLE_CSTR_BYNAME",
-    ];
-    private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
     private readonly SymbolNamespaceRegistry _namespaceRegistry;
     private readonly Regex _scriptSyntaxTokenPattern;
     private readonly ErbCodeFunctionRegistry _functionRegistry;
@@ -53,7 +30,7 @@ public sealed partial class ErbExtractor
         ErbDimsLookupRegistry dimsLookupRegistry)
     {
         _namespaceRegistry = namespaceRegistry;
-        _scriptSyntaxTokenPattern = BuildScriptSyntaxTokenPattern(namespaceRegistry);
+        _scriptSyntaxTokenPattern = ErbSyntaxCatalog.CreateScriptSyntaxTokenPattern(namespaceRegistry);
         _functionRegistry = functionRegistry;
         _dimsLookupRegistry = dimsLookupRegistry;
     }
@@ -77,6 +54,24 @@ public sealed partial class ErbExtractor
         {
             var line = lines[lineIndex];
             var normalizedLine = line.TrimEnd('\r');
+            var logicalLineNumber = lineIndex + 1;
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(normalizedLine, out var specialCommentCodeLine))
+            {
+                normalizedLine = specialCommentCodeLine;
+            }
+
+            var logicalLineLength = line.Length + 1;
+            while (ErbSyntaxCatalog.HasOpenBraceContinuation(normalizedLine) && lineIndex + 1 < lines.Length)
+            {
+                lineIndex++;
+                var continuationLine = lines[lineIndex];
+                var continuationNormalizedLine = continuationLine.TrimEnd('\r');
+                continuationNormalizedLine = ErbSyntaxCatalog.NormalizeContinuationLine(continuationNormalizedLine);
+
+                normalizedLine += "\n" + continuationNormalizedLine;
+                logicalLineLength += continuationLine.Length + 1;
+            }
+
             var trimmed = normalizedLine.TrimStart();
             if (TryReadFunctionName(trimmed, out var functionName))
             {
@@ -85,7 +80,7 @@ public sealed partial class ErbExtractor
 
             if (trimmed.StartsWith(';'))
             {
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -104,7 +99,7 @@ public sealed partial class ErbExtractor
                     directiveContinuationSplitLookupArray = null;
                 }
 
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -139,11 +134,11 @@ public sealed partial class ErbExtractor
                         directiveContinuationSplitLookupArray = null;
                     }
 
-                    absoluteOffset += line.Length + 1;
+                    absoluteOffset += logicalLineLength;
                     continue;
                 }
 
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -152,19 +147,19 @@ public sealed partial class ErbExtractor
                 if (EndDataPattern().IsMatch(trimmed))
                 {
                     insideDataBlock = false;
-                    absoluteOffset += line.Length + 1;
+                    absoluteOffset += logicalLineLength;
                     continue;
                 }
 
                 if (DataListBoundaryPattern().IsMatch(trimmed))
                 {
-                    absoluteOffset += line.Length + 1;
+                    absoluteOffset += logicalLineLength;
                     continue;
                 }
 
                 if (TryExtractDataLine(normalizedLine))
                 {
-                    absoluteOffset += line.Length + 1;
+                    absoluteOffset += logicalLineLength;
                     continue;
                 }
             }
@@ -172,7 +167,7 @@ public sealed partial class ErbExtractor
             if (PrintDataStartPattern().IsMatch(trimmed))
             {
                 insideDataBlock = true;
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -262,7 +257,7 @@ public sealed partial class ErbExtractor
                 selectCaseCsvNameNamespaces.Pop();
             }
 
-            absoluteOffset += line.Length + 1;
+            absoluteOffset += logicalLineLength;
 
             void ExtractDirectiveStrings(
                 string sourceLine,
@@ -571,7 +566,7 @@ public sealed partial class ErbExtractor
                     SegmentType = type,
                     AbsoluteStart = absoluteStart,
                     Length = value.Length,
-                    LineNumber = lineIndex + 1,
+                    LineNumber = logicalLineNumber,
                     OriginalText = value,
                     SourceKey = isReferenceBearingKey ? $"{symbolNamespace}:{originalSymbolKey}" : null,
                     SymbolNamespace = symbolNamespace,
@@ -598,13 +593,12 @@ public sealed partial class ErbExtractor
                     return;
                 }
 
-                tailValue = StripInlineComment(tailValue);
-                if (string.IsNullOrWhiteSpace(tailValue))
+                var trimmedTail = tailValue.Trim();
+                if (trimmedTail.StartsWith(';'))
                 {
                     return;
                 }
 
-                var trimmedTail = tailValue.Trim();
                 if (LooksLikeNaturalPrintTailText(trimmedTail))
                 {
                     var trimOffset = tailValue.IndexOf(trimmedTail, StringComparison.Ordinal);
@@ -1740,29 +1734,13 @@ public sealed partial class ErbExtractor
         return sanitized.Length == 0;
     }
 
-    private static Regex BuildScriptSyntaxTokenPattern(SymbolNamespaceRegistry namespaceRegistry)
-    {
-        var namespacePattern = BuildNamespaceAlternation(namespaceRegistry);
-        var headPattern = string.IsNullOrWhiteSpace(namespacePattern)
-            ? string.Join("|", ReservedScriptVariables)
-            : $"{namespacePattern}|{string.Join("|", ReservedScriptVariables)}";
-        var pattern =
-            $@"(%[^%\r\n]+%|\{{[^{{}}\r\n]+\}}|<[^\r\n<>]+>|(?<![\p{{L}}\p{{N}}_])(?:{headPattern}):(?:\{{[^{{}}\r\n]+\}}|[\p{{L}}_][\p{{L}}\p{{N}}_]*:[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+|[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)|(?<![\p{{L}}\p{{N}}_])[\p{{L}}_][\p{{L}}\p{{N}}_]*\s*\([^()\r\n]*\)|(?<![\p{{L}}\p{{N}}_])[\p{{L}}_][\p{{L}}\p{{N}}_]*(?::[^\s,\)\(\]\[\+\-\*\/<>=!&|%""']+)+)";
-        return new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-    }
-
-    private static string BuildNamespaceAlternation(SymbolNamespaceRegistry namespaceRegistry)
-    {
-        return string.Join("|", namespaceRegistry.OrderedNamespaces.Select(Regex.Escape));
-    }
-
     private bool IsQuotedStringProtectedCodeArgument(string sourceLine, int quoteStart, int quoteLength)
     {
         return IsRangeInsidePercentExpression(sourceLine, quoteStart, quoteLength)
             || _dimsLookupRegistry.IsLookupFunctionArgument(sourceLine, quoteStart, quoteLength)
-            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, ProtectedCodeArgumentFunctionNames)
-            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, PaletteLookupFunctionNames)
-            || IsRangeInsideCommandArgument(sourceLine, quoteStart, quoteLength, ["LOADTEXT", "SAVETEXT"])
+            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, ErbSyntaxCatalog.ProtectedCodeArgumentFunctionNames)
+            || IsRangeInsideFunctionArgument(sourceLine, quoteStart, quoteLength, ErbSyntaxCatalog.PaletteLookupFunctionNames)
+            || IsRangeInsideCommandArgument(sourceLine, quoteStart, quoteLength, ErbSyntaxCatalog.ProtectedCodeArgumentCommandNames)
             || IsQuotedComparisonLiteral(sourceLine, quoteStart, quoteLength);
     }
 
@@ -1872,7 +1850,7 @@ public sealed partial class ErbExtractor
 
     private static bool IsPaletteLookupFunction(string functionName)
     {
-        return PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
+        return ErbSyntaxCatalog.PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsRangeInsidePercentExpression(string value, int start, int length)
@@ -2105,7 +2083,7 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"@""(?<content><.*>)""(?=\s*(?:,|\+|$))", RegexOptions.Compiled)]
     private static partial Regex RawHtmlStringPattern();
 
-    [GeneratedRegex(@"^\s*PRINT[A-Z_]*\s+(?<tail>.+)$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"^\s*(?:PRINT[A-Z_]*|DRAWLINEFORM|CUSTOMDRAWLINE|REUSELASTLINE|THROW(?:FORM)?)\s+(?<tail>.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex PrintCommandPattern();
 
     [GeneratedRegex(@"\\@(?<inner>.*?)\\@", RegexOptions.Compiled)]
@@ -2135,7 +2113,7 @@ public sealed partial class ErbExtractor
     [GeneratedRegex(@"<[/!\p{L}A-Za-z][^>]*>", RegexOptions.Compiled)]
     private static partial Regex HtmlTagPattern();
 
-    [GeneratedRegex(@"^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*(?::(?:\{[^{}\r\n]+\}|[^\s=+\-*/<>!&|,()""']+))*)\s*=\s*(?<tail>.+?)\s*$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(?:(?:VARI|VARS)\s+)?(?<var>[\p{L}_][\p{L}\p{N}_]*(?::(?:\{[^{}\r\n]+\}|[^\s=+\-*/<>!&|,()""']+))*)\s*(?:'=|=)\s*(?<tail>.+?)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AssignmentPattern();
 
     [GeneratedRegex(@"[(){}\[\]=<>!&|+\-*/%:,\\@#?]", RegexOptions.Compiled)]
@@ -2153,7 +2131,7 @@ public sealed partial class ErbExtractor
     [GeneratedRegex("""^\s*SELECTCASE\s+(?<namespace>[\p{L}_][\p{L}\p{N}_]*)NAME\s*:""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SelectCaseCsvNamePattern();
 
-    [GeneratedRegex(@"^\s*PRINT_IMG\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*PRINT_(?:IMG|RECT|SPACE)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex PrintImageCommandPattern();
 
     [GeneratedRegex(@"キャラ検索\s*\(\s*""(?<name>(?:[^""]|"""")*)""\s*\)", RegexOptions.Compiled)]

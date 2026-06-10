@@ -338,6 +338,7 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         viewModel.GameDirectory = gameDirectory;
         viewModel.EnableBundledDictionaryFirstPass = false;
+        viewModel.EnableBundledDictionaryGlossaryHints = false;
         viewModel.EnableKanaTransliterationFallback = false;
         viewModel.EnableKanjiReadingFallback = false;
         recordingStore.ResetCounts();
@@ -352,8 +353,8 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal(["ERB/Test.ERB:0"], provider.RequestHistory[3]);
         Assert.Empty(provider.GlossaryHistory[0]);
         Assert.Equal(["快楽"], provider.GlossaryHistory[1].Select(static hint => hint.Source).ToList());
-        Assert.Equal(["快楽値", "快楽"], provider.GlossaryHistory[2].Select(static hint => hint.Source).ToList());
-        Assert.Equal(["快楽値ゲージ", "快楽値", "快楽"], provider.GlossaryHistory[3].Select(static hint => hint.Source).ToList());
+        Assert.Equal(["快楽"], provider.GlossaryHistory[2].Select(static hint => hint.Source).ToList());
+        Assert.Equal(["快楽値ゲージ"], provider.GlossaryHistory[3].Select(static hint => hint.Source).ToList());
         Assert.Equal(4, recordingStore.UpsertItemsCallCount);
         Assert.Equal(new[] { 1, 1, 1, 1 }, recordingStore.UpsertBatchSizes);
         Assert.Equal(5, recordingStore.SnapshotSaveCount);

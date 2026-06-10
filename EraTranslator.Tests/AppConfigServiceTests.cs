@@ -106,6 +106,15 @@ public sealed class AppConfigServiceTests : IDisposable
             EnableDictionaryHitLogging = true,
             EnableNaverJapaneseDictionaryLookup = true,
             ExcludeNonSourceText = true,
+            EnableGlossaryHints = false,
+            GlossaryMaxHintsPerBatch = 4,
+            GlossaryCharacterBudget = 240,
+            GlossaryMinSourceLength = 3,
+            EnableBundledDictionaryGlossaryHints = false,
+            BundledDictionaryGlossaryMaxHintsPerBatch = 2,
+            BundledDictionaryGlossaryCharacterBudget = 80,
+            BundledDictionaryGlossaryMinTermLength = 3,
+            BundledDictionaryGlossaryMaxTermLength = 8,
             RefreshGridDuringTranslatedTextEdit = true,
             ProtectedFullWidthCharacters = "（）",
             SystemPromptTemplate = "system",
@@ -124,8 +133,8 @@ public sealed class AppConfigServiceTests : IDisposable
         var actual = service.Load();
         var configText = File.ReadAllText(service.ConfigPath);
 
-        Assert.Equal(Path.Combine(_rootPath, "EraTranslator.config.json"), service.ConfigPath);
-        Assert.Equal(Path.Combine(_rootPath, "EraTranslator.secrets.dat"), service.SecretPath);
+        Assert.Equal(Path.Combine(_rootPath, "UserSettings", "EraTranslator.config.json"), service.ConfigPath);
+        Assert.Equal(Path.Combine(_rootPath, "UserSettings", "EraTranslator.secrets.dat"), service.SecretPath);
         Assert.Equal(expected.GameDirectory, actual.GameDirectory);
         Assert.Equal(expected.OutputDirectory, actual.OutputDirectory);
         Assert.Equal(expected.SaveMode, actual.SaveMode);
@@ -158,6 +167,15 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.Equal(expected.EnableDictionaryHitLogging, actual.EnableDictionaryHitLogging);
         Assert.Equal(expected.EnableNaverJapaneseDictionaryLookup, actual.EnableNaverJapaneseDictionaryLookup);
         Assert.Equal(expected.ExcludeNonSourceText, actual.ExcludeNonSourceText);
+        Assert.Equal(expected.EnableGlossaryHints, actual.EnableGlossaryHints);
+        Assert.Equal(expected.GlossaryMaxHintsPerBatch, actual.GlossaryMaxHintsPerBatch);
+        Assert.Equal(expected.GlossaryCharacterBudget, actual.GlossaryCharacterBudget);
+        Assert.Equal(expected.GlossaryMinSourceLength, actual.GlossaryMinSourceLength);
+        Assert.Equal(expected.EnableBundledDictionaryGlossaryHints, actual.EnableBundledDictionaryGlossaryHints);
+        Assert.Equal(expected.BundledDictionaryGlossaryMaxHintsPerBatch, actual.BundledDictionaryGlossaryMaxHintsPerBatch);
+        Assert.Equal(expected.BundledDictionaryGlossaryCharacterBudget, actual.BundledDictionaryGlossaryCharacterBudget);
+        Assert.Equal(expected.BundledDictionaryGlossaryMinTermLength, actual.BundledDictionaryGlossaryMinTermLength);
+        Assert.Equal(expected.BundledDictionaryGlossaryMaxTermLength, actual.BundledDictionaryGlossaryMaxTermLength);
         Assert.Equal(expected.RefreshGridDuringTranslatedTextEdit, actual.RefreshGridDuringTranslatedTextEdit);
         Assert.Equal(expected.ProtectedFullWidthCharacters, actual.ProtectedFullWidthCharacters);
         Assert.Equal(expected.SystemPromptTemplate, actual.SystemPromptTemplate);
@@ -231,5 +249,51 @@ public sealed class AppConfigServiceTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(first.ClientId));
         Assert.Equal(first.ClientId, second.ClientId);
         Assert.Contains(first.ClientId, File.ReadAllText(service.ConfigPath), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_MovesLegacyBaseDirectoryConfigIntoUserSettingsFolder()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+        File.WriteAllText(
+            service.GetLegacyBaseConfigPath(),
+            """
+            {
+              "GameDirectory": "D:\\Games\\Legacy",
+              "ClientId": "legacy-client"
+            }
+            """);
+
+        var actual = service.Load();
+
+        Assert.Equal(@"D:\Games\Legacy", actual.GameDirectory);
+        Assert.Equal("legacy-client", actual.ClientId);
+        Assert.True(File.Exists(service.ConfigPath));
+        Assert.False(File.Exists(service.GetLegacyBaseConfigPath()));
+    }
+
+    [Fact]
+    public void Load_MovesLegacyAppDataConfigIntoUserSettingsFolder()
+    {
+        var programPath = Path.Combine(_rootPath, "Program");
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var service = new AppConfigService(programPath, appDataPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.GetLegacyAppDataConfigPath())!);
+        File.WriteAllText(
+            service.GetLegacyAppDataConfigPath(),
+            """
+            {
+              "OutputDirectory": "D:\\Games\\LegacyOut",
+              "ClientId": "appdata-client"
+            }
+            """);
+
+        var actual = service.Load();
+
+        Assert.Equal(@"D:\Games\LegacyOut", actual.OutputDirectory);
+        Assert.Equal("appdata-client", actual.ClientId);
+        Assert.True(File.Exists(service.ConfigPath));
+        Assert.False(File.Exists(service.GetLegacyAppDataConfigPath()));
     }
 }

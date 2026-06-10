@@ -34,10 +34,28 @@ public sealed partial class ErbReferenceExtractor
         {
             var line = lines[lineIndex];
             var normalizedLine = line.TrimEnd('\r');
+            var logicalLineNumber = lineIndex + 1;
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(normalizedLine, out var specialCommentCodeLine))
+            {
+                normalizedLine = specialCommentCodeLine;
+            }
+
+            var logicalLineLength = line.Length + 1;
+            while (ErbSyntaxCatalog.HasOpenBraceContinuation(normalizedLine) && lineIndex + 1 < lines.Length)
+            {
+                lineIndex++;
+                var continuationLine = lines[lineIndex];
+                var continuationNormalizedLine = continuationLine.TrimEnd('\r');
+                continuationNormalizedLine = ErbSyntaxCatalog.NormalizeContinuationLine(continuationNormalizedLine);
+
+                normalizedLine += "\n" + continuationNormalizedLine;
+                logicalLineLength += continuationLine.Length + 1;
+            }
+
             var trimmed = normalizedLine.TrimStart();
             if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
             {
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -48,10 +66,10 @@ public sealed partial class ErbReferenceExtractor
                     assignmentMatch.Groups["var"].Value,
                     assignmentMatch.Groups["expr"].Value,
                     absoluteOffset + assignmentMatch.Groups["expr"].Index,
-                    lineIndex + 1));
+                    logicalLineNumber));
             }
 
-            absoluteOffset += line.Length + 1;
+            absoluteOffset += logicalLineLength;
         }
 
         var resolvedVariables = ResolveAssignments(assignments);
@@ -139,6 +157,24 @@ public sealed partial class ErbReferenceExtractor
         {
             var line = lines[lineIndex];
             var normalizedLine = line.TrimEnd('\r');
+            var logicalLineNumber = lineIndex + 1;
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(normalizedLine, out var specialCommentCodeLine))
+            {
+                normalizedLine = specialCommentCodeLine;
+            }
+
+            var logicalLineLength = line.Length + 1;
+            while (ErbSyntaxCatalog.HasOpenBraceContinuation(normalizedLine) && lineIndex + 1 < lines.Count)
+            {
+                lineIndex++;
+                var continuationLine = lines[lineIndex];
+                var continuationNormalizedLine = continuationLine.TrimEnd('\r');
+                continuationNormalizedLine = ErbSyntaxCatalog.NormalizeContinuationLine(continuationNormalizedLine);
+
+                normalizedLine += "\n" + continuationNormalizedLine;
+                logicalLineLength += continuationLine.Length + 1;
+            }
+
             var trimmed = normalizedLine.TrimStart();
             if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
             {
@@ -150,12 +186,12 @@ public sealed partial class ErbReferenceExtractor
                         documentId,
                         normalizedLine,
                         absoluteOffset,
-                        lineIndex + 1,
+                        logicalLineNumber,
                         splitLookupArray,
                         results);
                 }
 
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -186,7 +222,7 @@ public sealed partial class ErbReferenceExtractor
                     selectCaseLookupNamespaces.Peek(),
                     normalizedLine,
                     absoluteOffset,
-                    lineIndex + 1,
+                    logicalLineNumber,
                     results);
             }
 
@@ -199,15 +235,15 @@ public sealed partial class ErbReferenceExtractor
                     selectCaseCsvNameNamespaces.Peek(),
                     normalizedLine,
                     absoluteOffset,
-                    lineIndex + 1,
+                    logicalLineNumber,
                     results);
             }
 
-            AddGetNumReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, resolvedVariables, results);
-            AddKeyListFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
-            AddNamespaceKeyArgumentReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
-            AddDimsLookupFunctionReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
-            AddDimsArrayComparisonReferences(documentId, normalizedLine, absoluteOffset, lineIndex + 1, results);
+            AddGetNumReferences(documentId, normalizedLine, absoluteOffset, logicalLineNumber, resolvedVariables, results);
+            AddKeyListFunctionReferences(documentId, normalizedLine, absoluteOffset, logicalLineNumber, results);
+            AddNamespaceKeyArgumentReferences(documentId, normalizedLine, absoluteOffset, logicalLineNumber, results);
+            AddDimsLookupFunctionReferences(documentId, normalizedLine, absoluteOffset, logicalLineNumber, results);
+            AddDimsArrayComparisonReferences(documentId, normalizedLine, absoluteOffset, logicalLineNumber, results);
 
             for (var index = 0; index < normalizedLine.Length; index++)
             {
@@ -238,7 +274,7 @@ public sealed partial class ErbReferenceExtractor
                         components,
                         resolvedVariables,
                         absoluteOffset,
-                        lineIndex + 1,
+                        logicalLineNumber,
                         results);
 
                     // Keep scanning inside expression components like ABL:ARG:(TCVAR:ARG:部位),
@@ -260,7 +296,7 @@ public sealed partial class ErbReferenceExtractor
                 selectCaseCsvNameNamespaces.Pop();
             }
 
-            absoluteOffset += line.Length + 1;
+            absoluteOffset += logicalLineLength;
         }
 
         return results;
@@ -736,12 +772,17 @@ public sealed partial class ErbReferenceExtractor
 
             var cursor = searchIndex;
             SkipWhitespace(line, ref cursor);
-            if (cursor >= line.Length || line[cursor] != '(')
+            if (cursor >= line.Length)
             {
                 continue;
             }
 
-            cursor++;
+            var isFunctionForm = line[cursor] == '(';
+            if (isFunctionForm)
+            {
+                cursor++;
+            }
+
             SkipWhitespace(line, ref cursor);
             var namespaceStart = cursor;
             while (cursor < line.Length && !char.IsWhiteSpace(line[cursor]) && line[cursor] is not ',' and not ')')
@@ -749,7 +790,7 @@ public sealed partial class ErbReferenceExtractor
                 cursor++;
             }
 
-            if (!_namespaceRegistry.TryResolveNamespace(line[namespaceStart..cursor], out var symbolNamespace))
+            if (!TryResolveGetNumNamespaceToken(line[namespaceStart..cursor], out var symbolNamespace))
             {
                 continue;
             }
@@ -819,6 +860,24 @@ public sealed partial class ErbReferenceExtractor
                 lineNumber,
                 results);
         }
+    }
+
+    private bool TryResolveGetNumNamespaceToken(string token, out string symbolNamespace)
+    {
+        if (_namespaceRegistry.TryResolveNamespace(token, out symbolNamespace))
+        {
+            return true;
+        }
+
+        var atIndex = token.LastIndexOf('@');
+        if (atIndex <= 0 || atIndex == token.Length - 1)
+        {
+            symbolNamespace = string.Empty;
+            return false;
+        }
+
+        return token[(atIndex + 1)..].All(char.IsDigit)
+            && _namespaceRegistry.TryResolveNamespace(token[..atIndex], out symbolNamespace);
     }
 
     private static bool TryReadGetNumKeyArgument(
@@ -1778,7 +1837,7 @@ Done:
         return match.Success ? match.Value : string.Empty;
     }
 
-    [GeneratedRegex("""^\s*(?<var>[\p{L}_][\p{L}\p{N}_]*)\s*=\s*(?<expr>.+?)\s*$""", RegexOptions.Compiled)]
+    [GeneratedRegex("""^\s*(?:(?:VARI|VARS)\s+)?(?<var>[\p{L}_][\p{L}\p{N}_]*)\s*(?:'=|=)\s*(?<expr>.+?)\s*$""", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AssignmentPattern();
 
     [GeneratedRegex("""^@?"(?<value>(?:[^"\\]|\\.)*)"$""", RegexOptions.Compiled)]

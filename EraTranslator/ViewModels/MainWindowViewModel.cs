@@ -30,8 +30,10 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private readonly TeamProjectStateService _teamProjectStateService;
     private readonly TeamScanManifestBuilder _teamScanManifestBuilder;
     private readonly PhaseScopedGlossaryBuilder _phaseScopedGlossaryBuilder = new();
+    private readonly BundledJapaneseLexiconService _bundledJapaneseLexiconService = new();
     private readonly EzTransXpInstallationService _ezTransXpInstallationService;
     private readonly FileResultStateLogger _resultStateLogger = new();
+    private readonly FilePerformanceDebugLogger _performanceDebugLogger = new();
     private readonly Dictionary<TranslationProviderType, string> _providerApiKeys = [];
     private ScanSession? _session;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -89,12 +91,22 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _enableRequestResponseLogging;
     private bool _enableResultStateLogging = false;
     private bool _enableDictionaryHitLogging = false;
+    private bool _enablePerformanceDebugLogging = false;
     private bool _excludeNonSourceText = true;
     private bool _enableBundledDictionaryFirstPass = true;
     private bool _enableKanaTransliterationFallback = false;
     private bool _enableNaverJapaneseDictionaryLookup = false;
     private bool _enableKanjiReadingFallback = false;
     private int _dictionaryFirstMaxTermLength = 6;
+    private bool _enableGlossaryHints = true;
+    private int _glossaryMaxHintsPerBatch = 8;
+    private int _glossaryCharacterBudget = 360;
+    private int _glossaryMinSourceLength = 2;
+    private bool _enableBundledDictionaryGlossaryHints = true;
+    private int _bundledDictionaryGlossaryMaxHintsPerBatch = 4;
+    private int _bundledDictionaryGlossaryCharacterBudget = 160;
+    private int _bundledDictionaryGlossaryMinTermLength = 2;
+    private int _bundledDictionaryGlossaryMaxTermLength = 12;
     private string _systemPromptTemplate = TranslationPromptTemplates.DefaultSystemPrompt;
     private string _retryPromptTemplate = TranslationPromptTemplates.DefaultRetryPrompt;
     private string _protectedFullWidthCharacters = PlaceholderProtector.DefaultFullWidthSpecialCharacters;
@@ -112,6 +124,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
     private bool _buildingVisibleItemSnapshot;
     private bool _itemsViewRefreshQueued;
     private bool _handlingManualStatusOverride;
+    private readonly Dictionary<TranslationPhaseKind, CachedGlossaryPhase> _glossaryPhaseCache = [];
+    private long _glossaryCacheGeneration;
     private bool _startupProjectContextRestored;
     private bool _isStartupLoading;
     private static readonly SaveMode EffectiveSaveMode = SaveMode.ExportCopy;
@@ -279,6 +293,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         StopCurrentOperation();
         FlushPendingConfigSave();
         _translationCoordinator.Dispose();
+        _bundledJapaneseLexiconService.Dispose();
     }
 
     public BulkObservableCollection<ExtractedTextItem> Items { get; } = [];
@@ -686,6 +701,18 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         }
     }
 
+    public bool EnablePerformanceDebugLogging
+    {
+        get => _enablePerformanceDebugLogging;
+        set
+        {
+            if (SetProperty(ref _enablePerformanceDebugLogging, value))
+            {
+                PersistConfig();
+            }
+        }
+    }
+
     public bool EnableBundledDictionaryFirstPass
     {
         get => _enableBundledDictionaryFirstPass;
@@ -746,6 +773,123 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             if (SetProperty(ref _dictionaryFirstMaxTermLength, Math.Clamp(value, 1, 12)))
             {
                 RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableGlossaryHints
+    {
+        get => _enableGlossaryHints;
+        set
+        {
+            if (SetProperty(ref _enableGlossaryHints, value))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int GlossaryMaxHintsPerBatch
+    {
+        get => _glossaryMaxHintsPerBatch;
+        set
+        {
+            if (SetProperty(ref _glossaryMaxHintsPerBatch, Math.Clamp(value, 0, 50)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int GlossaryCharacterBudget
+    {
+        get => _glossaryCharacterBudget;
+        set
+        {
+            if (SetProperty(ref _glossaryCharacterBudget, Math.Clamp(value, 0, 4000)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int GlossaryMinSourceLength
+    {
+        get => _glossaryMinSourceLength;
+        set
+        {
+            if (SetProperty(ref _glossaryMinSourceLength, Math.Clamp(value, 1, 20)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public bool EnableBundledDictionaryGlossaryHints
+    {
+        get => _enableBundledDictionaryGlossaryHints;
+        set
+        {
+            if (SetProperty(ref _enableBundledDictionaryGlossaryHints, value))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int BundledDictionaryGlossaryMaxHintsPerBatch
+    {
+        get => _bundledDictionaryGlossaryMaxHintsPerBatch;
+        set
+        {
+            if (SetProperty(ref _bundledDictionaryGlossaryMaxHintsPerBatch, Math.Clamp(value, 0, 50)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int BundledDictionaryGlossaryCharacterBudget
+    {
+        get => _bundledDictionaryGlossaryCharacterBudget;
+        set
+        {
+            if (SetProperty(ref _bundledDictionaryGlossaryCharacterBudget, Math.Clamp(value, 0, 4000)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int BundledDictionaryGlossaryMinTermLength
+    {
+        get => _bundledDictionaryGlossaryMinTermLength;
+        set
+        {
+            if (SetProperty(ref _bundledDictionaryGlossaryMinTermLength, Math.Clamp(value, 1, 20)))
+            {
+                InvalidateGlossaryCache();
+                PersistConfig();
+            }
+        }
+    }
+
+    public int BundledDictionaryGlossaryMaxTermLength
+    {
+        get => _bundledDictionaryGlossaryMaxTermLength;
+        set
+        {
+            if (SetProperty(ref _bundledDictionaryGlossaryMaxTermLength, Math.Clamp(value, BundledDictionaryGlossaryMinTermLength, 40)))
+            {
+                InvalidateGlossaryCache();
                 PersistConfig();
             }
         }
@@ -1685,6 +1829,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     public async Task<bool> TranslatePendingAsync()
     {
+        CommitSelectedItemTranslatedTextEdit();
+
         if (_session is null)
         {
             StatusText = "먼저 텍스트를 추출하세요.";
@@ -1703,9 +1849,39 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             return false;
         }
 
+        var scopeStopwatch = Stopwatch.StartNew();
         var translationScope = GetCurrentTranslationScope();
+        scopeStopwatch.Stop();
+        LogPerformanceDebug(
+            "TRANSLATE_SCOPE",
+            "현재 필터 기준 번역 범위를 계산했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(scopeStopwatch.Elapsed),
+                ["scope_count"] = translationScope.Count.ToString(CultureInfo.InvariantCulture),
+                ["total_items"] = Items.Count.ToString(CultureInfo.InvariantCulture),
+                ["warnings_only"] = WarningsOnly.ToString(CultureInfo.InvariantCulture),
+                ["status_filter"] = SelectedStatusFilter,
+                ["file_type_filter"] = SelectedFileTypeFilter,
+                ["search_field_filter"] = SelectedSearchFieldFilter,
+                ["filter_text_length"] = FilterText.Length.ToString(CultureInfo.InvariantCulture),
+            });
+
+        var phasePlanStopwatch = Stopwatch.StartNew();
         var phasePlans = BuildTranslationPhasePlans(translationScope);
+        phasePlanStopwatch.Stop();
         var pendingCount = phasePlans.Sum(plan => plan.PendingCount);
+        LogPerformanceDebug(
+            "TRANSLATE_PHASE_PLAN",
+            "번역 phase plan을 구성했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(phasePlanStopwatch.Elapsed),
+                ["phase_count"] = phasePlans.Count.ToString(CultureInfo.InvariantCulture),
+                ["pending_count"] = pendingCount.ToString(CultureInfo.InvariantCulture),
+                ["phase_summary"] = string.Join(", ", phasePlans.Select(plan => $"{plan.Kind}:{plan.PendingCount}/{plan.Items.Count}")),
+            });
+
         if (pendingCount == 0)
         {
             StatusText = "미번역 또는 번역 실패 항목이 없습니다.";
@@ -1731,11 +1907,42 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 _lastProgressSaveAtUtc = DateTimeOffset.MinValue;
                 try
                 {
+                    var settingsStopwatch = Stopwatch.StartNew();
+                    var settings = BuildSettings();
+                    settingsStopwatch.Stop();
+                    LogPerformanceDebug(
+                        "TRANSLATE_SETTINGS",
+                        "번역 provider 설정을 구성했습니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["elapsed_ms"] = FormatElapsedMilliseconds(settingsStopwatch.Elapsed),
+                            ["provider"] = settings.ProviderType.ToString(),
+                            ["batch_size"] = settings.BatchSize.ToString(CultureInfo.InvariantCulture),
+                            ["glossary_enabled"] = settings.EnableGlossaryHints.ToString(CultureInfo.InvariantCulture),
+                            ["glossary_max_hints"] = settings.GlossaryMaxHintsPerBatch.ToString(CultureInfo.InvariantCulture),
+                            ["glossary_budget"] = settings.GlossaryCharacterBudget.ToString(CultureInfo.InvariantCulture),
+                            ["dictionary_first"] = settings.EnableBundledDictionaryFirstPass.ToString(CultureInfo.InvariantCulture),
+                        });
+
+                    var dictionaryStopwatch = Stopwatch.StartNew();
+                    var dictionaryEntries = _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary);
+                    dictionaryStopwatch.Stop();
+                    LogPerformanceDebug(
+                        "USER_DICTIONARY_BUILD",
+                        "전역/프로젝트 사용자 사전을 병합했습니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["elapsed_ms"] = FormatElapsedMilliseconds(dictionaryStopwatch.Elapsed),
+                            ["entry_count"] = dictionaryEntries.Count.ToString(CultureInfo.InvariantCulture),
+                            ["global_count"] = _globalUserDictionary.Count.ToString(CultureInfo.InvariantCulture),
+                            ["project_count"] = _projectUserDictionary.Count.ToString(CultureInfo.InvariantCulture),
+                        });
+
                     await TranslatePendingPhasesAsync(
                         phasePlans,
                         pendingCount,
-                        BuildSettings(),
-                        _userDictionaryService.BuildEffectiveDictionary(_globalUserDictionary, _projectUserDictionary),
+                        settings,
+                        dictionaryEntries,
                         progress,
                         cancellationToken);
                 }
@@ -2431,13 +2638,23 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         EnableRequestResponseLogging = settingsViewModel.EnableRequestResponseLogging;
         EnableResultStateLogging = settingsViewModel.EnableResultStateLogging;
         EnableDictionaryHitLogging = settingsViewModel.EnableDictionaryHitLogging;
+        EnablePerformanceDebugLogging = settingsViewModel.EnablePerformanceDebugLogging;
         ExcludeNonSourceText = settingsViewModel.ExcludeNonSourceText;
         EnableBundledDictionaryFirstPass = settingsViewModel.EnableBundledDictionaryFirstPass;
         EnableKanaTransliterationFallback = settingsViewModel.EnableKanaTransliterationFallback;
-        EnableNaverJapaneseDictionaryLookup = settingsViewModel.EnableNaverJapaneseDictionaryLookup;
-        EnableKanjiReadingFallback = settingsViewModel.EnableKanjiReadingFallback;
-        DictionaryFirstMaxTermLength = settingsViewModel.DictionaryFirstMaxTermLength;
-        SystemPromptTemplate = settingsViewModel.SystemPromptTemplate;
+            EnableNaverJapaneseDictionaryLookup = settingsViewModel.EnableNaverJapaneseDictionaryLookup;
+            EnableKanjiReadingFallback = settingsViewModel.EnableKanjiReadingFallback;
+            DictionaryFirstMaxTermLength = settingsViewModel.DictionaryFirstMaxTermLength;
+            EnableGlossaryHints = settingsViewModel.EnableGlossaryHints;
+            GlossaryMaxHintsPerBatch = settingsViewModel.GlossaryMaxHintsPerBatch;
+            GlossaryCharacterBudget = settingsViewModel.GlossaryCharacterBudget;
+            GlossaryMinSourceLength = settingsViewModel.GlossaryMinSourceLength;
+            EnableBundledDictionaryGlossaryHints = settingsViewModel.EnableBundledDictionaryGlossaryHints;
+            BundledDictionaryGlossaryMaxHintsPerBatch = settingsViewModel.BundledDictionaryGlossaryMaxHintsPerBatch;
+            BundledDictionaryGlossaryCharacterBudget = settingsViewModel.BundledDictionaryGlossaryCharacterBudget;
+            BundledDictionaryGlossaryMinTermLength = settingsViewModel.BundledDictionaryGlossaryMinTermLength;
+            BundledDictionaryGlossaryMaxTermLength = settingsViewModel.BundledDictionaryGlossaryMaxTermLength;
+            SystemPromptTemplate = settingsViewModel.SystemPromptTemplate;
         RetryPromptTemplate = settingsViewModel.RetryPromptTemplate;
         PapagoClientId = settingsViewModel.PapagoClientId;
         PapagoClientSecret = settingsViewModel.PapagoClientSecret;
@@ -2480,12 +2697,22 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             DisableThinking = DisableThinking,
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             EnableDictionaryHitLogging = EnableDictionaryHitLogging,
+            EnablePerformanceDebugLogging = EnablePerformanceDebugLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
             EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
             EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
             EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
             EnableKanjiReadingFallback = EnableKanjiReadingFallback,
             DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
+            EnableGlossaryHints = EnableGlossaryHints,
+            GlossaryMaxHintsPerBatch = GlossaryMaxHintsPerBatch,
+            GlossaryCharacterBudget = GlossaryCharacterBudget,
+            GlossaryMinSourceLength = GlossaryMinSourceLength,
+            EnableBundledDictionaryGlossaryHints = EnableBundledDictionaryGlossaryHints,
+            BundledDictionaryGlossaryMaxHintsPerBatch = BundledDictionaryGlossaryMaxHintsPerBatch,
+            BundledDictionaryGlossaryCharacterBudget = BundledDictionaryGlossaryCharacterBudget,
+            BundledDictionaryGlossaryMinTermLength = BundledDictionaryGlossaryMinTermLength,
+            BundledDictionaryGlossaryMaxTermLength = BundledDictionaryGlossaryMaxTermLength,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
             ProtectedFullWidthCharacters = ProtectedFullWidthCharacters,
@@ -2741,12 +2968,22 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             EnableRequestResponseLogging = config.EnableRequestResponseLogging;
             EnableResultStateLogging = config.EnableResultStateLogging;
             EnableDictionaryHitLogging = config.EnableDictionaryHitLogging;
+            EnablePerformanceDebugLogging = config.EnablePerformanceDebugLogging;
             ExcludeNonSourceText = config.ExcludeNonSourceText;
             EnableBundledDictionaryFirstPass = config.EnableBundledDictionaryFirstPass;
             EnableKanaTransliterationFallback = config.EnableKanaTransliterationFallback;
             EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup;
             EnableKanjiReadingFallback = config.EnableKanjiReadingFallback;
             DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength;
+            EnableGlossaryHints = config.EnableGlossaryHints;
+            GlossaryMaxHintsPerBatch = config.GlossaryMaxHintsPerBatch;
+            GlossaryCharacterBudget = config.GlossaryCharacterBudget;
+            GlossaryMinSourceLength = config.GlossaryMinSourceLength;
+            EnableBundledDictionaryGlossaryHints = config.EnableBundledDictionaryGlossaryHints;
+            BundledDictionaryGlossaryMaxHintsPerBatch = config.BundledDictionaryGlossaryMaxHintsPerBatch;
+            BundledDictionaryGlossaryCharacterBudget = config.BundledDictionaryGlossaryCharacterBudget;
+            BundledDictionaryGlossaryMinTermLength = config.BundledDictionaryGlossaryMinTermLength;
+            BundledDictionaryGlossaryMaxTermLength = config.BundledDictionaryGlossaryMaxTermLength;
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit;
             if (!string.IsNullOrWhiteSpace(config.SystemPromptTemplate))
             {
@@ -2815,12 +3052,22 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             EnableRequestResponseLogging = EnableRequestResponseLogging,
             EnableResultStateLogging = EnableResultStateLogging,
             EnableDictionaryHitLogging = EnableDictionaryHitLogging,
+            EnablePerformanceDebugLogging = EnablePerformanceDebugLogging,
             ExcludeNonSourceText = ExcludeNonSourceText,
             EnableBundledDictionaryFirstPass = EnableBundledDictionaryFirstPass,
             EnableKanaTransliterationFallback = EnableKanaTransliterationFallback,
             EnableNaverJapaneseDictionaryLookup = EnableNaverJapaneseDictionaryLookup,
             EnableKanjiReadingFallback = EnableKanjiReadingFallback,
             DictionaryFirstMaxTermLength = DictionaryFirstMaxTermLength,
+            EnableGlossaryHints = EnableGlossaryHints,
+            GlossaryMaxHintsPerBatch = GlossaryMaxHintsPerBatch,
+            GlossaryCharacterBudget = GlossaryCharacterBudget,
+            GlossaryMinSourceLength = GlossaryMinSourceLength,
+            EnableBundledDictionaryGlossaryHints = EnableBundledDictionaryGlossaryHints,
+            BundledDictionaryGlossaryMaxHintsPerBatch = BundledDictionaryGlossaryMaxHintsPerBatch,
+            BundledDictionaryGlossaryCharacterBudget = BundledDictionaryGlossaryCharacterBudget,
+            BundledDictionaryGlossaryMinTermLength = BundledDictionaryGlossaryMinTermLength,
+            BundledDictionaryGlossaryMaxTermLength = BundledDictionaryGlossaryMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = RefreshGridDuringTranslatedTextEdit,
             SystemPromptTemplate = SystemPromptTemplate,
             RetryPromptTemplate = RetryPromptTemplate,
@@ -3067,6 +3314,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             _suppressItemStatePersistence = false;
         }
 
+        InvalidateGlossaryCache();
         AttachItemStateHandlers(Items);
         RefreshSummaryText();
         RefreshItemsView();
@@ -3096,7 +3344,17 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void ItemOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_suppressItemStatePersistence || sender is not ExtractedTextItem item)
+        if (sender is not ExtractedTextItem item)
+        {
+            return;
+        }
+
+        if (IsGlossaryAffectingPropertyChange(e))
+        {
+            InvalidateGlossaryCache();
+        }
+
+        if (_suppressItemStatePersistence)
         {
             return;
         }
@@ -3156,6 +3414,15 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 ["IsSavingResults"] = _isSavingResults.ToString(),
             });
         SaveTranslationProgressItems(groupItems, $"HandleManualStatusEdited:{item.SegmentId}:{item.Status}");
+    }
+
+    private static bool IsGlossaryAffectingPropertyChange(PropertyChangedEventArgs e)
+    {
+        return MatchesPropertyChange(e, nameof(ExtractedTextItem.TranslatedText))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.Status))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.ValidationStatus))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.CanSave))
+            || MatchesPropertyChange(e, nameof(ExtractedTextItem.IsTranslatedSuccessfully));
     }
 
     private void RefreshSummaryText()
@@ -3455,7 +3722,15 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private List<ExtractedTextItem> GetCurrentTranslationScope()
     {
-        return ItemsView.Cast<ExtractedTextItem>().ToList();
+        RebuildVisibleItemSnapshot();
+        if (_visibleItemSnapshot is null)
+        {
+            return Items.ToList();
+        }
+
+        return Items
+            .Where(item => _visibleItemSnapshot.Contains(item.SegmentId))
+            .ToList();
     }
 
     private async Task TranslatePendingPhasesAsync(
@@ -3481,11 +3756,9 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 continue;
             }
 
-            var glossaryHints = _phaseScopedGlossaryBuilder.BuildForPhase(Items, phasePlan.Kind);
             var phaseLabel = GetTranslationPhaseLabel(phasePlan.Kind);
-            CurrentOperationDetail = glossaryHints.Count > 0
-                ? $"{phaseLabel} 단계 번역 준비 중 | glossary {glossaryHints.Count}개"
-                : $"{phaseLabel} 단계 번역 준비 중";
+            CurrentOperationDetail = $"{phaseLabel} 단계 번역 준비 중";
+            var glossaryCandidateProvider = CreateGlossaryCandidateProvider(phasePlan.Kind, settings);
 
             var phaseProgress = new Progress<(double value, string status, string detail)>(tuple =>
             {
@@ -3494,8 +3767,8 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                     : (overallProcessedCount + (tuple.value * phasePlan.PendingCount)) / totalPendingCount;
                 ProgressValue = overallValue;
                 StatusText = tuple.status;
-                var detailPrefix = glossaryHints.Count > 0
-                    ? $"{phaseLabel} | glossary {glossaryHints.Count}개"
+                var detailPrefix = glossaryCandidateProvider is not null
+                    ? $"{phaseLabel} | glossary DB lookup"
                     : phaseLabel;
                 var combinedDetail = string.IsNullOrWhiteSpace(tuple.detail)
                     ? detailPrefix
@@ -3503,19 +3776,158 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 CurrentOperationDetail = BuildTranslationProgressDetail(combinedDetail, overallValue);
             });
 
-                await _translationCoordinator.TranslateAsync(
+            LogPerformanceDebug(
+                "PHASE_COORDINATOR_START",
+                "번역 coordinator phase 실행을 시작합니다.",
+                new Dictionary<string, string>
+                {
+                    ["phase"] = phasePlan.Kind.ToString(),
+                    ["phase_label"] = phaseLabel,
+                    ["item_count"] = phasePlan.Items.Count.ToString(CultureInfo.InvariantCulture),
+                    ["pending_count"] = phasePlan.PendingCount.ToString(CultureInfo.InvariantCulture),
+                    ["total_items_for_propagation"] = Items.Count.ToString(CultureInfo.InvariantCulture),
+                    ["glossary_lookup_enabled"] = (glossaryCandidateProvider is not null).ToString(CultureInfo.InvariantCulture),
+            });
+
+            var phaseChangedItems = new List<ExtractedTextItem>();
+            var coordinatorStopwatch = Stopwatch.StartNew();
+            await _translationCoordinator.TranslateAsync(
                     phasePlan.Items,
                     Items.ToList(),
                     settings,
                     dictionaryEntries,
-                    glossaryHints,
+                    [],
+                    glossaryCandidateProvider,
                     phaseProgress,
-                    changedItems => SaveTranslationProgressItems(changedItems, $"TranslatePendingAsync {phaseLabel} progress callback"),
+                    changedItems =>
+                    {
+                        var changedItemList = changedItems.ToList();
+                        phaseChangedItems.AddRange(changedItemList);
+                        SaveTranslationProgressItems(changedItemList, $"TranslatePendingAsync {phaseLabel} progress callback");
+                    },
                     cancellationToken);
+            coordinatorStopwatch.Stop();
+            LogPerformanceDebug(
+                "PHASE_COORDINATOR_END",
+                "번역 coordinator phase 실행이 끝났습니다.",
+                new Dictionary<string, string>
+                {
+                    ["phase"] = phasePlan.Kind.ToString(),
+                    ["phase_label"] = phaseLabel,
+                    ["elapsed_ms"] = FormatElapsedMilliseconds(coordinatorStopwatch.Elapsed),
+                    ["pending_count"] = phasePlan.PendingCount.ToString(CultureInfo.InvariantCulture),
+                });
 
             overallProcessedCount += phasePlan.PendingCount;
             SaveTranslationProgressSnapshot(force: true, reason: $"TranslatePendingAsync {phaseLabel} completed");
+            RefreshGlossaryCacheForChangedItems(settings, phaseChangedItems);
         }
+    }
+
+    private void RefreshGlossaryCacheForChangedItems(
+        ProviderSettings settings,
+        IReadOnlyList<ExtractedTextItem> changedItems)
+    {
+        if (_session is null
+            || changedItems.Count == 0
+            || !settings.EnableGlossaryHints
+            || settings.GlossaryMaxHintsPerBatch <= 0
+            || settings.GlossaryCharacterBudget <= 0)
+        {
+            return;
+        }
+
+        var distinctChangedItems = changedItems
+            .Where(item => item is not null)
+            .GroupBy(item => item.SegmentId, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToList();
+        if (distinctChangedItems.Count == 0)
+        {
+            return;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        var refreshResult = _phaseScopedGlossaryBuilder.BuildOrRefreshCacheEntries(
+            distinctChangedItems,
+            new Dictionary<string, GlossaryCacheEntry>(StringComparer.Ordinal));
+        stopwatch.Stop();
+        LogPerformanceDebug(
+            "GLOSSARY_CACHE_INCREMENTAL_REFRESH",
+            "phase 변경 item만 DB glossary cache에 반영했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(stopwatch.Elapsed),
+                ["changed_items"] = distinctChangedItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["hit_count"] = refreshResult.HitCount.ToString(CultureInfo.InvariantCulture),
+                ["miss_count"] = refreshResult.MissCount.ToString(CultureInfo.InvariantCulture),
+                ["updated_count"] = refreshResult.UpdatedCount.ToString(CultureInfo.InvariantCulture),
+                ["deleted_count"] = refreshResult.DeletedCount.ToString(CultureInfo.InvariantCulture),
+                ["entry_count"] = refreshResult.Entries.Count.ToString(CultureInfo.InvariantCulture),
+            });
+
+        var projectDataDirectory = GetProjectDataDirectory(_session.GameRoot);
+        if (refreshResult.UpsertEntries.Count > 0)
+        {
+            _projectStatePersistenceService.UpsertGlossaryCacheEntries(projectDataDirectory, refreshResult.UpsertEntries);
+        }
+
+        if (refreshResult.DeleteSegmentIds.Count > 0)
+        {
+            _projectStatePersistenceService.DeleteGlossaryCacheEntries(projectDataDirectory, refreshResult.DeleteSegmentIds);
+        }
+
+        _glossaryCacheGeneration++;
+        _glossaryPhaseCache.Clear();
+    }
+
+    private IGlossaryCandidateProvider? CreateGlossaryCandidateProvider(TranslationPhaseKind phase, ProviderSettings settings)
+    {
+        if (_session is null
+            || !settings.EnableGlossaryHints
+            || settings.GlossaryMaxHintsPerBatch <= 0
+            || settings.GlossaryCharacterBudget <= 0)
+        {
+            LogPerformanceDebug(
+                "PHASE_GLOSSARY_DISABLED",
+                "설정에 따라 phase glossary 생성을 건너뛰었습니다.",
+                new Dictionary<string, string>
+                {
+                    ["phase"] = phase.ToString(),
+                    ["glossary_enabled"] = settings.EnableGlossaryHints.ToString(CultureInfo.InvariantCulture),
+                    ["glossary_max_hints"] = settings.GlossaryMaxHintsPerBatch.ToString(CultureInfo.InvariantCulture),
+                    ["glossary_budget"] = settings.GlossaryCharacterBudget.ToString(CultureInfo.InvariantCulture),
+                    ["bundled_dictionary_glossary_enabled"] = settings.EnableBundledDictionaryGlossaryHints.ToString(CultureInfo.InvariantCulture),
+                });
+            return null;
+        }
+
+        var providers = new List<IGlossaryCandidateProvider>
+        {
+            new DbGlossaryCandidateProvider(
+                _projectStatePersistenceService,
+                _phaseScopedGlossaryBuilder,
+                settings,
+                phase,
+                GetProjectDataDirectory(_session.GameRoot),
+                LogPerformanceDebug),
+        };
+        if (phase != TranslationPhaseKind.CsvReferenceKeys && settings.EnableBundledDictionaryGlossaryHints)
+        {
+            providers.Add(new BundledJapaneseLexiconGlossaryProvider(
+                _bundledJapaneseLexiconService,
+                _phaseScopedGlossaryBuilder,
+                settings,
+                LogPerformanceDebug));
+        }
+
+        return new CompositeGlossaryCandidateProvider(providers);
+    }
+
+    private void InvalidateGlossaryCache()
+    {
+        _glossaryCacheGeneration++;
+        _glossaryPhaseCache.Clear();
     }
 
     private static List<TranslationPhasePlan> BuildTranslationPhasePlans(IReadOnlyList<ExtractedTextItem> translationScope)
@@ -3986,7 +4398,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 return;
             }
 
-            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, refreshAction!);
+            _itemsViewRefreshQueued = false;
         };
 
         if (!dispatcher.CheckAccess())
@@ -4117,6 +4529,21 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         _resultStateLogger.Log(category, message, fields);
     }
 
+    private void LogPerformanceDebug(string category, string message, IReadOnlyDictionary<string, string>? fields = null)
+    {
+        if (!EnablePerformanceDebugLogging)
+        {
+            return;
+        }
+
+        _performanceDebugLogger.Log(category, message, fields);
+    }
+
+    private static string FormatElapsedMilliseconds(TimeSpan elapsed)
+    {
+        return elapsed.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
     private static string ResolveProgressSaveReason(string? reason, string callerName)
     {
         return string.IsNullOrWhiteSpace(reason) ? callerName : reason;
@@ -4142,10 +4569,69 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
+    private sealed class DbGlossaryCandidateProvider(
+        ProjectStatePersistenceService projectStatePersistenceService,
+        PhaseScopedGlossaryBuilder glossaryBuilder,
+        ProviderSettings settings,
+        TranslationPhaseKind phase,
+        string projectDataDirectory,
+        Action<string, string, IReadOnlyDictionary<string, string>?> logPerformanceDebug) : IGlossaryCandidateProvider
+    {
+        public IReadOnlyList<GlossaryHint> LoadCandidates(IReadOnlyList<ExtractedTextItem> batchItems)
+        {
+            if (!settings.EnableGlossaryHints || batchItems.Count == 0)
+            {
+                return [];
+            }
+
+            var originals = batchItems
+                .Select(static item => item.OriginalText)
+                .Where(static original => !string.IsNullOrWhiteSpace(original))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (originals.Count == 0)
+            {
+                return [];
+            }
+
+            var uniqueFirstCharCount = originals
+                .SelectMany(static original => original.Select(static ch => ch.ToString()))
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            var stopwatch = Stopwatch.StartNew();
+            var entries = projectStatePersistenceService.LoadGlossaryCandidatesForOriginals(
+                projectDataDirectory,
+                phase,
+                originals,
+                PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion);
+            var hints = glossaryBuilder.BuildHintsForPhase(entries, phase);
+            stopwatch.Stop();
+            logPerformanceDebug(
+                "GLOSSARY_DB_LOOKUP",
+                "현재 batch 원문 기준으로 DB glossary 후보를 조회했습니다.",
+                new Dictionary<string, string>
+                {
+                    ["phase"] = phase.ToString(),
+                    ["elapsed_ms"] = FormatElapsedMilliseconds(stopwatch.Elapsed),
+                    ["batch_count"] = batchItems.Count.ToString(CultureInfo.InvariantCulture),
+                    ["original_count"] = originals.Count.ToString(CultureInfo.InvariantCulture),
+                    ["unique_first_char_count"] = uniqueFirstCharCount.ToString(CultureInfo.InvariantCulture),
+                    ["db_entry_count"] = entries.Count.ToString(CultureInfo.InvariantCulture),
+                    ["hint_count"] = hints.Count.ToString(CultureInfo.InvariantCulture),
+                    ["scope_version"] = PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion.ToString(CultureInfo.InvariantCulture),
+                });
+            return hints;
+        }
+    }
+
     private sealed record TranslationPhasePlan(
         TranslationPhaseKind Kind,
         IReadOnlyList<ExtractedTextItem> Items,
         int PendingCount);
+
+    private sealed record CachedGlossaryPhase(
+        long Generation,
+        IReadOnlyList<GlossaryHint> Hints);
 
     private sealed class ExtractedTextItemPriorityComparer : IComparer
     {

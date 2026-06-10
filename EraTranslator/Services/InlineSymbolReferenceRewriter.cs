@@ -55,6 +55,6 @@ public sealed class InlineSymbolReferenceRewriter
         }
 
         var between = prefix[(getNumIndex + "GETNUM".Length)..];
-        return between.Contains('(') && between.Contains(',') && !between.Contains('\n');
+        return between.Contains(',') && !between.Contains('\n');
     }
 }

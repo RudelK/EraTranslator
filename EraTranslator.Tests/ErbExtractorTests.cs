@@ -856,4 +856,100 @@ PRINTFORML "普通の文章です"
         Assert.DoesNotContain("bgm/ボス戦.ogg", values);
         Assert.Contains("普通の文章です", values);
     }
+
+    [Fact]
+    public void Extract_ReadsEmueraSpecialCommentCodeLines()
+    {
+        const string source = """
+;!;PRINTFORMW 特殊表示
+;^;DRAWLINEFORM 罫線表示
+;#;PRINTFORMW "デバッグ表示"
+; 普通のコメント
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.Contains("特殊表示", values);
+        Assert.Contains("罫線表示", values);
+        Assert.Contains("デバッグ表示", values);
+        Assert.DoesNotContain("普通のコメント", values);
+    }
+
+    [Fact]
+    public void Extract_SkipsSlashlessResourceLiteralsAndEmueeResourceCommands()
+    {
+        const string source = """
+PLAYSOUND "戦闘.ogg"
+PLAYBGM "ボス戦.mp3"
+GCREATEFROMFILE(0, "画像.png")
+OUTPUTLOG "ログ.xml"
+PRINTFORMW "普通の文章です"
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain("戦闘.ogg", values);
+        Assert.DoesNotContain("ボス戦.mp3", values);
+        Assert.DoesNotContain("画像.png", values);
+        Assert.DoesNotContain("ログ.xml", values);
+        Assert.Contains("普通の文章です", values);
+    }
+
+    [Fact]
+    public void Extract_FindsVarsAndStringExpressionAssignmentText()
+    {
+        const string source = """
+VARS QUESTION = "質問文"
+VARI IDX = "選択肢"
+NAME '= "名前表示"
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.Contains("質問文", values);
+        Assert.Contains("選択肢", values);
+        Assert.Contains("名前表示", values);
+    }
+
+    [Fact]
+    public void Extract_DoesNotReadRegularCommentsInsideBraceContinuation()
+    {
+        const string source = """
+PRINTFORMW {
+;◆Renameデータ（RPGモジュール）
+}
+PRINTFORMW 通常表示
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain(";◆Renameデータ（RPGモジュール）", values);
+        Assert.DoesNotContain("◆Renameデータ（RPGモジュール）", values);
+        Assert.Contains("通常表示", values);
+    }
+
+    [Fact]
+    public void Extract_DoesNotReadSemicolonOnlyPrintTailComments()
+    {
+        const string source = """
+PRINTL ;◆Renameデータ（RPGモジュール）
+PRINTFORMW 表示テキスト;区切りつき
+""";
+
+        var extractor = new ErbExtractor();
+        var segments = extractor.Extract("test.erb", source);
+        var values = segments.Select(segment => segment.OriginalText).ToArray();
+
+        Assert.DoesNotContain(";◆Renameデータ（RPGモジュール）", values);
+        Assert.DoesNotContain("◆Renameデータ（RPGモジュール）", values);
+        Assert.Contains("表示テキスト;区切りつき", values);
+    }
 }

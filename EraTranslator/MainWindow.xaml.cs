@@ -44,6 +44,7 @@ public partial class MainWindow : Window
 
     private async void Translate_Click(object sender, RoutedEventArgs e)
     {
+        CommitPendingTranslationEdits();
         if (await _viewModel.TranslatePendingAsync())
         {
             System.Windows.MessageBox.Show(this, "번역이 완료되었습니다.", "번역 완료", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -237,14 +238,8 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        var result = dialog.ShowDialog();
-        if (result == true)
-        {
-            _viewModel.ApplyUserDictionary(dictionaryViewModel);
-            return;
-        }
-
-        dictionaryViewModel.RestorePersistedEntries();
+        dialog.ShowDialog();
+        _viewModel.ApplyUserDictionary(dictionaryViewModel);
     }
 
     private void OpenTeamSettings_Click(object sender, RoutedEventArgs e)

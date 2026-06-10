@@ -16,6 +16,7 @@ public sealed class UserDictionaryViewModel : BindableBase
     }
 
     private readonly UserDictionaryService _dictionaryService;
+    private readonly UserDictionaryExchangeService _exchangeService;
     private readonly List<UserDictionaryEntry> _originalGlobalEntries;
     private readonly List<UserDictionaryEntry> _originalProjectEntries;
     private UserDictionaryEntry? _selectedGlobalEntry;
@@ -28,9 +29,11 @@ public sealed class UserDictionaryViewModel : BindableBase
         IEnumerable<UserDictionaryEntry> globalEntries,
         IEnumerable<UserDictionaryEntry> projectEntries,
         UserDictionaryService? dictionaryService = null,
-        string? protectedFullWidthCharacters = null)
+        string? protectedFullWidthCharacters = null,
+        UserDictionaryExchangeService? exchangeService = null)
     {
         _dictionaryService = dictionaryService ?? new UserDictionaryService();
+        _exchangeService = exchangeService ?? new UserDictionaryExchangeService();
         _isInitializing = true;
         GameDirectory = gameDirectory;
         _protectedFullWidthCharacters = protectedFullWidthCharacters ?? PlaceholderProtector.DefaultFullWidthSpecialCharacters;
@@ -105,6 +108,12 @@ public sealed class UserDictionaryViewModel : BindableBase
         SelectedGlobalEntry = null;
     }
 
+    public void RemoveGlobalEntries(IEnumerable<UserDictionaryEntry> entries)
+    {
+        RemoveEntries(GlobalEntries, entries, isProjectScope: false);
+        SelectedGlobalEntry = null;
+    }
+
     public void AddProjectEntry()
     {
         if (!CanEditProjectDictionary)
@@ -128,6 +137,12 @@ public sealed class UserDictionaryViewModel : BindableBase
         SelectedProjectEntry = null;
     }
 
+    public void RemoveProjectEntries(IEnumerable<UserDictionaryEntry> entries)
+    {
+        RemoveEntries(ProjectEntries, entries, isProjectScope: true);
+        SelectedProjectEntry = null;
+    }
+
     public IReadOnlyList<UserDictionaryEntry> GetGlobalEntries()
     {
         return GlobalEntries.Select(entry => entry.Clone()).ToList();
@@ -144,6 +159,36 @@ public sealed class UserDictionaryViewModel : BindableBase
         _dictionaryService.SaveProject(GameDirectory, _originalProjectEntries);
     }
 
+    public void ExportGlobalDictionary(string path)
+    {
+        _exchangeService.Export(path, GlobalEntries);
+    }
+
+    public void ExportProjectDictionary(string path)
+    {
+        if (!CanEditProjectDictionary)
+        {
+            return;
+        }
+
+        _exchangeService.Export(path, ProjectEntries);
+    }
+
+    public UserDictionaryImportMergeResult ImportGlobalDictionary(string path)
+    {
+        return ImportDictionary(path, GlobalEntries, isProjectScope: false);
+    }
+
+    public UserDictionaryImportMergeResult ImportProjectDictionary(string path)
+    {
+        if (!CanEditProjectDictionary)
+        {
+            return new UserDictionaryImportMergeResult(0, 0, 0, ["프로젝트 사전을 사용하려면 게임 폴더를 먼저 지정하세요."]);
+        }
+
+        return ImportDictionary(path, ProjectEntries, isProjectScope: true);
+    }
+
     private static UserDictionaryEntry CreateEmptyEntry()
     {
         return new UserDictionaryEntry
@@ -153,6 +198,75 @@ public sealed class UserDictionaryViewModel : BindableBase
             Target = string.Empty,
             ApplyMode = UserDictionaryApplyMode.Replace,
         };
+    }
+
+    private void RemoveEntries(
+        ObservableCollection<UserDictionaryEntry> targetEntries,
+        IEnumerable<UserDictionaryEntry> entries,
+        bool isProjectScope)
+    {
+        var entriesToRemove = entries.Distinct().ToList();
+        if (entriesToRemove.Count == 0)
+        {
+            return;
+        }
+
+        var removedAny = false;
+        _isInitializing = true;
+        try
+        {
+            foreach (var entry in entriesToRemove)
+            {
+                removedAny |= targetEntries.Remove(entry);
+            }
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+
+        if (removedAny)
+        {
+            RaisePropertyChanged(nameof(SummaryText));
+            Persist(targetEntries, isProjectScope);
+        }
+    }
+
+    private UserDictionaryImportMergeResult ImportDictionary(
+        string path,
+        ObservableCollection<UserDictionaryEntry> targetEntries,
+        bool isProjectScope)
+    {
+        var importResult = _exchangeService.Import(path);
+        var added = 0;
+        var updated = 0;
+        _isInitializing = true;
+        try
+        {
+            foreach (var importedEntry in importResult.Entries)
+            {
+                var existing = targetEntries.FirstOrDefault(entry => string.Equals(entry.Source, importedEntry.Source, StringComparison.Ordinal));
+                if (existing is null)
+                {
+                    targetEntries.Add(importedEntry.Clone());
+                    added++;
+                    continue;
+                }
+
+                existing.Target = importedEntry.Target;
+                existing.ApplyMode = importedEntry.ApplyMode;
+                existing.IsEnabled = importedEntry.IsEnabled;
+                updated++;
+            }
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+
+        RaisePropertyChanged(nameof(SummaryText));
+        Persist(targetEntries, isProjectScope);
+        return new UserDictionaryImportMergeResult(added, updated, importResult.Skipped, importResult.Warnings);
     }
 
     private void AttachCollection(ObservableCollection<UserDictionaryEntry> entries, bool isProjectScope)
@@ -221,3 +335,9 @@ public sealed class UserDictionaryViewModel : BindableBase
         _dictionaryService.SaveGlobal(entries);
     }
 }
+
+public sealed record UserDictionaryImportMergeResult(
+    int Added,
+    int Updated,
+    int Skipped,
+    IReadOnlyList<string> Warnings);

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using EraTranslator.Models;
 
 namespace EraTranslator.Services;
@@ -8,16 +10,19 @@ public sealed class TranslationCoordinator : IDisposable
     private readonly PhaseScopedGlossaryBuilder _glossaryBuilder = new();
     private readonly IDictionaryFirstTranslationService _dictionaryFirstTranslationService;
     private readonly IDictionaryHitLogger _dictionaryHitLogger;
+    private readonly FilePerformanceDebugLogger _performanceDebugLogger;
     private readonly ITranslationProviderFactory _providerFactory;
 
     public TranslationCoordinator(
         ITranslationProviderFactory? providerFactory = null,
         IDictionaryFirstTranslationService? dictionaryFirstTranslationService = null,
-        IDictionaryHitLogger? dictionaryHitLogger = null)
+        IDictionaryHitLogger? dictionaryHitLogger = null,
+        FilePerformanceDebugLogger? performanceDebugLogger = null)
     {
         _providerFactory = providerFactory ?? new TranslationProviderFactory();
         _dictionaryFirstTranslationService = dictionaryFirstTranslationService ?? new DictionaryFirstTranslationService();
         _dictionaryHitLogger = dictionaryHitLogger ?? new FileDictionaryHitLogger();
+        _performanceDebugLogger = performanceDebugLogger ?? new FilePerformanceDebugLogger();
     }
 
     public async Task TranslateAsync(
@@ -34,6 +39,7 @@ public sealed class TranslationCoordinator : IDisposable
             settings,
             dictionaryEntries,
             [],
+            null,
             progress,
             persistState,
             cancellationToken);
@@ -54,6 +60,7 @@ public sealed class TranslationCoordinator : IDisposable
             settings,
             dictionaryEntries,
             [],
+            null,
             progress,
             persistState,
             cancellationToken);
@@ -69,6 +76,31 @@ public sealed class TranslationCoordinator : IDisposable
         Action<IReadOnlyList<ExtractedTextItem>>? persistState,
         CancellationToken cancellationToken)
     {
+        await TranslateAsync(
+            items,
+            propagationItems,
+            settings,
+            dictionaryEntries,
+            glossaryHints,
+            null,
+            progress,
+            persistState,
+            cancellationToken);
+    }
+
+    public async Task TranslateAsync(
+        IReadOnlyList<ExtractedTextItem> items,
+        IReadOnlyList<ExtractedTextItem> propagationItems,
+        ProviderSettings settings,
+        IReadOnlyList<UserDictionaryEntry> dictionaryEntries,
+        IReadOnlyList<GlossaryHint> glossaryHints,
+        IGlossaryCandidateProvider? glossaryCandidateProvider,
+        IProgress<(double value, string status, string detail)> progress,
+        Action<IReadOnlyList<ExtractedTextItem>>? persistState,
+        CancellationToken cancellationToken)
+    {
+        var coordinatorStopwatch = Stopwatch.StartNew();
+        var prepStopwatch = Stopwatch.StartNew();
         var activeItems = items.ToList();
         var activeSegmentIds = activeItems
             .Select(item => item.SegmentId)
@@ -95,7 +127,24 @@ public sealed class TranslationCoordinator : IDisposable
         var totalCount = initiallyPendingSegmentIds.Count;
         var processedSegmentIds = new HashSet<string>(StringComparer.Ordinal);
         var processedCount = 0;
+        prepStopwatch.Stop();
+        LogPerformanceDebug(
+            settings,
+            "COORDINATOR_PREP",
+            "coordinator 입력 목록과 전파 인덱스를 구성했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(prepStopwatch.Elapsed),
+                ["active_items"] = activeItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["propagation_items"] = propagationItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["all_items"] = allItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["active_original_groups"] = activeGroupedByOriginal.Count.ToString(CultureInfo.InvariantCulture),
+                ["propagation_original_groups"] = propagationGroupedByOriginal.Count.ToString(CultureInfo.InvariantCulture),
+                ["target_originals"] = targetOriginals.Count.ToString(CultureInfo.InvariantCulture),
+                ["initial_pending_segments"] = totalCount.ToString(CultureInfo.InvariantCulture),
+            });
 
+        var sharedTranslationStopwatch = Stopwatch.StartNew();
         var seededItems = ApplyExistingSharedTranslations(propagationGroupedByOriginal, targetOriginals);
         var seededCount = MarkProcessed(seededItems);
         processedCount = seededCount;
@@ -103,6 +152,17 @@ public sealed class TranslationCoordinator : IDisposable
         {
             PersistChangedItems(persistState, seededItems);
         }
+        sharedTranslationStopwatch.Stop();
+        LogPerformanceDebug(
+            settings,
+            "SHARED_TRANSLATION_SEED",
+            "기존 동일 원문 번역을 전파했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(sharedTranslationStopwatch.Elapsed),
+                ["seeded_items"] = seededItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["seeded_segments"] = seededCount.ToString(CultureInfo.InvariantCulture),
+            });
 
         var representatives = activeItems
             .Where(item => item.NeedsTranslation)
@@ -141,8 +201,11 @@ public sealed class TranslationCoordinator : IDisposable
 
         var dictionaryResolvedRepresentatives = new List<ExtractedTextItem>();
         var dictionaryResolvedItems = new List<ExtractedTextItem>();
+        var dictionaryFirstStopwatch = Stopwatch.StartNew();
+        var dictionaryCheckedCount = 0;
         foreach (var item in representatives)
         {
+            dictionaryCheckedCount++;
             var dictionaryMatch = await _dictionaryFirstTranslationService.TryResolveAsync(item, settings, cancellationToken).ConfigureAwait(false);
             if (dictionaryMatch is null)
             {
@@ -165,6 +228,19 @@ public sealed class TranslationCoordinator : IDisposable
             dictionaryResolvedItems.AddRange(affectedItems);
             LogDictionaryHitIfEnabled(settings, item, dictionaryMatch.Value, affectedItems.Count);
         }
+        dictionaryFirstStopwatch.Stop();
+        LogPerformanceDebug(
+            settings,
+            "DICTIONARY_FIRST_PASS",
+            "provider 호출 전 사전 우선 적용을 처리했습니다.",
+            new Dictionary<string, string>
+            {
+                ["elapsed_ms"] = FormatElapsedMilliseconds(dictionaryFirstStopwatch.Elapsed),
+                ["checked_representatives"] = dictionaryCheckedCount.ToString(CultureInfo.InvariantCulture),
+                ["resolved_representatives"] = dictionaryResolvedRepresentatives.Count.ToString(CultureInfo.InvariantCulture),
+                ["resolved_items"] = dictionaryResolvedItems.Count.ToString(CultureInfo.InvariantCulture),
+                ["remaining_representatives_before_filter"] = representatives.Count.ToString(CultureInfo.InvariantCulture),
+            });
 
         if (dictionaryResolvedRepresentatives.Count > 0)
         {
@@ -194,7 +270,9 @@ public sealed class TranslationCoordinator : IDisposable
         var promptDictionaryHints = supportsPromptingDictionary
             ? BuildPromptDictionaryHints(dictionaryEntries)
             : [];
-        var availableGlossaryHints = MergeGlossaryHints(glossaryHints, promptDictionaryHints);
+        var baseGlossaryHints = settings.EnableGlossaryHints
+            ? MergeGlossaryHints(glossaryHints, promptDictionaryHints)
+            : [];
         var protector = new PlaceholderProtector(settings.ProtectedFullWidthCharacters);
         var batchSize = Math.Clamp(
             settings.ProviderType == TranslationProviderType.EzTransXp
@@ -256,11 +334,34 @@ public sealed class TranslationCoordinator : IDisposable
             }
 
             var remaining = batch.ToDictionary(item => item.SegmentId, StringComparer.Ordinal);
+            var glossarySummary = string.Empty;
 
             for (var attempt = 0; attempt <= retryCount && remaining.Count > 0; attempt++)
             {
                 var currentBatch = remaining.Values.ToList();
-                var batchGlossaryHints = _glossaryBuilder.SelectForBatch(availableGlossaryHints, currentBatch);
+                var dynamicGlossaryHints = settings.EnableGlossaryHints && glossaryCandidateProvider is not null
+                    ? glossaryCandidateProvider.LoadCandidates(currentBatch)
+                    : [];
+                var availableGlossaryHints = settings.EnableGlossaryHints
+                    ? MergeGlossaryHints(baseGlossaryHints, dynamicGlossaryHints)
+                    : [];
+                var glossaryBatchSelector = _glossaryBuilder.CreateBatchSelector(availableGlossaryHints, settings);
+                var batchGlossaryHints = glossaryBatchSelector.SelectForBatch(currentBatch);
+                LogPerformanceDebug(
+                    settings,
+                    "GLOSSARY_DB_LOOKUP_MATCH",
+                    "batch glossary 후보를 최종 선택했습니다.",
+                    new Dictionary<string, string>
+                    {
+                        ["batch_count"] = currentBatch.Count.ToString(CultureInfo.InvariantCulture),
+                        ["base_hint_count"] = baseGlossaryHints.Count.ToString(CultureInfo.InvariantCulture),
+                        ["dynamic_hint_count"] = dynamicGlossaryHints.Count.ToString(CultureInfo.InvariantCulture),
+                        ["bundled_dictionary_hint_count"] = dynamicGlossaryHints.Count(static hint => hint.IsBundledDictionary).ToString(CultureInfo.InvariantCulture),
+                        ["selected_hint_count"] = batchGlossaryHints.Count.ToString(CultureInfo.InvariantCulture),
+                        ["selected_bundled_dictionary_hint_count"] = batchGlossaryHints.Count(static hint => hint.IsBundledDictionary).ToString(CultureInfo.InvariantCulture),
+                        ["selected_hint_chars"] = batchGlossaryHints.Sum(hint => hint.Source.Length + hint.Target.Length).ToString(CultureInfo.InvariantCulture),
+                    });
+                glossarySummary = FormatGlossarySummary(batchGlossaryHints);
                 var protectedBatch = currentBatch
                     .Select(item =>
                     {
@@ -279,11 +380,40 @@ public sealed class TranslationCoordinator : IDisposable
 
                 try
                 {
+                    LogPerformanceDebug(
+                        settings,
+                        "PROVIDER_BATCH_START",
+                        "provider batch 요청 직전입니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["elapsed_since_coordinator_start_ms"] = FormatElapsedMilliseconds(coordinatorStopwatch.Elapsed),
+                            ["batch_count"] = currentBatch.Count.ToString(CultureInfo.InvariantCulture),
+                            ["protected_batch_count"] = protectedBatch.Count.ToString(CultureInfo.InvariantCulture),
+                            ["protected_chars"] = protectedBatch.Sum(segment => segment.Text.Length).ToString(CultureInfo.InvariantCulture),
+                            ["glossary_count"] = batchGlossaryHints.Count.ToString(CultureInfo.InvariantCulture),
+                            ["glossary_chars"] = batchGlossaryHints.Sum(hint => hint.Source.Length + hint.Target.Length).ToString(CultureInfo.InvariantCulture),
+                            ["processed_count"] = processedCount.ToString(CultureInfo.InvariantCulture),
+                            ["total_count"] = totalCount.ToString(CultureInfo.InvariantCulture),
+                        });
+                    var providerStopwatch = Stopwatch.StartNew();
                     var providerResult = await provider.TranslateAsync(
                         protectedBatch,
                         settings,
                         cancellationToken,
                         batchGlossaryHints);
+                    providerStopwatch.Stop();
+                    LogPerformanceDebug(
+                        settings,
+                        "PROVIDER_BATCH_END",
+                        "provider batch 응답을 받았습니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["elapsed_ms"] = FormatElapsedMilliseconds(providerStopwatch.Elapsed),
+                            ["elapsed_since_coordinator_start_ms"] = FormatElapsedMilliseconds(coordinatorStopwatch.Elapsed),
+                            ["batch_count"] = currentBatch.Count.ToString(CultureInfo.InvariantCulture),
+                            ["result_count"] = providerResult.Translations.Count.ToString(CultureInfo.InvariantCulture),
+                            ["error_count"] = providerResult.Errors.Count.ToString(CultureInfo.InvariantCulture),
+                        });
                     var nextRemaining = new Dictionary<string, ExtractedTextItem>(StringComparer.Ordinal);
                     var changedItems = new List<ExtractedTextItem>();
 
@@ -399,6 +529,20 @@ public sealed class TranslationCoordinator : IDisposable
                 }
                 catch (TranslationProviderException ex)
                 {
+                    LogPerformanceDebug(
+                        settings,
+                        "PROVIDER_BATCH_EXCEPTION",
+                        "provider batch 요청이 예외로 실패했습니다.",
+                        new Dictionary<string, string>
+                        {
+                            ["elapsed_since_coordinator_start_ms"] = FormatElapsedMilliseconds(coordinatorStopwatch.Elapsed),
+                            ["batch_count"] = currentBatch.Count.ToString(CultureInfo.InvariantCulture),
+                            ["attempt"] = attempt.ToString(CultureInfo.InvariantCulture),
+                            ["retry_count"] = retryCount.ToString(CultureInfo.InvariantCulture),
+                            ["kind"] = ex.Kind.ToString(),
+                            ["status_code"] = ex.StatusCode is null ? string.Empty : ((int)ex.StatusCode.Value).ToString(CultureInfo.InvariantCulture),
+                            ["message"] = ex.Message,
+                        });
                     if (attempt < retryCount)
                     {
                         continue;
@@ -441,7 +585,10 @@ public sealed class TranslationCoordinator : IDisposable
                 }
             }
 
-            progress.Report((processedCount / (double)totalCount, $"번역 진행 중... {processedCount}/{totalCount}", currentFiles));
+            var detail = string.IsNullOrWhiteSpace(glossarySummary)
+                ? currentFiles
+                : $"{currentFiles} | {glossarySummary}";
+            progress.Report((processedCount / (double)totalCount, $"번역 진행 중... {processedCount}/{totalCount}", detail));
             await Task.Yield();
         }
     }
@@ -484,6 +631,25 @@ public sealed class TranslationCoordinator : IDisposable
             match.PersistedToNaverDictionary,
             match.SourceUrl,
             match.ReviewRequired));
+    }
+
+    private void LogPerformanceDebug(
+        ProviderSettings settings,
+        string category,
+        string message,
+        IReadOnlyDictionary<string, string>? fields = null)
+    {
+        if (!settings.EnablePerformanceDebugLogging)
+        {
+            return;
+        }
+
+        _performanceDebugLogger.Log(category, message, fields);
+    }
+
+    private static string FormatElapsedMilliseconds(TimeSpan elapsed)
+    {
+        return elapsed.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     private static void PersistChangedItems(
@@ -785,6 +951,17 @@ public sealed class TranslationCoordinator : IDisposable
             or TranslationProviderType.Lemonade;
     }
 
+    private static string FormatGlossarySummary(IReadOnlyList<GlossaryHint> glossaryHints)
+    {
+        if (glossaryHints.Count == 0)
+        {
+            return "glossary 0개";
+        }
+
+        var characterCount = glossaryHints.Sum(static hint => hint.Source.Length + hint.Target.Length + 4);
+        return $"glossary {glossaryHints.Count}개 / {characterCount}자";
+    }
+
     private static IReadOnlyList<GlossaryHint> BuildPromptDictionaryHints(IReadOnlyList<UserDictionaryEntry> dictionaryEntries)
     {
         return dictionaryEntries
@@ -792,7 +969,10 @@ public sealed class TranslationCoordinator : IDisposable
             .Select(entry => new GlossaryHint(
                 entry.Source.Trim(),
                 entry.Target.Trim(),
-                "USER"))
+                "USER")
+            {
+                IsUserPromptingDictionary = true,
+            })
             .Where(static hint =>
                 !string.IsNullOrWhiteSpace(hint.Source)
                 && !string.IsNullOrWhiteSpace(hint.Target)
@@ -829,12 +1009,31 @@ public sealed class TranslationCoordinator : IDisposable
 
         foreach (var hint in promptDictionaryHints)
         {
-            merged[hint.Source] = hint;
+            if (!merged.TryGetValue(hint.Source, out var current)
+                || GetGlossaryPrecedence(hint) >= GetGlossaryPrecedence(current))
+            {
+                merged[hint.Source] = hint;
+            }
         }
 
         return merged.Values
             .OrderByDescending(static hint => hint.Source.Length)
             .ThenBy(static hint => hint.Source, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static int GetGlossaryPrecedence(GlossaryHint hint)
+    {
+        if (hint.IsUserPromptingDictionary)
+        {
+            return 4;
+        }
+
+        if (hint.IsReferenceBearingKey || IdentifierSegmentTypes.IsIdentifier(hint.SourceSegmentType))
+        {
+            return 3;
+        }
+
+        return hint.IsBundledDictionary ? 1 : 2;
     }
 }

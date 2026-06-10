@@ -40,6 +40,8 @@ public sealed class ProviderSettings
 
     public bool EnableDictionaryHitLogging { get; init; }
 
+    public bool EnablePerformanceDebugLogging { get; init; }
+
     public bool ExcludeNonSourceText { get; init; }
 
     public bool EnableBundledDictionaryFirstPass { get; init; } = true;
@@ -51,6 +53,24 @@ public sealed class ProviderSettings
     public bool EnableKanjiReadingFallback { get; init; } = false;
 
     public int DictionaryFirstMaxTermLength { get; init; } = 6;
+
+    public bool EnableGlossaryHints { get; init; } = true;
+
+    public int GlossaryMaxHintsPerBatch { get; init; } = 8;
+
+    public int GlossaryCharacterBudget { get; init; } = 360;
+
+    public int GlossaryMinSourceLength { get; init; } = 2;
+
+    public bool EnableBundledDictionaryGlossaryHints { get; init; } = true;
+
+    public int BundledDictionaryGlossaryMaxHintsPerBatch { get; init; } = 4;
+
+    public int BundledDictionaryGlossaryCharacterBudget { get; init; } = 160;
+
+    public int BundledDictionaryGlossaryMinTermLength { get; init; } = 2;
+
+    public int BundledDictionaryGlossaryMaxTermLength { get; init; } = 12;
 
     public string SystemPromptTemplate { get; init; } = string.Empty;
 

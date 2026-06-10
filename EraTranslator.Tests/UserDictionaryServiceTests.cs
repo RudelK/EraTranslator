@@ -18,7 +18,9 @@ public sealed class UserDictionaryServiceTests : IDisposable
     [Fact]
     public void SaveAndLoadGlobal_RoundTripsNormalizedEntries()
     {
-        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var service = new UserDictionaryService(
+            Path.Combine(_rootPath, "AppData"),
+            Path.Combine(_rootPath, "Program"));
 
         service.SaveGlobal(
             [
@@ -32,12 +34,62 @@ public sealed class UserDictionaryServiceTests : IDisposable
         Assert.Equal("勇者", loaded[0].Source);
         Assert.Equal("용사", loaded[0].Target);
         Assert.Equal(UserDictionaryApplyMode.Prompting, loaded[0].ApplyMode);
+        Assert.Equal(
+            Path.Combine(_rootPath, "Program", "UserDictionaries", "global-user-dictionary.json"),
+            service.GetGlobalDictionaryPath());
+        Assert.True(File.Exists(service.GetGlobalDictionaryPath()));
+    }
+
+    [Fact]
+    public void LoadGlobal_FallsBackToLegacyAppDataPathWhenCurrentFileDoesNotExist()
+    {
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var programPath = Path.Combine(_rootPath, "Program");
+        var legacyService = new UserDictionaryService(appDataPath, programPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyService.GetLegacyGlobalDictionaryPath())!);
+        File.WriteAllText(
+            legacyService.GetLegacyGlobalDictionaryPath(),
+            """
+{"Entries":[{"IsEnabled":true,"Source":"勇者","Target":"용사","ApplyMode":1}]}
+""");
+
+        var loaded = legacyService.LoadGlobal();
+
+        Assert.Single(loaded);
+        Assert.Equal("勇者", loaded[0].Source);
+        Assert.Equal("용사", loaded[0].Target);
+        Assert.Equal(UserDictionaryApplyMode.Prompting, loaded[0].ApplyMode);
+        Assert.True(File.Exists(legacyService.GetGlobalDictionaryPath()));
+        Assert.False(File.Exists(legacyService.GetLegacyGlobalDictionaryPath()));
+    }
+
+    [Fact]
+    public void SaveGlobal_WritesCurrentProgramPathAndLeavesLegacyFallbackUnused()
+    {
+        var appDataPath = Path.Combine(_rootPath, "AppData");
+        var programPath = Path.Combine(_rootPath, "Program");
+        var service = new UserDictionaryService(appDataPath, programPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.GetLegacyGlobalDictionaryPath())!);
+        File.WriteAllText(
+            service.GetLegacyGlobalDictionaryPath(),
+            """
+{"Entries":[{"IsEnabled":true,"Source":"旧","Target":"구","ApplyMode":0}]}
+""");
+
+        service.SaveGlobal([new UserDictionaryEntry { IsEnabled = true, Source = "新", Target = "신" }]);
+        var loaded = service.LoadGlobal();
+
+        Assert.Single(loaded);
+        Assert.Equal("新", loaded[0].Source);
+        Assert.True(File.Exists(service.GetGlobalDictionaryPath()));
     }
 
     [Fact]
     public void BuildEffectiveDictionary_ProjectEntryOverridesGlobalAndCanDisableIt()
     {
-        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var service = new UserDictionaryService(
+            Path.Combine(_rootPath, "AppData"),
+            Path.Combine(_rootPath, "Program"));
 
         var effective = service.BuildEffectiveDictionary(
             [
@@ -61,7 +113,7 @@ public sealed class UserDictionaryServiceTests : IDisposable
         var appDataPath = Path.Combine(_rootPath, "AppData");
         var projectPath = Path.Combine(_rootPath, "Game");
         Directory.CreateDirectory(projectPath);
-        var service = new UserDictionaryService(appDataPath);
+        var service = new UserDictionaryService(appDataPath, Path.Combine(_rootPath, "Program"));
 
         service.SaveProject(
             projectPath,

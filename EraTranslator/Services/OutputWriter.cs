@@ -11,26 +11,6 @@ public sealed class OutputWriter
     private static readonly UTF8Encoding Utf8NoBomEncoding = new(false);
     private static readonly UnicodeEncoding Utf16LeBomEncoding = new(false, true, true);
     private static readonly UnicodeEncoding Utf16LeNoBomEncoding = new(false, false, true);
-    private static readonly string[] ProtectedCodeArgumentFunctionNames =
-    [
-        "GETCONFIG",
-        "VARSIZE",
-        "LOADTEXT",
-        "SAVETEXT",
-        "CALC_CHARA_SINGLE_DATA",
-        "CALC_CHARA_SINGLE_DATA_RULED",
-        "CALC_CHARA_MULTIPLE_DATA",
-        "CALC_CHARA_MULTIPLE_DATA_BASE",
-        "CALC_CHARA_RANGED_DATA",
-        "GET_NONEXISTABLE_CHARA_NO_DEFAULTABLE_SINGLE_DATA",
-        "GET_NONEXISTABLE_VALUES_BYNAME",
-        "GET_NONEXISTABLE_TALENT_BYNAME",
-        "GET_NONEXISTABLE_ABL_BYNAME",
-        "GET_NONEXISTABLE_CFLAG_BYNAME",
-        "GET_NONEXISTABLE_EXP_BYNAME",
-        "GET_NONEXISTABLE_CSTR_BYNAME",
-    ];
-    private static readonly string[] PaletteLookupFunctionNames = ["BARCOLORSET", "BARCOLORSET_HTML", "カラーパレット", "カラーパレット_透明度込", "カラーパレット_HTML"];
     private readonly SymbolRewritePlanner _rewritePlanner = new();
     private readonly IdentifierRewritePlanner _identifierRewritePlanner = new();
     private readonly InlineSymbolReferenceRewriter _inlineSymbolReferenceRewriter = new();
@@ -348,9 +328,9 @@ public sealed class OutputWriter
         if (IsCodeFragmentSegment(segment)
             && (IsRangeInsidePercentExpression(document.OriginalText, segment.AbsoluteStart, segment.Length)
                 || IsRangeInsideRawStringScriptExpression(document.OriginalText, segment.AbsoluteStart, segment.Length)
-                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ProtectedCodeArgumentFunctionNames)
-                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, PaletteLookupFunctionNames)
-                || IsRangeInsideCommandArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ["LOADTEXT", "SAVETEXT"])
+                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ErbSyntaxCatalog.ProtectedCodeArgumentFunctionNames)
+                || IsRangeInsideFunctionArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ErbSyntaxCatalog.PaletteLookupFunctionNames)
+                || IsRangeInsideCommandArgument(document.OriginalText, segment.AbsoluteStart, segment.Length, ErbSyntaxCatalog.ProtectedCodeArgumentCommandNames)
                 || TextHeuristics.LooksLikeResourcePathLiteral(segment.OriginalText)
                 || IsPaletteCaseLabelLiteral(document.OriginalText, segment)
                 || IsQuotedComparisonLiteral(document.OriginalText, segment)))
@@ -375,9 +355,9 @@ public sealed class OutputWriter
             return true;
         }
 
-        if (IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, ProtectedCodeArgumentFunctionNames)
-            || IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, PaletteLookupFunctionNames)
-            || IsRangeInsideCommandArgument(document.OriginalText, replacement.Start, replacement.Length, ["LOADTEXT", "SAVETEXT"]))
+        if (IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, ErbSyntaxCatalog.ProtectedCodeArgumentFunctionNames)
+            || IsRangeInsideFunctionArgument(document.OriginalText, replacement.Start, replacement.Length, ErbSyntaxCatalog.PaletteLookupFunctionNames)
+            || IsRangeInsideCommandArgument(document.OriginalText, replacement.Start, replacement.Length, ErbSyntaxCatalog.ProtectedCodeArgumentCommandNames))
         {
             return true;
         }
@@ -501,7 +481,7 @@ public sealed class OutputWriter
 
     private static bool IsPaletteLookupFunction(string functionName)
     {
-        return PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
+        return ErbSyntaxCatalog.PaletteLookupFunctionNames.Any(name => string.Equals(name, functionName, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsRangeInsideCommandArgument(string text, int start, int length, IReadOnlyCollection<string> commandNames)

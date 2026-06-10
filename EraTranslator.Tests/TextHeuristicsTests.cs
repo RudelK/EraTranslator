@@ -13,4 +13,14 @@ public sealed class TextHeuristicsTests
     {
         Assert.True(TextHeuristics.LooksLikeErbSymbolExpression(value));
     }
+
+    [Theory]
+    [InlineData("画像.png")]
+    [InlineData("ボス戦.ogg")]
+    [InlineData("font.ttf")]
+    [InlineData("ui/button.webp")]
+    public void LooksLikeResourcePathLiteral_RecognizesSlashlessEmueraResources(string value)
+    {
+        Assert.True(TextHeuristics.LooksLikeResourcePathLiteral(value));
+    }
 }

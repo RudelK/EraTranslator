@@ -478,6 +478,12 @@ public sealed class DictionaryFirstTranslationServiceTests
 
         public string GetSnapshotSummary() => string.Empty;
 
+        public BundledJapaneseLexiconGlossaryLookupResult FindGlossaryCandidates(
+            IReadOnlyList<string> originals,
+            int minTermLength,
+            int maxTermLength,
+            int maxCandidates) => BundledJapaneseLexiconGlossaryLookupResult.Empty;
+
         public bool TryGetKanjiReading(char kanji, out BundledKanjiReadingEntry entry) => _kanjiEntries.TryGetValue(kanji.ToString(), out entry!);
 
         public bool TryGetReadingEntry(string term, out BundledJapaneseLexiconEntry entry) => _readingEntries.TryGetValue(term, out entry!);

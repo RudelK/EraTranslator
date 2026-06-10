@@ -465,4 +465,77 @@ IF NOWEX:対象キャラ:Ｃ絶頂
             && reference.Namespace == "NOWEX"
             && reference.OriginalKey == "Ｃ絶頂");
     }
+
+    [Fact]
+    public void Extract_FindsGetNumCommandFormAndErdDimensionNamespaces()
+    {
+        var extractor = new ErbReferenceExtractor(new SymbolNamespaceRegistry(["Foo"]));
+        const string content = """
+keyName = "外見年齢"
+GETNUM CFLAG, "依存度"
+GETNUM CFLAG, keyName
+GETNUM Foo@1, "バー"
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "依存度");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.IndirectVariable
+            && reference.Namespace == "CFLAG"
+            && reference.VariableName == "keyName"
+            && reference.ResolutionKind == SymbolReferenceResolutionKind.Resolved
+            && reference.CandidateKeys.Contains("外見年齢", StringComparer.Ordinal));
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "FOO"
+            && reference.OriginalKey == "バー");
+    }
+
+    [Fact]
+    public void Extract_ReadsReferencesInsideEmueraSpecialCommentCodeLines()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+;^;IF CFLAG:外見年齢
+;!;GETNUM TALENT, "警戒"
+; IF CFLAG:コメント
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "外見年齢");
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "TALENT"
+            && reference.OriginalKey == "警戒");
+        Assert.DoesNotContain(result.references, reference =>
+            reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "コメント");
+    }
+
+    [Fact]
+    public void Extract_FindsReferencesInsideBraceContinuationLinesWithOriginalOffsets()
+    {
+        var extractor = new ErbReferenceExtractor();
+        const string content = """
+IF {
+    CFLAG:外見年齢
+}
+""";
+
+        var result = extractor.Extract("ERB/Test.ERB", content);
+
+        Assert.Contains(result.references, reference =>
+            reference.Kind == ErbSymbolReferenceKind.DirectLiteral
+            && reference.Namespace == "CFLAG"
+            && reference.OriginalKey == "外見年齢"
+            && reference.AbsoluteStart == content.IndexOf("外見年齢", StringComparison.Ordinal));
+    }
 }

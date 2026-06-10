@@ -371,6 +371,15 @@ public sealed class TranslationSettingsViewModelTests
         viewModel.EnableKanjiReadingFallback = false;
         viewModel.EnableDictionaryHitLogging = true;
         viewModel.DictionaryFirstMaxTermLength = 5;
+        viewModel.EnableGlossaryHints = false;
+        viewModel.GlossaryMaxHintsPerBatch = 4;
+        viewModel.GlossaryCharacterBudget = 240;
+        viewModel.GlossaryMinSourceLength = 3;
+        viewModel.EnableBundledDictionaryGlossaryHints = false;
+        viewModel.BundledDictionaryGlossaryMaxHintsPerBatch = 2;
+        viewModel.BundledDictionaryGlossaryCharacterBudget = 80;
+        viewModel.BundledDictionaryGlossaryMinTermLength = 3;
+        viewModel.BundledDictionaryGlossaryMaxTermLength = 8;
 
         var settings = viewModel.BuildSettings();
 
@@ -380,6 +389,15 @@ public sealed class TranslationSettingsViewModelTests
         Assert.False(settings.EnableKanjiReadingFallback);
         Assert.True(settings.EnableDictionaryHitLogging);
         Assert.Equal(5, settings.DictionaryFirstMaxTermLength);
+        Assert.False(settings.EnableGlossaryHints);
+        Assert.Equal(4, settings.GlossaryMaxHintsPerBatch);
+        Assert.Equal(240, settings.GlossaryCharacterBudget);
+        Assert.Equal(3, settings.GlossaryMinSourceLength);
+        Assert.False(settings.EnableBundledDictionaryGlossaryHints);
+        Assert.Equal(2, settings.BundledDictionaryGlossaryMaxHintsPerBatch);
+        Assert.Equal(80, settings.BundledDictionaryGlossaryCharacterBudget);
+        Assert.Equal(3, settings.BundledDictionaryGlossaryMinTermLength);
+        Assert.Equal(8, settings.BundledDictionaryGlossaryMaxTermLength);
     }
 
     [Fact]

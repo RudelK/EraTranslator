@@ -53,15 +53,25 @@
                             <Button Width="84"
                                     Click="RemoveGlobalEntry_Click"
                                     Content="삭제" />
+                            <Button Width="84"
+                                    Margin="16,0,8,0"
+                                    Click="ImportGlobalDictionary_Click"
+                                    Content="가져오기" />
+                            <Button Width="84"
+                                    Click="ExportGlobalDictionary_Click"
+                                    Content="내보내기" />
                         </StackPanel>
 
-                        <DataGrid ItemsSource="{Binding GlobalEntries}"
+                        <DataGrid x:Name="GlobalEntriesGrid"
+                                  ItemsSource="{Binding GlobalEntries}"
                                   SelectedItem="{Binding SelectedGlobalEntry, Mode=TwoWay}"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   GridLinesVisibility="Horizontal"
                                   HeadersVisibility="Column"
-                                  RowHeaderWidth="0">
+                                  RowHeaderWidth="0"
+                                  SelectionMode="Extended"
+                                  SelectionUnit="FullRow">
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Width="64"
                                                         Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}"
@@ -125,15 +135,25 @@
                             <Button Width="84"
                                     Click="RemoveProjectEntry_Click"
                                     Content="삭제" />
+                            <Button Width="84"
+                                    Margin="16,0,8,0"
+                                    Click="ImportProjectDictionary_Click"
+                                    Content="가져오기" />
+                            <Button Width="84"
+                                    Click="ExportProjectDictionary_Click"
+                                    Content="내보내기" />
                         </StackPanel>
 
-                        <DataGrid ItemsSource="{Binding ProjectEntries}"
+                        <DataGrid x:Name="ProjectEntriesGrid"
+                                  ItemsSource="{Binding ProjectEntries}"
                                   SelectedItem="{Binding SelectedProjectEntry, Mode=TwoWay}"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   GridLinesVisibility="Horizontal"
                                   HeadersVisibility="Column"
-                                  RowHeaderWidth="0">
+                                  RowHeaderWidth="0"
+                                  SelectionMode="Extended"
+                                  SelectionUnit="FullRow">
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Width="64"
                                                         Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}"
@@ -197,10 +217,6 @@
                     Margin="0,16,0,0"
                     HorizontalAlignment="Right"
                     Orientation="Horizontal">
-            <Button Width="80"
-                    Margin="0,0,12,0"
-                    Click="Cancel_Click"
-                    Content="취소" />
             <Button Width="80"
                     IsDefault="True"
                     Click="Save_Click"

@@ -139,6 +139,11 @@ public sealed partial class ErbDimsLookupRegistry
         foreach (var rawLine in content.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(line, out var specialCommentCodeLine))
+            {
+                line = specialCommentCodeLine;
+            }
+
             var trimmed = line.TrimStart();
             if (trimmed.StartsWith(';'))
             {
@@ -161,6 +166,11 @@ public sealed partial class ErbDimsLookupRegistry
         foreach (var rawLine in content.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(line, out var specialCommentCodeLine))
+            {
+                line = specialCommentCodeLine;
+            }
+
             var trimmed = line.TrimStart();
             if (trimmed.StartsWith(';'))
             {
@@ -274,6 +284,11 @@ public sealed partial class ErbDimsLookupRegistry
         foreach (var rawLine in content.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(line, out var specialCommentCodeLine))
+            {
+                line = specialCommentCodeLine;
+            }
+
             var trimmed = line.TrimStart();
             if (trimmed.StartsWith(';'))
             {
@@ -309,6 +324,11 @@ public sealed partial class ErbDimsLookupRegistry
             foreach (var rawLine in content.Split('\n'))
             {
                 var line = rawLine.TrimEnd('\r');
+                if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(line, out var specialCommentCodeLine))
+                {
+                    line = specialCommentCodeLine;
+                }
+
                 var trimmed = line.TrimStart();
                 if (trimmed.StartsWith(';'))
                 {

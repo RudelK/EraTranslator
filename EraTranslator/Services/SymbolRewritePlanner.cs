@@ -347,7 +347,7 @@ public sealed class SymbolRewritePlanner
         }
 
         var between = prefix[(getNumIndex + "GETNUM".Length)..];
-        return between.Contains('(') && between.Contains(',') && !between.Contains('\n');
+        return between.Contains(',') && !between.Contains('\n');
     }
 }
 

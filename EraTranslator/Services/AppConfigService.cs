@@ -4,23 +4,57 @@ using EraTranslator.Models;
 
 namespace EraTranslator.Services;
 
-public sealed class AppConfigService(string? baseDirectory = null)
+public sealed class AppConfigService
 {
     private const string LegacyDefaultProtectedFullWidthCharacters = "／【】＜＞「」（）『』％";
+    private const string DefaultSettingsFolderName = "UserSettings";
+    private const string DefaultConfigFileName = "EraTranslator.config.json";
+    private const string DefaultSecretFileName = "EraTranslator.secrets.dat";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
-    private readonly IAppSecretStore _secretStore = new ProtectedAppSecretStore(baseDirectory);
 
-    public string ConfigPath { get; } = Path.Combine(baseDirectory ?? AppContext.BaseDirectory, "EraTranslator.config.json");
+    private readonly string _baseDirectory;
+    private readonly string _appDataRoot;
+    private readonly string _configFileName;
+    private readonly string _secretFileName;
+    private readonly IAppSecretStore _secretStore;
+
+    public AppConfigService(
+        string? baseDirectory = null,
+        string? appDataRoot = null,
+        string settingsFolderName = DefaultSettingsFolderName,
+        string configFileName = DefaultConfigFileName,
+        string secretFileName = DefaultSecretFileName)
+    {
+        _baseDirectory = string.IsNullOrWhiteSpace(baseDirectory)
+            ? AppContext.BaseDirectory
+            : baseDirectory;
+        _appDataRoot = string.IsNullOrWhiteSpace(appDataRoot)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+            : appDataRoot;
+        _configFileName = configFileName;
+        _secretFileName = secretFileName;
+        ConfigPath = Path.Combine(_baseDirectory, settingsFolderName, _configFileName);
+        _secretStore = new ProtectedAppSecretStore(Path.GetDirectoryName(ConfigPath), _secretFileName);
+        var settingsDirectory = Path.GetDirectoryName(ConfigPath);
+        if (!string.IsNullOrWhiteSpace(settingsDirectory))
+        {
+            Directory.CreateDirectory(settingsDirectory);
+        }
+    }
+
+    public string ConfigPath { get; }
 
     public string SecretPath => _secretStore.FilePath;
 
     public AppConfig Load()
     {
+        MigrateLegacyFilesIfNeeded();
+
         if (!File.Exists(ConfigPath))
         {
             var config = MergeSecrets(new AppConfig(), _secretStore.Load());
@@ -65,6 +99,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 EnableRequestResponseLogging = loaded.EnableRequestResponseLogging,
                 EnableResultStateLogging = loaded.EnableResultStateLogging,
                 EnableDictionaryHitLogging = loaded.EnableDictionaryHitLogging,
+                EnablePerformanceDebugLogging = loaded.EnablePerformanceDebugLogging,
                 SystemPromptTemplate = NormalizePromptPlaceholders(loaded.SystemPromptTemplate),
                 RetryPromptTemplate = NormalizePromptPlaceholders(loaded.RetryPromptTemplate),
                 ExcludeNonSourceText = loaded.ExcludeNonSourceText,
@@ -73,6 +108,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
                 EnableNaverJapaneseDictionaryLookup = loaded.EnableNaverJapaneseDictionaryLookup,
                 EnableKanjiReadingFallback = loaded.EnableKanjiReadingFallback,
                 DictionaryFirstMaxTermLength = loaded.DictionaryFirstMaxTermLength <= 0 ? new AppConfig().DictionaryFirstMaxTermLength : loaded.DictionaryFirstMaxTermLength,
+                EnableGlossaryHints = loaded.EnableGlossaryHints,
+                GlossaryMaxHintsPerBatch = loaded.GlossaryMaxHintsPerBatch <= 0 ? new AppConfig().GlossaryMaxHintsPerBatch : loaded.GlossaryMaxHintsPerBatch,
+                GlossaryCharacterBudget = loaded.GlossaryCharacterBudget <= 0 ? new AppConfig().GlossaryCharacterBudget : loaded.GlossaryCharacterBudget,
+                GlossaryMinSourceLength = loaded.GlossaryMinSourceLength <= 0 ? new AppConfig().GlossaryMinSourceLength : loaded.GlossaryMinSourceLength,
+                EnableBundledDictionaryGlossaryHints = loaded.EnableBundledDictionaryGlossaryHints,
+                BundledDictionaryGlossaryMaxHintsPerBatch = loaded.BundledDictionaryGlossaryMaxHintsPerBatch <= 0 ? new AppConfig().BundledDictionaryGlossaryMaxHintsPerBatch : loaded.BundledDictionaryGlossaryMaxHintsPerBatch,
+                BundledDictionaryGlossaryCharacterBudget = loaded.BundledDictionaryGlossaryCharacterBudget <= 0 ? new AppConfig().BundledDictionaryGlossaryCharacterBudget : loaded.BundledDictionaryGlossaryCharacterBudget,
+                BundledDictionaryGlossaryMinTermLength = loaded.BundledDictionaryGlossaryMinTermLength <= 0 ? new AppConfig().BundledDictionaryGlossaryMinTermLength : loaded.BundledDictionaryGlossaryMinTermLength,
+                BundledDictionaryGlossaryMaxTermLength = loaded.BundledDictionaryGlossaryMaxTermLength <= 0 ? new AppConfig().BundledDictionaryGlossaryMaxTermLength : loaded.BundledDictionaryGlossaryMaxTermLength,
                 RefreshGridDuringTranslatedTextEdit = loaded.RefreshGridDuringTranslatedTextEdit,
                 ProtectedFullWidthCharacters = NormalizeProtectedFullWidthCharacters(loaded.ProtectedFullWidthCharacters),
                 PapagoClientId = loaded.PapagoClientId,
@@ -94,6 +138,26 @@ public sealed class AppConfigService(string? baseDirectory = null)
         {
             return MergeSecrets(new AppConfig(), _secretStore.Load());
         }
+    }
+
+    public string GetLegacyBaseConfigPath()
+    {
+        return Path.Combine(_baseDirectory, _configFileName);
+    }
+
+    public string GetLegacyBaseSecretPath()
+    {
+        return Path.Combine(_baseDirectory, _secretFileName);
+    }
+
+    public string GetLegacyAppDataConfigPath()
+    {
+        return Path.Combine(_appDataRoot, "EraTranslator", _configFileName);
+    }
+
+    public string GetLegacyAppDataSecretPath()
+    {
+        return Path.Combine(_appDataRoot, "EraTranslator", _secretFileName);
     }
 
     public void Save(AppConfig config)
@@ -142,6 +206,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
             EnableResultStateLogging = config.EnableResultStateLogging,
             EnableDictionaryHitLogging = config.EnableDictionaryHitLogging,
+            EnablePerformanceDebugLogging = config.EnablePerformanceDebugLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
@@ -150,6 +215,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
             EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup,
             EnableKanjiReadingFallback = config.EnableKanjiReadingFallback,
             DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength,
+            EnableGlossaryHints = config.EnableGlossaryHints,
+            GlossaryMaxHintsPerBatch = config.GlossaryMaxHintsPerBatch,
+            GlossaryCharacterBudget = config.GlossaryCharacterBudget,
+            GlossaryMinSourceLength = config.GlossaryMinSourceLength,
+            EnableBundledDictionaryGlossaryHints = config.EnableBundledDictionaryGlossaryHints,
+            BundledDictionaryGlossaryMaxHintsPerBatch = config.BundledDictionaryGlossaryMaxHintsPerBatch,
+            BundledDictionaryGlossaryCharacterBudget = config.BundledDictionaryGlossaryCharacterBudget,
+            BundledDictionaryGlossaryMinTermLength = config.BundledDictionaryGlossaryMinTermLength,
+            BundledDictionaryGlossaryMaxTermLength = config.BundledDictionaryGlossaryMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
@@ -159,6 +233,67 @@ public sealed class AppConfigService(string? baseDirectory = null)
 
         var json = JsonSerializer.Serialize(sanitized, JsonOptions);
         File.WriteAllText(ConfigPath, json);
+    }
+
+    private void MigrateLegacyFilesIfNeeded()
+    {
+        MoveFirstExistingFileIfMissing(
+            ConfigPath,
+            GetLegacyBaseConfigPath(),
+            GetLegacyAppDataConfigPath());
+        MoveFirstExistingFileIfMissing(
+            SecretPath,
+            GetLegacyBaseSecretPath(),
+            GetLegacyAppDataSecretPath());
+    }
+
+    private static void MoveFirstExistingFileIfMissing(string targetPath, params string[] sourcePaths)
+    {
+        if (File.Exists(targetPath))
+        {
+            return;
+        }
+
+        var targetFullPath = Path.GetFullPath(targetPath);
+        foreach (var sourcePath in sourcePaths)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath)
+                || !File.Exists(sourcePath))
+            {
+                continue;
+            }
+
+            var sourceFullPath = Path.GetFullPath(sourcePath);
+            if (string.Equals(sourceFullPath, targetFullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var targetDirectory = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrWhiteSpace(targetDirectory))
+            {
+                Directory.CreateDirectory(targetDirectory);
+            }
+
+            try
+            {
+                File.Move(sourcePath, targetPath);
+            }
+            catch
+            {
+                try
+                {
+                    File.Copy(sourcePath, targetPath, overwrite: false);
+                    File.Delete(sourcePath);
+                }
+                catch
+                {
+                    // If migration fails, leave the legacy file in place and continue with defaults.
+                }
+            }
+
+            return;
+        }
     }
 
     private AppSecrets MergeLegacySecrets(AppConfig loaded)
@@ -223,6 +358,7 @@ public sealed class AppConfigService(string? baseDirectory = null)
             EnableRequestResponseLogging = config.EnableRequestResponseLogging,
             EnableResultStateLogging = config.EnableResultStateLogging,
             EnableDictionaryHitLogging = config.EnableDictionaryHitLogging,
+            EnablePerformanceDebugLogging = config.EnablePerformanceDebugLogging,
             SystemPromptTemplate = config.SystemPromptTemplate,
             RetryPromptTemplate = config.RetryPromptTemplate,
             ExcludeNonSourceText = config.ExcludeNonSourceText,
@@ -231,6 +367,15 @@ public sealed class AppConfigService(string? baseDirectory = null)
             EnableNaverJapaneseDictionaryLookup = config.EnableNaverJapaneseDictionaryLookup,
             EnableKanjiReadingFallback = config.EnableKanjiReadingFallback,
             DictionaryFirstMaxTermLength = config.DictionaryFirstMaxTermLength,
+            EnableGlossaryHints = config.EnableGlossaryHints,
+            GlossaryMaxHintsPerBatch = config.GlossaryMaxHintsPerBatch,
+            GlossaryCharacterBudget = config.GlossaryCharacterBudget,
+            GlossaryMinSourceLength = config.GlossaryMinSourceLength,
+            EnableBundledDictionaryGlossaryHints = config.EnableBundledDictionaryGlossaryHints,
+            BundledDictionaryGlossaryMaxHintsPerBatch = config.BundledDictionaryGlossaryMaxHintsPerBatch,
+            BundledDictionaryGlossaryCharacterBudget = config.BundledDictionaryGlossaryCharacterBudget,
+            BundledDictionaryGlossaryMinTermLength = config.BundledDictionaryGlossaryMinTermLength,
+            BundledDictionaryGlossaryMaxTermLength = config.BundledDictionaryGlossaryMaxTermLength,
             RefreshGridDuringTranslatedTextEdit = config.RefreshGridDuringTranslatedTextEdit,
             ProtectedFullWidthCharacters = config.ProtectedFullWidthCharacters,
             PapagoClientId = config.PapagoClientId,
@@ -326,6 +471,8 @@ public sealed class AppConfigService(string? baseDirectory = null)
 
         public bool EnableDictionaryHitLogging { get; init; } = false;
 
+        public bool EnablePerformanceDebugLogging { get; init; } = false;
+
         public string SystemPromptTemplate { get; init; } = string.Empty;
 
         public string RetryPromptTemplate { get; init; } = string.Empty;
@@ -341,6 +488,24 @@ public sealed class AppConfigService(string? baseDirectory = null)
         public bool EnableKanjiReadingFallback { get; init; } = false;
 
         public int DictionaryFirstMaxTermLength { get; init; } = 6;
+
+        public bool EnableGlossaryHints { get; init; } = true;
+
+        public int GlossaryMaxHintsPerBatch { get; init; } = 8;
+
+        public int GlossaryCharacterBudget { get; init; } = 360;
+
+        public int GlossaryMinSourceLength { get; init; } = 2;
+
+        public bool EnableBundledDictionaryGlossaryHints { get; init; } = true;
+
+        public int BundledDictionaryGlossaryMaxHintsPerBatch { get; init; } = 4;
+
+        public int BundledDictionaryGlossaryCharacterBudget { get; init; } = 160;
+
+        public int BundledDictionaryGlossaryMinTermLength { get; init; } = 2;
+
+        public int BundledDictionaryGlossaryMaxTermLength { get; init; } = 12;
 
         public bool RefreshGridDuringTranslatedTextEdit { get; init; }
 

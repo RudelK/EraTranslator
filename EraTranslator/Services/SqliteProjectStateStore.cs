@@ -40,6 +40,7 @@ public class SqliteProjectStateStore
             ExecuteNonQuery(connection, transaction, "DELETE FROM variable_literal_occurrences;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM identifier_occurrences;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM scan_warnings;");
+            ExecuteNonQuery(connection, transaction, "DELETE FROM glossary_cache_entries;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM segments;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM documents;");
             ExecuteNonQuery(connection, transaction, "DELETE FROM session_metrics;");
@@ -189,6 +190,291 @@ public class SqliteProjectStateStore
         transaction.Commit();
     }
 
+    public IReadOnlyList<GlossaryCacheEntry> LoadGlossaryCache(string projectDataDirectory)
+    {
+        if (!Exists(projectDataDirectory))
+        {
+            return [];
+        }
+
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                segment_id,
+                source,
+                target,
+                file_type,
+                source_status,
+                segment_type,
+                symbol_namespace,
+                is_reference_bearing_key,
+                rendered_length,
+                static_score,
+                first_char,
+                phase_mask,
+                eligibility_hash,
+                scope_version,
+                updated_at_utc
+            FROM glossary_cache_entries
+            ORDER BY source, target, segment_id;
+            """;
+        using var reader = command.ExecuteReader();
+        var entries = new List<GlossaryCacheEntry>();
+        while (reader.Read())
+        {
+            entries.Add(new GlossaryCacheEntry(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetInt32(7) != 0,
+                reader.GetInt32(8),
+                reader.GetInt32(9),
+                reader.GetString(10),
+                reader.GetInt32(11),
+                reader.GetString(12),
+                reader.GetInt32(13),
+                DateTimeOffset.TryParse(reader.GetString(14), out var updatedAtUtc)
+                    ? updatedAtUtc
+                    : DateTimeOffset.MinValue));
+        }
+
+        return entries;
+    }
+
+    public IReadOnlyList<GlossaryCacheEntry> LoadGlossaryCandidatesForOriginals(
+        string projectDataDirectory,
+        TranslationPhaseKind phase,
+        IReadOnlyList<string> originals,
+        int scopeVersion)
+    {
+        if (!Exists(projectDataDirectory) || originals.Count == 0)
+        {
+            return [];
+        }
+
+        var firstChars = originals
+            .Where(static original => !string.IsNullOrWhiteSpace(original))
+            .SelectMany(static original => original.Select(static ch => ch.ToString()))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (firstChars.Count == 0)
+        {
+            return [];
+        }
+
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var command = connection.CreateCommand();
+        var firstCharParameters = new List<string>(firstChars.Count);
+        for (var index = 0; index < firstChars.Count; index++)
+        {
+            var parameterName = $"$first_char_{index}";
+            firstCharParameters.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, firstChars[index]);
+        }
+
+        command.CommandText = $"""
+            SELECT
+                segment_id,
+                source,
+                target,
+                file_type,
+                source_status,
+                segment_type,
+                symbol_namespace,
+                is_reference_bearing_key,
+                rendered_length,
+                static_score,
+                first_char,
+                phase_mask,
+                eligibility_hash,
+                scope_version,
+                updated_at_utc
+            FROM glossary_cache_entries
+            WHERE scope_version = $scope_version
+              AND (phase_mask & $phase_mask) != 0
+              AND first_char IN ({string.Join(", ", firstCharParameters)})
+            ORDER BY source, target, segment_id;
+            """;
+        command.Parameters.AddWithValue("$scope_version", scopeVersion);
+        command.Parameters.AddWithValue("$phase_mask", PhaseScopedGlossaryBuilder.GetPhaseMask(phase));
+        using var reader = command.ExecuteReader();
+        var entries = new List<GlossaryCacheEntry>();
+        while (reader.Read())
+        {
+            entries.Add(new GlossaryCacheEntry(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetInt32(7) != 0,
+                reader.GetInt32(8),
+                reader.GetInt32(9),
+                reader.GetString(10),
+                reader.GetInt32(11),
+                reader.GetString(12),
+                reader.GetInt32(13),
+                DateTimeOffset.TryParse(reader.GetString(14), out var updatedAtUtc)
+                    ? updatedAtUtc
+                    : DateTimeOffset.MinValue));
+        }
+
+        return entries;
+    }
+
+    public void UpsertGlossaryCacheEntries(string projectDataDirectory, IEnumerable<GlossaryCacheEntry> entries)
+    {
+        var entryList = entries
+            .Where(static entry => !string.IsNullOrWhiteSpace(entry.SegmentId))
+            .ToList();
+        if (entryList.Count == 0)
+        {
+            return;
+        }
+
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO glossary_cache_entries (
+                segment_id,
+                source,
+                target,
+                file_type,
+                source_status,
+                segment_type,
+                symbol_namespace,
+                is_reference_bearing_key,
+                rendered_length,
+                static_score,
+                first_char,
+                phase_mask,
+                eligibility_hash,
+                scope_version,
+                updated_at_utc)
+            VALUES (
+                $segment_id,
+                $source,
+                $target,
+                $file_type,
+                $source_status,
+                $segment_type,
+                $symbol_namespace,
+                $is_reference_bearing_key,
+                $rendered_length,
+                $static_score,
+                $first_char,
+                $phase_mask,
+                $eligibility_hash,
+                $scope_version,
+                $updated_at_utc)
+            ON CONFLICT(segment_id) DO UPDATE SET
+                source = excluded.source,
+                target = excluded.target,
+                file_type = excluded.file_type,
+                source_status = excluded.source_status,
+                segment_type = excluded.segment_type,
+                symbol_namespace = excluded.symbol_namespace,
+                is_reference_bearing_key = excluded.is_reference_bearing_key,
+                rendered_length = excluded.rendered_length,
+                static_score = excluded.static_score,
+                first_char = excluded.first_char,
+                phase_mask = excluded.phase_mask,
+                eligibility_hash = excluded.eligibility_hash,
+                scope_version = excluded.scope_version,
+                updated_at_utc = excluded.updated_at_utc;
+            """;
+        var segmentIdParameter = command.Parameters.Add("$segment_id", SqliteType.Text);
+        var sourceParameter = command.Parameters.Add("$source", SqliteType.Text);
+        var targetParameter = command.Parameters.Add("$target", SqliteType.Text);
+        var fileTypeParameter = command.Parameters.Add("$file_type", SqliteType.Text);
+        var sourceStatusParameter = command.Parameters.Add("$source_status", SqliteType.Text);
+        var segmentTypeParameter = command.Parameters.Add("$segment_type", SqliteType.Text);
+        var symbolNamespaceParameter = command.Parameters.Add("$symbol_namespace", SqliteType.Text);
+        var isReferenceBearingKeyParameter = command.Parameters.Add("$is_reference_bearing_key", SqliteType.Integer);
+        var renderedLengthParameter = command.Parameters.Add("$rendered_length", SqliteType.Integer);
+        var staticScoreParameter = command.Parameters.Add("$static_score", SqliteType.Integer);
+        var firstCharParameter = command.Parameters.Add("$first_char", SqliteType.Text);
+        var phaseMaskParameter = command.Parameters.Add("$phase_mask", SqliteType.Integer);
+        var eligibilityHashParameter = command.Parameters.Add("$eligibility_hash", SqliteType.Text);
+        var scopeVersionParameter = command.Parameters.Add("$scope_version", SqliteType.Integer);
+        var updatedAtUtcParameter = command.Parameters.Add("$updated_at_utc", SqliteType.Text);
+
+        foreach (var entry in entryList)
+        {
+            segmentIdParameter.Value = entry.SegmentId;
+            sourceParameter.Value = entry.Source;
+            targetParameter.Value = entry.Target;
+            fileTypeParameter.Value = entry.SourceFileType;
+            sourceStatusParameter.Value = entry.SourceStatus;
+            segmentTypeParameter.Value = entry.SourceSegmentType;
+            symbolNamespaceParameter.Value = entry.SourceNamespace;
+            isReferenceBearingKeyParameter.Value = entry.IsReferenceBearingKey ? 1 : 0;
+            renderedLengthParameter.Value = entry.RenderedLength;
+            staticScoreParameter.Value = entry.StaticScore;
+            firstCharParameter.Value = entry.FirstChar;
+            phaseMaskParameter.Value = entry.PhaseMask;
+            eligibilityHashParameter.Value = entry.EligibilityHash;
+            scopeVersionParameter.Value = entry.ScopeVersion;
+            updatedAtUtcParameter.Value = entry.UpdatedAtUtc.ToString("O");
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public void DeleteGlossaryCacheEntries(string projectDataDirectory, IEnumerable<string> segmentIds)
+    {
+        var targetIds = segmentIds
+            .Where(static segmentId => !string.IsNullOrWhiteSpace(segmentId))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (targetIds.Count == 0 || !Exists(projectDataDirectory))
+        {
+            return;
+        }
+
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM glossary_cache_entries WHERE segment_id = $segment_id;";
+        var segmentIdParameter = command.Parameters.Add("$segment_id", SqliteType.Text);
+        foreach (var segmentId in targetIds)
+        {
+            segmentIdParameter.Value = segmentId;
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public void ClearGlossaryCache(string projectDataDirectory)
+    {
+        if (!Exists(projectDataDirectory))
+        {
+            return;
+        }
+
+        using var connection = OpenConnection(projectDataDirectory);
+        EnsureSchema(connection);
+        using var transaction = connection.BeginTransaction();
+        ExecuteNonQuery(connection, transaction, "DELETE FROM glossary_cache_entries;");
+        transaction.Commit();
+    }
+
     public int ApplyTranslationProgress(string projectDataDirectory, IEnumerable<ExtractedTextItem> items)
     {
         var snapshot = LoadTranslationProgress(projectDataDirectory);
@@ -295,6 +581,7 @@ public class SqliteProjectStateStore
         EnsureSchema(connection);
         using var transaction = connection.BeginTransaction();
         ExecuteNonQuery(connection, transaction, "DELETE FROM translation_progress;");
+        ExecuteNonQuery(connection, transaction, "DELETE FROM glossary_cache_entries;");
         SetProjectMeta(connection, transaction, "last_progress_saved_at_utc", string.Empty);
         transaction.Commit();
     }
@@ -579,6 +866,24 @@ public class SqliteProjectStateStore
                 reference_resolution_status TEXT NOT NULL,
                 updated_at_utc TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS glossary_cache_entries (
+                segment_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                source_status TEXT NOT NULL,
+                segment_type TEXT NOT NULL,
+                symbol_namespace TEXT NOT NULL,
+                is_reference_bearing_key INTEGER NOT NULL,
+                rendered_length INTEGER NOT NULL,
+                static_score INTEGER NOT NULL,
+                first_char TEXT NOT NULL,
+                phase_mask INTEGER NOT NULL,
+                eligibility_hash TEXT NOT NULL,
+                scope_version INTEGER NOT NULL DEFAULT 0,
+                updated_at_utc TEXT NOT NULL,
+                FOREIGN KEY(segment_id) REFERENCES segments(segment_id) ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_segments_document_id ON segments(document_id);
             CREATE INDEX IF NOT EXISTS idx_symbol_references_document_id ON symbol_references(document_id);
             CREATE INDEX IF NOT EXISTS idx_variable_literal_occurrences_document_id ON variable_literal_occurrences(document_id);
@@ -586,9 +891,16 @@ public class SqliteProjectStateStore
             CREATE INDEX IF NOT EXISTS idx_scan_warnings_document_id ON scan_warnings(document_id);
             CREATE INDEX IF NOT EXISTS idx_documents_relative_path ON documents(relative_path);
             CREATE INDEX IF NOT EXISTS idx_translation_progress_updated_at_utc ON translation_progress(updated_at_utc);
+            CREATE INDEX IF NOT EXISTS idx_glossary_cache_first_char ON glossary_cache_entries(first_char);
+            CREATE INDEX IF NOT EXISTS idx_glossary_cache_phase_mask ON glossary_cache_entries(phase_mask);
+            CREATE INDEX IF NOT EXISTS idx_glossary_cache_hash ON glossary_cache_entries(eligibility_hash);
             """;
         command.ExecuteNonQuery();
         EnsureColumnExists(connection, "translation_progress", "reference_original_symbol_key", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumnExists(connection, "glossary_cache_entries", "scope_version", "INTEGER NOT NULL DEFAULT 0");
+        using var glossaryScopeIndexCommand = connection.CreateCommand();
+        glossaryScopeIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_glossary_cache_scope_version ON glossary_cache_entries(scope_version);";
+        glossaryScopeIndexCommand.ExecuteNonQuery();
 
         using var countCommand = connection.CreateCommand();
         countCommand.CommandText = "SELECT COUNT(*) FROM schema_info;";

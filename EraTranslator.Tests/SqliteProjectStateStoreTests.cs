@@ -1,6 +1,7 @@
 using System.Text;
 using EraTranslator.Models;
 using EraTranslator.Services;
+using Microsoft.Data.Sqlite;
 
 namespace EraTranslator.Tests;
 
@@ -174,6 +175,203 @@ public sealed class SqliteProjectStateStoreTests : IDisposable
         Assert.Equal("doc:1", snapshot.Items[0].SegmentId);
     }
 
+    [Fact]
+    public void GlossaryCache_RoundTripsAndCanBeCleared()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var session = BuildScanSession();
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:old", "快楽");
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:other", "発情");
+        store.SaveScanSession(session, _gameRoot);
+        var entry = new GlossaryCacheEntry(
+            "ERB/Test.ERB:0",
+            "快楽値",
+            "쾌락치",
+            "CSV",
+            "번역 완료",
+            "quoted-string",
+            "CFLAG",
+            true,
+            9,
+            141,
+            "快",
+            15,
+            "hash-1",
+            PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion,
+            DateTimeOffset.UtcNow);
+
+        store.UpsertGlossaryCacheEntries(_gameRoot, [entry]);
+        var loaded = store.LoadGlossaryCache(_gameRoot);
+
+        Assert.Single(loaded);
+        Assert.Equal("快楽値", loaded[0].Source);
+        Assert.Equal("쾌락치", loaded[0].Target);
+        Assert.True(loaded[0].IsReferenceBearingKey);
+        Assert.Equal(15, loaded[0].PhaseMask);
+
+        var updated = entry with { Target = "쾌락값", EligibilityHash = "hash-2" };
+        store.UpsertGlossaryCacheEntries(_gameRoot, [updated]);
+        loaded = store.LoadGlossaryCache(_gameRoot);
+
+        Assert.Single(loaded);
+        Assert.Equal("쾌락값", loaded[0].Target);
+        Assert.Equal("hash-2", loaded[0].EligibilityHash);
+
+        store.ClearGlossaryCache(_gameRoot);
+
+        Assert.Empty(store.LoadGlossaryCache(_gameRoot));
+    }
+
+    [Fact]
+    public void DeleteTranslationProgress_ClearsGlossaryCache()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var session = BuildScanSession();
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:old", "快楽");
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:other", "発情");
+        store.SaveScanSession(session, _gameRoot);
+        store.UpsertGlossaryCacheEntries(_gameRoot,
+        [
+            new GlossaryCacheEntry(
+                "ERB/Test.ERB:0",
+                "快楽値",
+                "쾌락치",
+                "CSV",
+                "번역 완료",
+                "quoted-string",
+                "CFLAG",
+                true,
+                9,
+                141,
+                "快",
+                15,
+                "hash-1",
+                PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion,
+                DateTimeOffset.UtcNow),
+        ]);
+
+        store.DeleteTranslationProgress(_gameRoot);
+
+        Assert.Empty(store.LoadGlossaryCache(_gameRoot));
+    }
+
+    [Fact]
+    public void LoadGlossaryCandidatesForOriginals_FiltersByFirstCharPhaseAndScopeVersion()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var session = BuildScanSession();
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:old", "快楽");
+        AddGlossaryTestSegment(session, "ERB/Test.ERB:other", "発情");
+        store.SaveScanSession(session, _gameRoot);
+        var current = new GlossaryCacheEntry(
+            "ERB/Test.ERB:0",
+            "快楽値",
+            "쾌락치",
+            "CSV",
+            "번역 완료",
+            "quoted-string",
+            "CFLAG",
+            true,
+            9,
+            141,
+            "快",
+            15,
+            "hash-current",
+            PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion,
+            DateTimeOffset.UtcNow);
+        var wrongScope = current with
+        {
+            SegmentId = "ERB/Test.ERB:old",
+            Source = "快楽",
+            ScopeVersion = 0,
+            EligibilityHash = "hash-old",
+        };
+        var wrongFirstChar = current with
+        {
+            SegmentId = "ERB/Test.ERB:other",
+            Source = "発情",
+            FirstChar = "発",
+            EligibilityHash = "hash-other",
+        };
+        store.UpsertGlossaryCacheEntries(_gameRoot, [current, wrongScope, wrongFirstChar]);
+
+        var loaded = store.LoadGlossaryCandidatesForOriginals(
+            _gameRoot,
+            TranslationPhaseKind.Erb,
+            ["快楽値が上がった"],
+            PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion);
+
+        Assert.Single(loaded);
+        Assert.Equal("快楽値", loaded[0].Source);
+    }
+
+    [Fact]
+    public void LoadGlossaryCandidatesForOriginals_MigratesLegacyGlossaryCacheWithoutScopeVersion()
+    {
+        Directory.CreateDirectory(_gameRoot);
+        var store = new SqliteProjectStateStore();
+        var dbPath = store.GetDatabasePath(_gameRoot);
+        Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE glossary_cache_entries (
+                    segment_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    source_status TEXT NOT NULL,
+                    segment_type TEXT NOT NULL,
+                    symbol_namespace TEXT NOT NULL,
+                    is_reference_bearing_key INTEGER NOT NULL,
+                    rendered_length INTEGER NOT NULL,
+                    static_score INTEGER NOT NULL,
+                    first_char TEXT NOT NULL,
+                    phase_mask INTEGER NOT NULL,
+                    eligibility_hash TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var loaded = store.LoadGlossaryCandidatesForOriginals(
+            _gameRoot,
+            TranslationPhaseKind.Erb,
+            ["快楽値が上がった"],
+            PhaseScopedGlossaryBuilder.GlossaryEligibilityPolicyVersion);
+
+        Assert.Empty(loaded);
+        using var migratedConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        migratedConnection.Open();
+        using var pragma = migratedConnection.CreateCommand();
+        pragma.CommandText = "PRAGMA table_info(glossary_cache_entries);";
+        using var reader = pragma.ExecuteReader();
+        var columnNames = new List<string>();
+        while (reader.Read())
+        {
+            columnNames.Add(reader.GetString(1));
+        }
+
+        Assert.Contains("scope_version", columnNames);
+    }
+
     private static ExtractedTextItem[] BuildProgressItems()
     {
         return
@@ -203,6 +401,22 @@ public sealed class SqliteProjectStateStoreTests : IDisposable
                 CsvFieldRole = CsvFieldRole.TranslatableValue,
             },
         ];
+    }
+
+    private static void AddGlossaryTestSegment(ScanSession session, string segmentId, string originalText)
+    {
+        var document = session.Documents["ERB/Test.ERB"];
+        document.Segments.Add(new TextSegment
+        {
+            SegmentId = segmentId,
+            DocumentId = "ERB/Test.ERB",
+            SegmentType = "PRINT",
+            AbsoluteStart = 0,
+            Length = originalText.Length,
+            LineNumber = 2,
+            OriginalText = originalText,
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        });
     }
 
     private ScanSession BuildScanSession()

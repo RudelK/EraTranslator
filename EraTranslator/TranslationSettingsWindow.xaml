@@ -177,6 +177,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <StackPanel Orientation="Horizontal"
@@ -239,6 +240,15 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -295,6 +305,120 @@
                         </GroupBox>
 
                         <GroupBox Grid.Row="3"
+                                  Margin="0,12,0,0"
+                                  Header="LLM Glossary"
+                                  Padding="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <CheckBox Grid.Row="0"
+                                          Grid.Column="0"
+                                          Grid.ColumnSpan="2"
+                                          Margin="0,0,0,8"
+                                          Content="현재 batch 관련 glossary 힌트 사용"
+                                          IsChecked="{Binding EnableGlossaryHints}" />
+
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,8"
+                                           VerticalAlignment="Center"
+                                           Text="최대 항목 수" />
+                                <ComboBox Grid.Row="1"
+                                          Grid.Column="1"
+                                          Margin="0,0,0,8"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding GlossaryMaxHintsOptions}"
+                                          Text="{Binding GlossaryMaxHintsPerBatch, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,8"
+                                           VerticalAlignment="Center"
+                                           Text="문자 예산" />
+                                <ComboBox Grid.Row="2"
+                                          Grid.Column="1"
+                                          Margin="0,0,0,8"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding GlossaryCharacterBudgetOptions}"
+                                          Text="{Binding GlossaryCharacterBudget, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,0"
+                                           VerticalAlignment="Center"
+                                           Text="최소 원문 길이" />
+                                <ComboBox Grid.Row="3"
+                                          Grid.Column="1"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding GlossaryMinSourceLengthOptions}"
+                                          Text="{Binding GlossaryMinSourceLength, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <CheckBox Grid.Row="4"
+                                          Grid.Column="0"
+                                          Grid.ColumnSpan="2"
+                                          Margin="0,10,0,8"
+                                          Content="탑재 일어사전 용어를 glossary 힌트로 사용"
+                                          IsChecked="{Binding EnableBundledDictionaryGlossaryHints}" />
+
+                                <TextBlock Grid.Row="5"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,8"
+                                           VerticalAlignment="Center"
+                                           Text="사전 최대 항목" />
+                                <ComboBox Grid.Row="5"
+                                          Grid.Column="1"
+                                          Margin="0,0,0,8"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding BundledDictionaryGlossaryMaxHintsOptions}"
+                                          Text="{Binding BundledDictionaryGlossaryMaxHintsPerBatch, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="6"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,8"
+                                           VerticalAlignment="Center"
+                                           Text="사전 문자 예산" />
+                                <ComboBox Grid.Row="6"
+                                          Grid.Column="1"
+                                          Margin="0,0,0,8"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding BundledDictionaryGlossaryCharacterBudgetOptions}"
+                                          Text="{Binding BundledDictionaryGlossaryCharacterBudget, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="7"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,8"
+                                           VerticalAlignment="Center"
+                                           Text="사전 최소 길이" />
+                                <ComboBox Grid.Row="7"
+                                          Grid.Column="1"
+                                          Margin="0,0,0,8"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding BundledDictionaryGlossaryMinTermLengthOptions}"
+                                          Text="{Binding BundledDictionaryGlossaryMinTermLength, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="8"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,0"
+                                           VerticalAlignment="Center"
+                                           Text="사전 최대 길이" />
+                                <ComboBox Grid.Row="8"
+                                          Grid.Column="1"
+                                          IsEditable="True"
+                                          ItemsSource="{Binding BundledDictionaryGlossaryMaxTermLengthOptions}"
+                                          Text="{Binding BundledDictionaryGlossaryMaxTermLength, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Grid.Row="4"
                                   Margin="0,12,0,0"
                                   Header="배치 및 LLM"
                                   Padding="10">
@@ -643,54 +767,48 @@
                         </Grid.RowDefinitions>
 
                         <GroupBox Header="로깅" Padding="10">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-
-                                <CheckBox Grid.Row="0"
-                                          Margin="0,0,0,8"
+                            <StackPanel>
+                                <CheckBox Margin="0,0,0,8"
                                           Content="실행 로그 파일 기록"
                                           IsChecked="{Binding EnableRequestResponseLogging}" />
 
-                                <TextBlock Grid.Row="1"
-                                           Margin="0,0,0,8"
+                                <TextBlock Margin="0,0,0,8"
                                            Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                            Text="{Binding RequestResponseLogPath}"
                                            TextWrapping="Wrap" />
 
-                                <CheckBox Grid.Row="2"
-                                          Margin="0,0,0,8"
+                                <CheckBox Margin="0,0,0,8"
                                           Content="결과 로그 파일 기록"
                                           IsChecked="{Binding EnableResultStateLogging}" />
 
-                                <TextBlock Grid.Row="3"
-                                           Margin="0,0,0,8"
+                                <TextBlock Margin="0,0,0,8"
                                            Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                            Text="{Binding ResultStateLogPath}"
                                            TextWrapping="Wrap" />
 
-                                <CheckBox Grid.Row="4"
-                                          Margin="0,0,0,8"
+                                <CheckBox Margin="0,0,0,8"
                                           Content="사전 히트 내역 기록"
                                           IsChecked="{Binding EnableDictionaryHitLogging}" />
 
-                                <TextBlock Grid.Row="5"
+                                <TextBlock Margin="0,0,0,8"
                                            Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                            Text="{Binding DictionaryHitLogPath}"
                                            TextWrapping="Wrap" />
-                            </Grid>
+
+                                <CheckBox Margin="0,0,0,8"
+                                          Content="성능 디버그 로그 기록"
+                                          IsChecked="{Binding EnablePerformanceDebugLogging}" />
+
+                                <TextBlock Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                           Text="{Binding PerformanceDebugLogPath}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
                         </GroupBox>
 
                         <TextBlock Grid.Row="1"
                                    Margin="0,12,0,0"
                                    Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                   Text="기본값은 꺼짐입니다. 실행 로그는 API 요청/응답을, 결과 로그는 저장 원인을, 사전 히트 로그는 사전/음독 선행 적용 내역을 추적합니다."
+                                   Text="기본값은 꺼짐입니다. 실행 로그는 API 요청/응답을, 결과 로그는 저장 원인을, 사전 히트 로그는 사전/음독 선행 적용 내역을, 성능 디버그 로그는 번역 시작 전 병목 후보를 추적합니다."
                                    TextWrapping="Wrap" />
 
                         <GroupBox Grid.Row="2"

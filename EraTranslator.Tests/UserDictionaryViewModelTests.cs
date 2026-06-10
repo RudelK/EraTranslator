@@ -58,6 +58,50 @@ public sealed class UserDictionaryViewModelTests : IDisposable
     }
 
     [Fact]
+    public void GlobalDictionary_RemoveMultipleEntriesPersists()
+    {
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(
+            Path.Combine(_rootPath, "Game"),
+            [
+                new Models.UserDictionaryEntry { IsEnabled = true, Source = "A", Target = "가" },
+                new Models.UserDictionaryEntry { IsEnabled = true, Source = "B", Target = "나" },
+                new Models.UserDictionaryEntry { IsEnabled = true, Source = "C", Target = "다" },
+            ],
+            [],
+            service);
+
+        viewModel.RemoveGlobalEntries([viewModel.GlobalEntries[0], viewModel.GlobalEntries[1]]);
+
+        var loaded = service.LoadGlobal();
+
+        Assert.Single(loaded);
+        Assert.Equal("C", loaded[0].Source);
+    }
+
+    [Fact]
+    public void ProjectDictionary_RemoveMultipleEntriesPersists()
+    {
+        var projectPath = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(projectPath);
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(
+            projectPath,
+            [],
+            [
+                new Models.UserDictionaryEntry { IsEnabled = true, Source = "A", Target = "가" },
+                new Models.UserDictionaryEntry { IsEnabled = true, Source = "B", Target = "나" },
+            ],
+            service);
+
+        viewModel.RemoveProjectEntries(viewModel.ProjectEntries.ToList());
+
+        var loaded = service.LoadProject(projectPath);
+
+        Assert.Empty(loaded);
+    }
+
+    [Fact]
     public void RestorePersistedEntries_RevertsImmediateEditsBackToOriginalSnapshot()
     {
         var projectPath = Path.Combine(_rootPath, "Game");
@@ -105,5 +149,87 @@ public sealed class UserDictionaryViewModelTests : IDisposable
         viewModel.ProtectedFullWidthCharacters = "『』";
 
         Assert.Equal("『』", viewModel.ProtectedFullWidthCharacters);
+    }
+
+    [Fact]
+    public void ImportGlobalDictionary_MergesBySourceAndPersists()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var importPath = Path.Combine(_rootPath, "dictionary.etdict");
+        File.WriteAllText(
+            importPath,
+            """
+# EraTranslator User Dictionary v1
+勇者	브레이브	프롬프팅	사용
+魔王	마왕	치환	미사용
+""");
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(
+            Path.Combine(_rootPath, "Game"),
+            [new Models.UserDictionaryEntry { IsEnabled = true, Source = "勇者", Target = "용사" }],
+            [],
+            service);
+
+        var result = viewModel.ImportGlobalDictionary(importPath);
+        var loaded = service.LoadGlobal();
+
+        Assert.Equal(1, result.Added);
+        Assert.Equal(1, result.Updated);
+        Assert.Equal(0, result.Skipped);
+        Assert.Equal(2, loaded.Count);
+        Assert.Contains(loaded, entry =>
+            entry.Source == "勇者"
+            && entry.Target == "브레이브"
+            && entry.ApplyMode == Models.UserDictionaryApplyMode.Prompting
+            && entry.IsEnabled);
+        Assert.Contains(loaded, entry =>
+            entry.Source == "魔王"
+            && entry.Target == "마왕"
+            && !entry.IsEnabled);
+    }
+
+    [Fact]
+    public void ImportProjectDictionary_ImportsSimpleSrsAndPersists()
+    {
+        var projectPath = Path.Combine(_rootPath, "Game");
+        Directory.CreateDirectory(projectPath);
+        var importPath = Path.Combine(_rootPath, "dictionary.simplesrs");
+        File.WriteAllText(
+            importPath,
+            """
+"強化剤"
+"강화제"
+""");
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(projectPath, [], [], service);
+
+        var result = viewModel.ImportProjectDictionary(importPath);
+        var loaded = service.LoadProject(projectPath);
+
+        Assert.Equal(1, result.Added);
+        Assert.Equal(0, result.Updated);
+        Assert.Single(loaded);
+        Assert.Equal("強化剤", loaded[0].Source);
+        Assert.Equal("강화제", loaded[0].Target);
+        Assert.Equal(Models.UserDictionaryApplyMode.Prompting, loaded[0].ApplyMode);
+        Assert.True(loaded[0].IsEnabled);
+    }
+
+    [Fact]
+    public void ExportGlobalDictionary_WritesCurrentEntries()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var exportPath = Path.Combine(_rootPath, "dictionary.etdict");
+        var service = new UserDictionaryService(Path.Combine(_rootPath, "AppData"));
+        var viewModel = new UserDictionaryViewModel(
+            Path.Combine(_rootPath, "Game"),
+            [new Models.UserDictionaryEntry { IsEnabled = true, Source = "勇者", Target = "용사" }],
+            [],
+            service);
+
+        viewModel.ExportGlobalDictionary(exportPath);
+
+        var text = File.ReadAllText(exportPath);
+        Assert.Contains("勇者\t용사\t치환\t사용", text, StringComparison.Ordinal);
     }
 }

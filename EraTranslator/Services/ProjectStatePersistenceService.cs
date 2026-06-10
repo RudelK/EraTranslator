@@ -47,6 +47,37 @@ public sealed class ProjectStatePersistenceService(
         _sqliteProjectStateStore.DeleteTranslationProgressItems(projectDataDirectory, segmentIds);
     }
 
+    public IReadOnlyList<GlossaryCacheEntry> LoadGlossaryCache(string projectDataDirectory)
+    {
+        EnsureMigrated(projectDataDirectory);
+        return _sqliteProjectStateStore.LoadGlossaryCache(projectDataDirectory);
+    }
+
+    public IReadOnlyList<GlossaryCacheEntry> LoadGlossaryCandidatesForOriginals(
+        string projectDataDirectory,
+        TranslationPhaseKind phase,
+        IReadOnlyList<string> originals,
+        int scopeVersion)
+    {
+        EnsureMigrated(projectDataDirectory);
+        return _sqliteProjectStateStore.LoadGlossaryCandidatesForOriginals(projectDataDirectory, phase, originals, scopeVersion);
+    }
+
+    public void UpsertGlossaryCacheEntries(string projectDataDirectory, IEnumerable<GlossaryCacheEntry> entries)
+    {
+        _sqliteProjectStateStore.UpsertGlossaryCacheEntries(projectDataDirectory, entries);
+    }
+
+    public void DeleteGlossaryCacheEntries(string projectDataDirectory, IEnumerable<string> segmentIds)
+    {
+        _sqliteProjectStateStore.DeleteGlossaryCacheEntries(projectDataDirectory, segmentIds);
+    }
+
+    public void ClearGlossaryCache(string projectDataDirectory)
+    {
+        _sqliteProjectStateStore.ClearGlossaryCache(projectDataDirectory);
+    }
+
     public void DeleteTranslationProgress(string projectDataDirectory)
     {
         _sqliteProjectStateStore.DeleteTranslationProgress(projectDataDirectory);

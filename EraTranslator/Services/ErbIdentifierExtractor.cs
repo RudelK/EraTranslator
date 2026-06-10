@@ -100,11 +100,28 @@ public sealed class ErbIdentifierExtractor
         {
             var line = lines[lineIndex];
             var sourceLine = line.TrimEnd('\r');
-            var trimmed = sourceLine.TrimStart();
             var lineNumber = lineIndex + 1;
+            if (ErbSyntaxCatalog.TryNormalizeSpecialCommentLine(sourceLine, out var specialCommentCodeLine))
+            {
+                sourceLine = specialCommentCodeLine;
+            }
+
+            var logicalLineLength = line.Length + 1;
+            while (ErbSyntaxCatalog.HasOpenBraceContinuation(sourceLine) && lineIndex + 1 < lines.Length)
+            {
+                lineIndex++;
+                var continuationLine = lines[lineIndex];
+                var continuationSourceLine = continuationLine.TrimEnd('\r');
+                continuationSourceLine = ErbSyntaxCatalog.NormalizeContinuationLine(continuationSourceLine);
+
+                sourceLine += "\n" + continuationSourceLine;
+                logicalLineLength += continuationLine.Length + 1;
+            }
+
+            var trimmed = sourceLine.TrimStart();
             if (trimmed.StartsWith(';'))
             {
-                absoluteOffset += line.Length + 1;
+                absoluteOffset += logicalLineLength;
                 continue;
             }
 
@@ -136,7 +153,7 @@ public sealed class ErbIdentifierExtractor
                 AddVariableReferenceTokens(documentId, codeLine, absoluteOffset, lineNumber, protectedRanges, results, seen, braceRange);
             }
 
-            absoluteOffset += line.Length + 1;
+            absoluteOffset += logicalLineLength;
         }
 
         return results
@@ -340,7 +357,9 @@ public sealed class ErbIdentifierExtractor
             return;
         }
 
-        var tokenEnd = assignmentIndex;
+        var tokenEnd = assignmentIndex > 0 && line[assignmentIndex - 1] == '\''
+            ? assignmentIndex - 1
+            : assignmentIndex;
         while (tokenEnd > 0 && char.IsWhiteSpace(line[tokenEnd - 1]))
         {
             tokenEnd--;
