@@ -3097,6 +3097,15 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
                 Model = "mimo-v2.5-pro";
                 RaisePropertyChanged(nameof(TranslationSettingsSummary));
                 break;
+            case TranslationProviderType.Ollama:
+                BaseUrl = "http://127.0.0.1:11434/v1";
+                if (string.IsNullOrWhiteSpace(Model) || Model == "local-model" || Model.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase))
+                {
+                    Model = "llama3.1";
+                }
+                ApplyLmStudioPresetIfEligible(Model, DisableThinking);
+                RaisePropertyChanged(nameof(TranslationSettingsSummary));
+                break;
             case TranslationProviderType.LmStudio:
                 BaseUrl = "http://127.0.0.1:1234/v1";
                 Model = "local-model";
@@ -3129,7 +3138,7 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
 
     private void ApplyLmStudioPresetIfEligible(string? previousModel, bool previousDisableThinking)
     {
-        if (SelectedProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
+        if (SelectedProviderType is not (TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -4229,6 +4238,12 @@ public sealed class MainWindowViewModel : BindableBase, IDisposable
         {
             ProviderType = TranslationProviderType.XiaomiMiMo,
             DisplayName = "Xiaomi MiMo API",
+            IsAvailable = true,
+        };
+        yield return new ProviderOption
+        {
+            ProviderType = TranslationProviderType.Ollama,
+            DisplayName = "Ollama",
             IsAvailable = true,
         };
         yield return new ProviderOption

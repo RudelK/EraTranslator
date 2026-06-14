@@ -695,6 +695,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public bool CanEditModel => SelectedProviderOption?.ProviderType is
         TranslationProviderType.OpenAi or
+        TranslationProviderType.Ollama or
         TranslationProviderType.XiaomiMiMo or
         TranslationProviderType.LmStudio or
         TranslationProviderType.Lemonade;
@@ -703,14 +704,16 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public bool SupportsThinkingToggle => SelectedProviderOption?.ProviderType is
         TranslationProviderType.OpenAi or
+        TranslationProviderType.Ollama or
         TranslationProviderType.XiaomiMiMo or
         TranslationProviderType.LmStudio or
         TranslationProviderType.Lemonade;
 
-    public bool SupportsAdvancedSampling => SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade or TranslationProviderType.XiaomiMiMo;
+    public bool SupportsAdvancedSampling => SelectedProviderOption?.ProviderType is TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade or TranslationProviderType.XiaomiMiMo;
 
     public bool UsesApiKey => SelectedProviderOption?.ProviderType is
         TranslationProviderType.OpenAi or
+        TranslationProviderType.Ollama or
         TranslationProviderType.XiaomiMiMo or
         TranslationProviderType.DeepLFree or
         TranslationProviderType.DeepLPro;
@@ -722,6 +725,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
     public string ProviderHelpText => SelectedProviderOption?.ProviderType switch
     {
         TranslationProviderType.OpenAi => "OpenAI 호환 `/models` 엔드포인트에서 모델 목록을 불러옵니다.",
+        TranslationProviderType.Ollama => BuildOllamaHelpText(),
         TranslationProviderType.XiaomiMiMo => BuildXiaomiMiMoHelpText(),
         TranslationProviderType.LmStudio => BuildLmStudioHelpText(),
         TranslationProviderType.Lemonade => BuildLemonadeHelpText(),
@@ -946,7 +950,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
         BundledDictionaryGlossaryMaxTermLength = 12;
         Seed = null;
 
-        if (SelectedProviderOption?.ProviderType is TranslationProviderType.LmStudio or TranslationProviderType.Lemonade)
+        if (SelectedProviderOption?.ProviderType is TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade)
         {
             ApplySelectedLmStudioPreset();
         }
@@ -987,6 +991,15 @@ public sealed class TranslationSettingsViewModel : BindableBase
                     Model = "mimo-v2.5-pro";
                 }
                 ApplyXiaomiMiMoDefaults();
+                ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
+                break;
+            case TranslationProviderType.Ollama:
+                BaseUrl = "http://127.0.0.1:11434/v1";
+                if (string.IsNullOrWhiteSpace(Model) || Model == "local-model" || Model.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase))
+                {
+                    Model = "llama3.1";
+                }
+                ApplyLmStudioPresetIfEligible(Model, DisableThinking);
                 ApplyPromptProfileIfEligible(_selectedPromptProfile, Model);
                 break;
             case TranslationProviderType.LmStudio:
@@ -1075,6 +1088,29 @@ public sealed class TranslationSettingsViewModel : BindableBase
             + LmStudioSamplingDefaults.BuildPresetSummary(SelectedLmStudioPresetProfile, Model, DisableThinking);
     }
 
+    private string BuildOllamaHelpText()
+    {
+        var family = LmStudioSamplingDefaults.DetectModelFamily(Model);
+        var presetLabel = LmStudioSamplingDefaults.GetPresetDisplayName(SelectedLmStudioPresetProfile);
+        var promptProfile = ResolvePromptProfile(Model, SelectedPromptProfile);
+        var promptProfileLabel = GetPromptProfileDisplayName(promptProfile);
+        var familyNote = family switch
+        {
+            LmStudioModelFamily.Qwen => "Qwen 계열은 Disable Thinking이 켜져 있으면 prompt fallback으로 thinking 억제를 요청합니다.",
+            LmStudioModelFamily.Gemma4E4B => "Gemma 4 E4B는 짧은 용어/라벨 정확도를 높이기 위한 전용 프롬프트 프로필과 보수적인 샘플링 권장값을 사용할 수 있습니다.",
+            LmStudioModelFamily.HyMt2 => "Hy-MT2 계열은 Hy-MT2 프롬프트 프로필과 max_tokens 권장값을 함께 사용할 수 있습니다.",
+            _ => "Ollama는 원격 PC의 OpenAI 호환 `/v1` 엔드포인트도 사용할 수 있습니다.",
+        };
+        return "Ollama는 OpenAI 호환 chat/completions를 사용합니다. "
+            + "JSON schema 응답을 먼저 시도하고, 서버/모델이 JSON 구조를 지키지 못하면 tokenized fallback으로 재시도합니다. "
+            + "API Key는 로컬 서버에서는 보통 필요 없고, 인증 프록시나 Ollama cloud를 쓸 때만 입력하세요. "
+            + $"현재 선택 프리셋: {presetLabel}. "
+            + $"현재 프롬프트 프로필: {promptProfileLabel}. "
+            + familyNote + " "
+            + "Ollama OpenAI 호환 요청에는 temperature, top_p, presence_penalty, seed, max_tokens를 보내며 top_k/repeat_penalty는 보내지 않습니다. "
+            + LmStudioSamplingDefaults.BuildPresetSummary(SelectedLmStudioPresetProfile, Model, DisableThinking);
+    }
+
     private string BuildXiaomiMiMoHelpText()
     {
         var modelNote = Model.Contains("mimo-v2-flash", StringComparison.OrdinalIgnoreCase)
@@ -1089,7 +1125,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     private void ApplyLmStudioPresetIfEligible(string? previousModel, bool previousDisableThinking)
     {
-        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -1115,7 +1151,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     public void ApplySelectedLmStudioPreset()
     {
-        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }
@@ -1260,7 +1296,7 @@ public sealed class TranslationSettingsViewModel : BindableBase
 
     private void ApplyPromptProfileIfEligible(PromptProfile previousProfile, string? previousModel)
     {
-        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.OpenAi or TranslationProviderType.XiaomiMiMo or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
+        if (SelectedProviderOption?.ProviderType is not (TranslationProviderType.OpenAi or TranslationProviderType.Ollama or TranslationProviderType.XiaomiMiMo or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade))
         {
             return;
         }

@@ -15,7 +15,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="220" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -322,6 +322,7 @@
                   ScrollViewer.CanContentScroll="True"
                   HeadersVisibility="Column"
                   GridLinesVisibility="Horizontal"
+                  RowHeight="28"
                   RowHeaderWidth="0"
                   SelectionMode="Single"
                   SelectionUnit="FullRow">
@@ -332,13 +333,36 @@
                 <DataGridTextColumn Width="90" Binding="{Binding EncodingName}" Header="인코딩" IsReadOnly="True" />
                 <DataGridTextColumn Width="120" Binding="{Binding SegmentType}" Header="추출 방식" IsReadOnly="True" />
                 <DataGridTextColumn Width="120" Binding="{Binding ReferenceResolutionStatus}" Header="참조 상태" IsReadOnly="True" />
-                <DataGridTextColumn Width="*" Binding="{Binding OriginalText}" Header="원문" IsReadOnly="True" />
+                <DataGridTemplateColumn Width="*" Header="원문" IsReadOnly="True">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding OriginalTextGridPreview}"
+                                       ToolTip="{Binding OriginalText}"
+                                       TextTrimming="CharacterEllipsis"
+                                       TextWrapping="NoWrap"
+                                       VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Width="*" Header="번역문">
                     <DataGridTextColumn.Binding>
                         <Binding Path="TranslatedText"
                                  Mode="TwoWay"
                                  UpdateSourceTrigger="LostFocus" />
                     </DataGridTextColumn.Binding>
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                            <Setter Property="TextWrapping" Value="NoWrap" />
+                            <Setter Property="VerticalAlignment" Value="Center" />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                    <DataGridTextColumn.EditingElementStyle>
+                        <Style TargetType="TextBox">
+                            <Setter Property="TextWrapping" Value="NoWrap" />
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                        </Style>
+                    </DataGridTextColumn.EditingElementStyle>
                 </DataGridTextColumn>
                 <DataGridTemplateColumn Width="160" Header="상태">
                     <DataGridTemplateColumn.CellTemplate>

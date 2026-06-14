@@ -589,7 +589,7 @@
                                        Grid.Column="0"
                                        Grid.ColumnSpan="2"
                                        Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. 로컬 모델 프리셋은 LM Studio와 Lemonade에서 공통으로 사용하며, 자동(모델 기준), Gemma 4, Gemma 4 E4B, Qwen 3.5 9B, TranslateGemma, Hy-MT2 7B, Hy-MT2 30B-A3B 중에서 고를 수 있습니다. 프리셋 적용을 누르면 샘플링 권장값이 즉시 반영됩니다. Qwen 계열은 모델별 preset과 max_tokens 안전장치를 함께 사용하며, Max Tokens를 비워두면 요청 크기에 맞춰 자동 계산합니다. Hy-MT2 30B-A3B는 모델 카드 권장값으로 Top K에 -1을 사용할 수 있습니다."
+                                       Text="배치 크기를 줄이면 응답 오류를 줄이는 데 도움이 됩니다. 로컬 모델 프리셋은 Ollama, LM Studio, Lemonade에서 공통으로 사용하며, 자동(모델 기준), Gemma 4, Gemma 4 E4B, Qwen 3.5 9B, TranslateGemma, Hy-MT2 7B, Hy-MT2 30B-A3B 중에서 고를 수 있습니다. 프리셋 적용을 누르면 샘플링 권장값이 즉시 반영됩니다. Qwen 계열은 모델별 preset과 max_tokens 안전장치를 함께 사용하며, Max Tokens를 비워두면 요청 크기에 맞춰 자동 계산합니다. Hy-MT2 30B-A3B는 모델 카드 권장값으로 Top K에 -1을 사용할 수 있습니다."
                                        TextWrapping="Wrap" />
                             </Grid>
                         </GroupBox>

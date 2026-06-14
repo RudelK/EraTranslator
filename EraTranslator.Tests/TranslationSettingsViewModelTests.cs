@@ -420,6 +420,21 @@ public sealed class TranslationSettingsViewModelTests
         Assert.Contains("mimo-v2-flash", viewModel.AvailableModels);
     }
 
+    [Fact]
+    public void OllamaProvider_AppliesLocalDefaultsAndSupportsModelCatalog()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProviderOption = viewModel.ProviderOptions.Single(option => option.ProviderType == TranslationProviderType.Ollama);
+
+        Assert.True(viewModel.CanEditModel);
+        Assert.True(viewModel.CanLoadModels);
+        Assert.True(viewModel.SupportsAdvancedSampling);
+        Assert.Equal("http://127.0.0.1:11434/v1", viewModel.BaseUrl);
+        Assert.Equal("llama3.1", viewModel.Model);
+        Assert.Contains("JSON schema", viewModel.ProviderHelpText, StringComparison.Ordinal);
+        Assert.Contains("tokenized fallback", viewModel.ProviderHelpText, StringComparison.Ordinal);
+    }
+
     private static TranslationSettingsViewModel CreateViewModel()
     {
         return new TranslationSettingsViewModel(
@@ -434,6 +449,12 @@ public sealed class TranslationSettingsViewModelTests
             {
                 ProviderType = TranslationProviderType.XiaomiMiMo,
                 DisplayName = "Xiaomi MiMo",
+                IsAvailable = true,
+            },
+            new ProviderOption
+            {
+                ProviderType = TranslationProviderType.Ollama,
+                DisplayName = "Ollama",
                 IsAvailable = true,
             },
             new ProviderOption

@@ -969,6 +969,54 @@ public sealed class TranslationProviderTests
     }
 
     [Fact]
+    public async Task OllamaProvider_TriesJsonSchemaThenTokenizedFallbackWithoutRequiredApiKey()
+    {
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            JsonResponse("""{"choices":[{"message":{"content":"not-json"}}]}"""),
+            JsonResponse("""{"choices":[{"message":{"content":"주인님"}}]}"""),
+        ]);
+        var capturedBodies = new List<string>();
+        var capturedAuthorizations = new List<string?>();
+        var factory = new FakeHttpClientFactory(request =>
+        {
+            capturedBodies.Add(request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty);
+            capturedAuthorizations.Add(request.Headers.Authorization?.ToString());
+            return responses.Dequeue();
+        });
+        var provider = new OpenAiCompatibleTranslationProvider(factory, TranslationProviderType.Ollama);
+
+        var result = await provider.TranslateAsync(
+            [new ProtectedSegment("id-1", "ご主人さま", "ご主人さま", [])],
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.Ollama,
+                BaseUrl = "http://192.168.0.25:11434/v1",
+                Model = "gemma3:4b",
+                SourceLanguage = "ja",
+                TargetLanguage = "ko",
+                TopP = 0.9,
+                TopK = 40,
+                RepeatPenalty = 1.1,
+                MaxTokens = 128,
+                DisableThinking = true,
+            },
+            CancellationToken.None);
+
+        Assert.Equal("주인님", result.Translations["id-1"]);
+        Assert.Equal(2, capturedBodies.Count);
+        Assert.All(capturedAuthorizations, Assert.Null);
+        Assert.Contains("\"response_format\"", capturedBodies[0], StringComparison.Ordinal);
+        Assert.Contains("\"json_schema\"", capturedBodies[0], StringComparison.Ordinal);
+        Assert.Contains("\"top_p\":0.9", capturedBodies[0], StringComparison.Ordinal);
+        Assert.Contains("\"max_tokens\":128", capturedBodies[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"top_k\"", capturedBodies[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"repeat_penalty\"", capturedBodies[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"response_format\"", capturedBodies[1], StringComparison.Ordinal);
+        Assert.Contains("Return only the translated text", capturedBodies[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LmStudioProvider_RejectsPromptLeakAndAsciiGarbage()
     {
         var factory = new FakeHttpClientFactory(_ => JsonResponse("""

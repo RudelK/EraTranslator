@@ -6,17 +6,33 @@
 - App: `EraTranslator/EraTranslator.csproj`
 - Tests: `EraTranslator.Tests/EraTranslator.Tests.csproj`
 - EzTransXP worker: `EraTranslator.EzTransWorker/EraTranslator.EzTransWorker.csproj`
-- Current app version: `0.7.2`
+- Current app version: `0.7.3`
+
+## 0.7.3 Release Handoff
+
+- Release focus: stop/resume reliability, blank-success-state hardening, provider enum/config compatibility, dedicated Ollama provider separation, and long/multiline source-text grid usability.
+- Team collaboration code still exists in the tree, but team-related main-window buttons/status remain hidden. Keep team collaboration out of `CHANGELOG.md` and public release notes until explicitly released.
+- The main grid intentionally shows one-line preview text for source/translation columns. Full source text stays available in the lower selected-item viewer, and source cells expose the full original as a tooltip.
+- Multiline source previews use `↵` as a visible line-break marker so rows whose original text starts with a newline do not look empty.
+- Cancellation of an in-flight provider batch must mark current batch rows `중지됨`; otherwise a same-process stop/start can leave rows in `번역 중` and skip them because `NeedsTranslation` intentionally excludes transient in-progress states.
+- Blank translated text must not remain in successful states (`번역 완료`, `검수 필요` with `통과`, or `수동 수정`). Keep runtime/manual-state normalization tests in place.
+- `TranslationProviderType` numeric values are persisted in existing config files. Keep explicit values stable; do not add provider-specific config repair heuristics unless requested.
+- `Ollama` remains a dedicated provider, not an OpenAI Base URL heuristic. It supports local and remote `/v1` endpoints and tries JSON schema once before tokenized fallback.
 
 ## 0.7.2 Release Handoff
 
-- Release focus: emuera/EM+EE syntax hardening, user dictionary import/export, SimpleSRS import defaults, glossary lookup performance, bundled Japanese lexicon glossary hints, and SQLite glossary cache migration safety.
+- Release focus: emuera/EM+EE syntax hardening, user dictionary import/export, SimpleSRS import defaults, glossary lookup performance, bundled Japanese lexicon glossary hints, SQLite glossary cache migration safety, blank-success-state hardening, and the dedicated Ollama provider.
 - Team collaboration code exists in the tree from the previous local commit, but team-related main-window buttons/status are hidden for this release. Keep team collaboration out of `CHANGELOG.md` and public release notes until the next version.
 - `CHANGELOG.md` for `0.7.2` intentionally excludes team server/client details.
 - SimpleSRS imports now create enabled `프롬프팅` dictionary entries by default.
 - Global user dictionary/config-adjacent user files now prefer the executable-local user settings location, with legacy migration kept.
 - Glossary cache uses project `state.db` rows with `scope_version`; existing DBs without the column should migrate before creating the `scope_version` index.
 - Automatic translation should no longer run a full project glossary refresh before provider calls. It should use per-batch DB lookup and incremental cache updates.
+- 2026-06-11 re-release keeps the version at `0.7.2`; the public notes now include the new `Ollama` provider and blank translation status fix.
+- `Ollama` is a dedicated provider, not an OpenAI Base URL heuristic. It supports remote PC base URLs such as `http://192.168.x.x:11434/v1`.
+- Ollama translation tries `json_schema` structured output first. If the response cannot be parsed/finalized, it falls back directly to `tokenized_fallback`.
+- Ollama request filtering intentionally sends OpenAI-compatible supported fields (`temperature`, `top_p`, `presence_penalty`, `seed`, `max_tokens`) and excludes LM Studio-only `top_k` / `repeat_penalty`.
+- `TranslationProviderType` numeric values are persisted in existing config files. Never insert new enum members before existing values; keep existing numeric assignments stable. `Ollama` is explicitly `8`.
 
 ## Current State
 
@@ -31,6 +47,7 @@
 - Translation reset now preserves excluded rows instead of clearing them back into the pending pool.
 - Scan-time and translation-time source-language filtering can auto-fill rows whose entire meaningful content is already in the target language, while still applying the normal translation post-processing/validation path.
 - Persisted completed/review/manual rows with blank translations are now converted back to a failure state during restore so stop/resume cannot leave empty successful rows behind.
+- Runtime state application and manual status changes also normalize blank successful states back to `번역 실패 / 빈 번역문`, so a blank row cannot remain visibly `번역 완료`.
 - Provider results with broken placeholder tokens such as missing/reordered `__PH0__` are now terminal `번역 실패` items, not saveable review items.
 - Dictionary-first translation is now available for short `ja -> ko` terms before LLM/provider calls, using bundled lexicon lookup, kana/kanji fallback, and optional Naver dictionary lookup.
 - The bundled Japanese lexicon is also available as low-priority LLM glossary hints for terms found inside the current batch text; this does not force direct replacement.
@@ -55,7 +72,7 @@
 
 ## Recent Major Changes
 
-- Bumped app version metadata and title display to `EraTranslator 0.7.2`.
+- Bumped app version metadata and title display to `EraTranslator 0.7.3`.
 - Added `CHANGELOG.md` and expanded `README.md` with release/workflow documentation.
 - Added parallel scanning, throttled scan progress, optimized scan-session SQLite saves, and index-based reference analysis.
 - Added `ERH` file support and `#DIM/#DIMS` string extraction.
@@ -96,6 +113,7 @@
 - Added `TranslateGemma` dedicated request mode using the model-specific message payload shape, single-item batching, and plain-text response handling.
 - Added `Lemonade` provider support with `/v1/models` model loading and provider-specific OpenAI-compatible parameter filtering.
 - Added `XiaomiMiMo` cloud provider support with static recommended model options, `thinking.type`, and `max_completion_tokens` request mapping.
+- Added a dedicated `Ollama` provider with `/v1/models` model loading, optional Bearer API key, remote base URL support, JSON schema first-pass validation, and tokenized fallback.
 - Added prompt-side glossary hint injection for OpenAI-compatible providers and batch-level overlap selection.
 - Added translation option reset buttons per tab, fixed decimal input handling for sampling fields, and changed result-state logging defaults to `false`.
 - Changed the default for `원문이 소스 언어가 아니면 자동 제외` / `ExcludeNonSourceText` to `true` for new configs and translation-option resets.
@@ -104,6 +122,7 @@
 - Split prompt composition into shared translation constraints plus format-specific rules to reduce duplicated instructions in system prompts.
 - Added confirmation dialogs before `번역 리셋` and `추출 리셋` so destructive resets require explicit user confirmation.
 - Tightened automatic translation validation so blank normalized output, Japanese leakage in `ja -> ko`, and unchanged Japanese-origin output such as kanji-only source echoes are marked as failures instead of successful translations.
+- Tightened item state invariants so blank translations cannot be manually or programmatically left in successful statuses.
 - Recalculated the top-right warning summary from current item state so translation reset clears review/failure counts immediately.
 - Added bundled Japanese lexicon snapshot assets and dictionary-first translation services for short `ja -> ko` terms before provider calls.
 - Added katakana transliteration fallback, kanji reading fallback, and optional Naver Japanese dictionary lookup with local persistence.
@@ -141,6 +160,9 @@
 - Changed team project selection so the combo box drives `TeamProjectId` by default, while manual project ID entry is explicitly opt-in.
 - Added tests for project context creation, team state persistence, source sync, scan manifest generation, team collaboration apply/submit, and repeated `TeamServerClient` project refresh calls.
 - Fixed the team server/client auth mental model: the WPF auth token field expects an API access token, while server-side project membership uses the user resolved from that token.
+- Fixed same-process translation stop/resume so cancelled in-flight rows are saved as `중지됨` and remain retryable.
+- Added one-line grid preview text for long source/translation cells and a fixed selected-item panel height to prevent long extracted originals from breaking the main layout.
+- Added visible `↵` markers for multiline source previews and full-original tooltips on source cells.
 
 ## Important Files
 
@@ -197,6 +219,10 @@
 - LM Studio tokenized fallback should inherit `SystemPromptTemplate` / `RetryPromptTemplate`; it no longer uses a separate hardcoded system prompt path.
 - `TranslateGemma` uses a dedicated payload path and enforces effective batch size `1`; glossary hints and user-editable prompt templates do not apply to that path.
 - `XiaomiMiMo` is treated as a cloud OpenAI-compatible provider with static recommended models instead of live model catalog loading.
+- `Ollama` is treated as its own OpenAI-compatible local/remote provider. Do not infer it from the base URL port in the `OpenAI API` provider.
+- Provider enum compatibility is release-critical because `AppConfigService` stores enum values numerically by default. Add explicit numeric-value tests whenever provider enum members change; do not add provider-specific config repair heuristics unless the user explicitly wants migration.
+- Ollama should prefer JSON schema once, then tokenized fallback. Do not add another JSON retry unless there is a measured need; the current decision keeps failure detection fast for weaker local models.
+- Ollama OpenAI-compatible requests should not include `top_k` or `repeat_penalty`; those are still valid for LM Studio/Lemonade paths where supported.
 - Lemonade should only receive parameters documented by the server; unsupported LM Studio-only fields such as `enable_thinking` or `json_schema` should not be sent there.
 - Generated folders such as `.codex-tmp/` and `release/` are local artifacts and should not be committed.
 - Files and folders listed in `.gitignore` are local-only by policy and must not be staged or committed.
@@ -219,7 +245,14 @@
 dotnet test .\EraTranslator.Tests\EraTranslator.Tests.csproj
 ```
 
-- Latest passing result in this thread: `501/501`.
+- Latest release validation for the 2026-06-14 `0.7.3` release:
+  - `dotnet test EraTranslator.Tests\EraTranslator.Tests.csproj -p:OutDir=D:\Work\EraTranslator\.test-out\` -> 554 passed
+  - `dotnet build EraTranslator\EraTranslator.csproj -c Debug` -> 0 warnings, 0 errors
+  - `dotnet build EraTranslator\EraTranslator.csproj -c Release` -> 0 warnings, 0 errors
+  - Rebuilt `release/EraTranslator-0.7.3/` and `release/EraTranslator-0.7.3.zip`; zip size 27,867,213 bytes.
+  - Release zip was checked for excluded `EraTranslator.config.json`, secrets, logs, PDBs, `UserSettings`, non-Windows runtimes, and x86/ARM runtime folders.
+
+- Latest passing result in this thread: `554/554`.
 - Latest debug app build in this thread:
 
 ```powershell

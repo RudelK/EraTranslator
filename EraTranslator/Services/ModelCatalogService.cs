@@ -14,7 +14,7 @@ public sealed class ModelCatalogService
 
     public bool SupportsModelCatalog(TranslationProviderType providerType)
     {
-        return providerType is TranslationProviderType.OpenAi or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade;
+        return providerType is TranslationProviderType.OpenAi or TranslationProviderType.Ollama or TranslationProviderType.LmStudio or TranslationProviderType.Lemonade;
     }
 
     public async Task<IReadOnlyList<string>> LoadModelsAsync(ProviderSettings settings, CancellationToken cancellationToken)
@@ -24,24 +24,26 @@ public sealed class ModelCatalogService
             throw new InvalidOperationException("현재 공급자는 모델 목록 조회를 지원하지 않습니다.");
         }
 
-        if (settings.ProviderType == TranslationProviderType.OpenAi && string.IsNullOrWhiteSpace(settings.ApiKey))
-        {
-            throw new InvalidOperationException("OpenAI API Key를 입력하세요.");
-        }
-
         var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
             ? settings.ProviderType switch
             {
                 TranslationProviderType.LmStudio => "http://127.0.0.1:1234/v1",
+                TranslationProviderType.Ollama => "http://127.0.0.1:11434/v1",
                 TranslationProviderType.Lemonade => "http://127.0.0.1:13305/v1",
                 _ => "https://api.openai.com/v1",
             }
             : settings.BaseUrl.TrimEnd('/');
+        if (settings.ProviderType == TranslationProviderType.OpenAi
+            && string.IsNullOrWhiteSpace(settings.ApiKey))
+        {
+            throw new InvalidOperationException("OpenAI API Key를 입력하세요.");
+        }
 
         var client = _httpClientFactory.CreateClient(nameof(ModelCatalogService));
         client.BaseAddress = new Uri($"{baseUrl}/");
 
-        if (settings.ProviderType == TranslationProviderType.OpenAi)
+        if (settings.ProviderType == TranslationProviderType.OpenAi
+            || (settings.ProviderType == TranslationProviderType.Ollama && !string.IsNullOrWhiteSpace(settings.ApiKey)))
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         }

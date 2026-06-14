@@ -4,6 +4,28 @@ namespace EraTranslator.Tests;
 
 public sealed class ExtractedTextItemTests
 {
+    [Theory]
+    [InlineData("\r\n隠身が行われている正面側への強路だ[SW]\n蚊を考えればまともに相手は出来ないか、被害を減らす接護くらいは出来るかも知れない[SW]", "↵ 隠身が行われている正面側への強路だ[SW] ↵ 蚊を考えればまともに相手は出来ないか、被害を減らす接護くらいは出来るかも知れない[SW]")]
+    [InlineData("   何かを選ぶスケルトン", "何かを選ぶスケルトン")]
+    [InlineData("\n\n", "↵")]
+    public void OriginalTextGridPreview_MakesMultilineOrIndentedTextVisibleInSingleLineGrid(string originalText, string expected)
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = originalText,
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        Assert.Equal(expected, item.OriginalTextGridPreview);
+    }
+
     [Fact]
     public void ApplyManualTranslationEdit_MarksItemAsManualAndSaveable()
     {
@@ -134,6 +156,59 @@ public sealed class ExtractedTextItemTests
         Assert.Equal("제외됨", item.Status);
         Assert.Equal("수동 제외", item.ValidationStatus);
         Assert.True(item.CanSave);
+        Assert.Equal(string.Empty, item.TranslatedText);
+    }
+
+    [Theory]
+    [InlineData("번역 완료")]
+    [InlineData("검수 필요")]
+    [InlineData("수동 수정")]
+    public void ApplyManualStatusOverride_BlankCompletedStateBecomesFailure(string status)
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        item.ApplyManualStatusOverride(status);
+
+        Assert.Equal("번역 실패", item.Status);
+        Assert.Equal("빈 번역문", item.ValidationStatus);
+        Assert.False(item.CanSave);
+        Assert.True(item.NeedsTranslation);
+        Assert.Equal(string.Empty, item.TranslatedText);
+    }
+
+    [Fact]
+    public void ApplyTranslationState_BlankCompletedStateBecomesFailure()
+    {
+        var item = new ExtractedTextItem
+        {
+            SegmentId = "doc:1",
+            DocumentId = "doc",
+            FileType = "ERB",
+            RelativePath = "A.ERB",
+            EncodingName = "utf-8",
+            SegmentType = "PRINT",
+            LineNumber = 1,
+            OriginalText = "원문",
+            CsvFieldRole = CsvFieldRole.TranslatableValue,
+        };
+
+        item.ApplyTranslationState("번역 완료", "통과", string.Empty, true, string.Empty);
+
+        Assert.Equal("번역 실패", item.Status);
+        Assert.Equal("빈 번역문", item.ValidationStatus);
+        Assert.False(item.CanSave);
+        Assert.True(item.NeedsTranslation);
         Assert.Equal(string.Empty, item.TranslatedText);
     }
 

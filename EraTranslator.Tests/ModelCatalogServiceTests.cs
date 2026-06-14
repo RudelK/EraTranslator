@@ -65,6 +65,39 @@ public sealed class ModelCatalogServiceTests
     }
 
     [Fact]
+    public async Task LoadModelsAsync_OllamaProviderAllowsRemoteBaseUrlWithoutApiKey()
+    {
+        Uri? capturedUri = null;
+        string? capturedAuthorization = null;
+        var service = new ModelCatalogService(new FakeHttpClientFactory(request =>
+        {
+            capturedUri = request.RequestUri;
+            capturedAuthorization = request.Headers.Authorization?.ToString();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+{
+  "data": [
+    { "id": "gemma3:4b" },
+    { "id": "qwen3:8b" }
+  ]
+}
+""", Encoding.UTF8, "application/json"),
+            };
+        }));
+
+        var models = await service.LoadModelsAsync(new ProviderSettings
+        {
+            ProviderType = TranslationProviderType.Ollama,
+            BaseUrl = "http://192.168.0.25:11434/v1",
+        }, CancellationToken.None);
+
+        Assert.Equal(["gemma3:4b", "qwen3:8b"], models);
+        Assert.Equal("http://192.168.0.25:11434/v1/models", capturedUri?.ToString());
+        Assert.Null(capturedAuthorization);
+    }
+
+    [Fact]
     public async Task LoadModelsAsync_RejectsUnsupportedProviders()
     {
         var service = new ModelCatalogService();

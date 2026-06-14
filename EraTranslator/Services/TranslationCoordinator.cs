@@ -515,13 +515,7 @@ public sealed class TranslationCoordinator : IDisposable
                     var changedItems = new List<ExtractedTextItem>();
                     foreach (var item in currentBatch)
                     {
-                        changedItems.AddRange(ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem =>
-                        {
-                            if (groupItem.NeedsTranslation)
-                            {
-                                groupItem.MarkStopped();
-                            }
-                        }));
+                        changedItems.AddRange(ApplyToGroup(activeGroupedByOriginal, item.OriginalText, static groupItem => groupItem.MarkStopped()));
                     }
 
                     PersistChangedItems(persistState, changedItems);
@@ -946,6 +940,7 @@ public sealed class TranslationCoordinator : IDisposable
     private static bool SupportsPromptingDictionary(TranslationProviderType providerType)
     {
         return providerType is TranslationProviderType.OpenAi
+            or TranslationProviderType.Ollama
             or TranslationProviderType.XiaomiMiMo
             or TranslationProviderType.LmStudio
             or TranslationProviderType.Lemonade;

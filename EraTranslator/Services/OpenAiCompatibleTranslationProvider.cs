@@ -24,6 +24,7 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
 
     private bool IsLmStudio => _providerType == TranslationProviderType.LmStudio;
     private bool IsLemonade => _providerType == TranslationProviderType.Lemonade;
+    private bool IsOllama => _providerType == TranslationProviderType.Ollama;
     private bool IsXiaomiMiMo => _providerType == TranslationProviderType.XiaomiMiMo;
     private bool IsOpenAi => _providerType == TranslationProviderType.OpenAi;
 
@@ -44,33 +45,35 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             return result;
         }
 
-        if (IsOpenAi && string.IsNullOrWhiteSpace(settings.ApiKey))
-        {
-            throw new TranslationProviderException(TranslationErrorKind.Configuration, "OpenAI API Key를 입력하세요.");
-        }
-
         var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
             ? _providerType switch
             {
+                TranslationProviderType.Ollama => "http://127.0.0.1:11434/v1",
                 TranslationProviderType.LmStudio => "http://127.0.0.1:1234/v1",
                 TranslationProviderType.XiaomiMiMo => "https://api.xiaomimimo.com/v1",
                 TranslationProviderType.Lemonade => "http://127.0.0.1:13305/v1",
                 _ => "https://api.openai.com/v1",
             }
             : settings.BaseUrl.TrimEnd('/');
+        if (IsOpenAi && string.IsNullOrWhiteSpace(settings.ApiKey))
+        {
+            throw new TranslationProviderException(TranslationErrorKind.Configuration, "OpenAI API Key를 입력하세요.");
+        }
+
         var model = string.IsNullOrWhiteSpace(settings.Model)
-            ? (IsOpenAi ? "gpt-4o-mini" : IsXiaomiMiMo ? "mimo-v2.5-pro" : "local-model")
+            ? (IsOpenAi ? "gpt-4o-mini" : IsXiaomiMiMo ? "mimo-v2.5-pro" : IsOllama ? "llama3.1" : "local-model")
             : settings.Model;
 
         var client = httpClientFactory.CreateClient(nameof(OpenAiCompatibleTranslationProvider));
         client.BaseAddress = new Uri($"{baseUrl}/");
-        if (IsOpenAi || IsXiaomiMiMo)
+        if (IsOpenAi || IsXiaomiMiMo || (IsOllama && !string.IsNullOrWhiteSpace(settings.ApiKey)))
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         }
 
         var providerName = _providerType switch
         {
+            TranslationProviderType.Ollama => "Ollama",
             TranslationProviderType.LmStudio => "LM Studio",
             TranslationProviderType.XiaomiMiMo => "Xiaomi MiMo",
             TranslationProviderType.Lemonade => "Lemonade",
@@ -91,6 +94,11 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
         if (IsXiaomiMiMo)
         {
             return await TranslateXiaomiMiMoAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
+        }
+
+        if (IsOllama)
+        {
+            return await TranslateOllamaAsync(client, model, settings, requests, cancellationToken, providerName, endpoint, glossaryHints);
         }
 
         return
@@ -116,7 +124,9 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             allowApiThinkingControl: false,
             glossaryHints: glossaryHints,
             allowPresencePenalty: true,
-            allowSeed: true);
+            allowSeed: true,
+            allowTopK: false,
+            allowRepeatPenalty: false);
         var content = await SendChatRequestAsync(
             client,
             requestPayload,
@@ -160,6 +170,60 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
         }
 
         return BuildResult(parsed, requests);
+    }
+
+    private async Task<TranslationProviderResult> TranslateOllamaAsync(
+        HttpClient client,
+        string model,
+        ProviderSettings settings,
+        IReadOnlyList<ProtectedSegment> requests,
+        CancellationToken cancellationToken,
+        string providerName,
+        string endpoint,
+        IReadOnlyList<GlossaryHint>? glossaryHints)
+    {
+        var attempts = new[]
+        {
+            ResponseMode.JsonSchema,
+            ResponseMode.TokenizedFallback,
+        };
+
+        TranslationProviderException? lastException = null;
+
+        for (var index = 0; index < attempts.Length; index++)
+        {
+            try
+            {
+                var parsed = await TranslateWithModeAsync(
+                    client,
+                    model,
+                    settings,
+                    requests,
+                    attempts[index],
+                    cancellationToken,
+                    providerName,
+                    endpoint,
+                    parseFailureKind: attempts[index] == ResponseMode.TokenizedFallback
+                        ? TranslationErrorKind.Validation
+                        : TranslationErrorKind.Json,
+                    glossaryHints,
+                    includeAdvancedSamplingParameters: true,
+                    allowApiThinkingControl: false,
+                    allowPresencePenalty: true,
+                    allowSeed: true);
+                return BuildResult(parsed, requests);
+            }
+            catch (TranslationProviderException ex) when (index < attempts.Length - 1)
+            {
+                lastException = ex;
+                requestResponseLogger?.LogError(
+                    providerName,
+                    endpoint,
+                    $"응답 모드 {GetResponseModeLabel(attempts[index])} 실패: {ex.Message}. 다음 모드 {GetResponseModeLabel(attempts[index + 1])}로 재시도합니다.");
+            }
+        }
+
+        throw lastException ?? new TranslationProviderException(TranslationErrorKind.Json, "Ollama 응답을 처리하지 못했습니다.");
     }
 
     private async Task<TranslationProviderResult> TranslateLmStudioAsync(
@@ -453,7 +517,9 @@ public sealed partial class OpenAiCompatibleTranslationProvider(
             allowApiThinkingControl: allowApiThinkingControl ?? IsLmStudio,
             glossaryHints: glossaryHints,
             allowPresencePenalty: allowPresencePenalty ?? true,
-            allowSeed: allowSeed ?? true);
+            allowSeed: allowSeed ?? true,
+            allowTopK: _providerType != TranslationProviderType.Ollama,
+            allowRepeatPenalty: _providerType != TranslationProviderType.Ollama);
         var content = await SendChatRequestAsync(
             client,
             requestPayload,

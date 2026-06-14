@@ -25,9 +25,9 @@ Emuera 게임의 `ERB`, `ERH`, `ERA`, `CSV`, `CVS`, `ERD` 파일을 스캔해 �
 
 ### 번역 작업
 
-- OpenAI 호환 API, Xiaomi MiMo API, LM Studio, Lemonade, DeepL, Papago, EzTransXP 번역을 지원합니다.
+- OpenAI 호환 API, Ollama, Xiaomi MiMo API, LM Studio, Lemonade, DeepL, Papago, EzTransXP 번역을 지원합니다.
 - LM Studio는 `json_schema` structured output 우선, 보수적 재시도, tokenized fallback 순서로 동작해 로컬 모델의 JSON 안정성을 높입니다.
-- LM Studio와 Lemonade에서는 Gemma 4, Qwen 3.5 9B, TranslateGemma, Hy-MT2 7B/30B-A3B 같은 로컬 모델에 맞춘 샘플링 프리셋을 지원합니다.
+- Ollama, LM Studio, Lemonade에서는 Gemma 4, Qwen 3.5 9B, TranslateGemma, Hy-MT2 7B/30B-A3B 같은 로컬 모델에 맞춘 샘플링 프리셋을 지원합니다.
 - OpenAI 호환 공급자에서는 `기본`, `Hy-MT2` 프롬프트 프로필과 모델명 기반 자동 선택을 지원합니다.
 - `ja -> ko`에서는 짧은 용어를 먼저 내장 일본어 사전, 카타카나/한자 음독 fallback, 선택적 네이버 일본어 사전 조회로 처리하는 사전 우선 번역을 지원합니다.
 - 사전 우선 번역은 짧은 용어, 이름, 키 성격 항목에 우선 적용되고, 문장형 항목은 기존 자동 번역 흐름으로 이어집니다.
@@ -108,8 +108,8 @@ Emuera 게임의 `ERB`, `ERH`, `ERA`, `CSV`, `CVS`, `ERD` 파일을 스캔해 �
 - `번역 리셋`: 번역문과 번역 진행 상태를 초기화합니다. 실행 전 확인창이 표시됩니다.
 - `추출 리셋`: 스캔 결과와 진행 상태를 초기화해 처음부터 다시 추출할 수 있게 합니다. 실행 전 확인창이 표시됩니다.
 - `중지`: 진행 중인 번역이나 긴 작업을 중단합니다.
-- `번역 설정...`: OpenAI 호환 API, Xiaomi MiMo API, LM Studio, Lemonade, DeepL, Papago, EzTransXP 같은 번역 공급자와 옵션을 설정합니다.
-- `번역 설정...`에서는 OpenAI 호환 공급자용 프롬프트 프로필과, LM Studio/Lemonade용 `자동`, `Gemma 4`, `Qwen 3.5 9B`, `TranslateGemma`, `Hy-MT2 7B`, `Hy-MT2 30B-A3B` 프리셋을 고르고 샘플링 값을 적용하거나 탭별 기본값으로 재설정할 수 있습니다.
+- `번역 설정...`: OpenAI 호환 API, Ollama, Xiaomi MiMo API, LM Studio, Lemonade, DeepL, Papago, EzTransXP 같은 번역 공급자와 옵션을 설정합니다.
+- `번역 설정...`에서는 OpenAI 호환 공급자용 프롬프트 프로필과, Ollama/LM Studio/Lemonade용 `자동`, `Gemma 4`, `Qwen 3.5 9B`, `TranslateGemma`, `Hy-MT2 7B`, `Hy-MT2 30B-A3B` 프리셋을 고르고 샘플링 값을 적용하거나 탭별 기본값으로 재설정할 수 있습니다.
 - `번역 설정...`에서는 사전 우선 번역, 카타카나 음독 fallback, 한자 음독 fallback, 네이버 일본어 사전 조회, 사전 우선 최대 길이, 사전 적중 로그 같은 옵션도 조절할 수 있습니다.
 - `사용자 사전...`: 번역에 반영할 전역/프로젝트 사용자 사전 항목, 적용 방식, 전각 보호 문자 목록을 관리합니다.
 
@@ -121,10 +121,11 @@ Emuera 게임의 `ERB`, `ERH`, `ERA`, `CSV`, `CVS`, `ERD` 파일을 스캔해 �
 - `실시간 갱신`: 번역문을 수정할 때 현재 필터 결과를 즉시 다시 계산합니다. 대량 검토 중 그리드 위치를 유지하고 싶으면 끄는 편이 편합니다.
 - `갱신`: 현재 필터 조건을 다시 적용해 목록을 새로 고칩니다.
 - `조사처리`: 번역문 안의 한국어 조사 후보를 문맥에 맞게 정리합니다.
+- 원문/번역문 목록은 긴 텍스트를 한 줄 미리보기로 표시합니다. 멀티라인 원문은 `↵` 표시로 줄바꿈이 있음을 알리고, 전체 내용은 하단 `선택 항목 보기` 또는 원문 셀 툴팁에서 확인할 수 있습니다.
 
 ## 현재 버전
 
-- `0.7.2`
+- `0.7.3`
 
 ## 변경 이력
 

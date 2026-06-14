@@ -95,6 +95,48 @@ public sealed class TranslationCoordinatorTests
     }
 
     [Fact]
+    public async Task TranslateAsync_CancellationMarksInFlightItemsStoppedAndRetryable()
+    {
+        using var cancellationTokenSource = new CancellationTokenSource();
+        var provider = new CancellingProvider(() => cancellationTokenSource.Cancel());
+        var coordinator = new TranslationCoordinator(new FakeTranslationProviderFactory(provider));
+        var items = new[]
+        {
+            BuildItem("id-1", "첫째"),
+            BuildItem("id-2", "둘째"),
+        };
+        var persistedBatches = new List<IReadOnlyList<ExtractedTextItem>>();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => coordinator.TranslateAsync(
+            items,
+            new ProviderSettings
+            {
+                ProviderType = TranslationProviderType.OpenAi,
+                BatchSize = 2,
+                RetryCount = 0,
+                ApiKey = "test",
+                TargetLanguage = "ko",
+                EnableBundledDictionaryFirstPass = false,
+                EnableKanaTransliterationFallback = false,
+                EnableKanjiReadingFallback = false,
+            },
+            [],
+            new Progress<(double value, string status, string detail)>(),
+            changedItems => persistedBatches.Add(changedItems.ToList()),
+            cancellationTokenSource.Token));
+
+        Assert.Equal(["id-1", "id-2"], provider.RequestHistory[0]);
+        Assert.All(items, item =>
+        {
+            Assert.Equal("중지됨", item.Status);
+            Assert.True(item.NeedsTranslation);
+        });
+
+        var persistedBatch = Assert.Single(persistedBatches);
+        Assert.Equal(["id-1", "id-2"], persistedBatch.Select(item => item.SegmentId).OrderBy(id => id, StringComparer.Ordinal).ToList());
+    }
+
+    [Fact]
     public async Task TranslateAsync_ReusesSameTranslationForDuplicateOriginalText()
     {
         var provider = new SequencedProvider(
@@ -1145,6 +1187,23 @@ public sealed class TranslationCoordinatorTests
             GlossaryHistory.Add((glossaryHints ?? []).ToList());
             var step = _steps.Dequeue();
             return Task.FromResult(step(requests));
+        }
+    }
+
+    private sealed class CancellingProvider(Action cancel) : ITranslationProvider
+    {
+        public List<IReadOnlyList<string>> RequestHistory { get; } = [];
+
+        public Task<TranslationProviderResult> TranslateAsync(
+            IReadOnlyList<ProtectedSegment> requests,
+            ProviderSettings settings,
+            CancellationToken cancellationToken,
+            IReadOnlyList<GlossaryHint>? glossaryHints = null)
+        {
+            RequestHistory.Add(requests.Select(request => request.Id).ToList());
+            cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new TranslationProviderResult());
         }
     }
 

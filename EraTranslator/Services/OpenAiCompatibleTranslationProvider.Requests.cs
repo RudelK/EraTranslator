@@ -31,7 +31,9 @@ public sealed partial class OpenAiCompatibleTranslationProvider
         bool allowApiThinkingControl,
         IReadOnlyList<GlossaryHint>? glossaryHints,
         bool allowPresencePenalty = true,
-        bool allowSeed = true)
+        bool allowSeed = true,
+        bool allowTopK = true,
+        bool allowRepeatPenalty = true)
     {
         if (responseMode == ResponseMode.TranslateGemmaDedicated)
         {
@@ -74,12 +76,12 @@ public sealed partial class OpenAiCompatibleTranslationProvider
                 payload["top_p"] = settings.TopP.Value;
             }
 
-            if (settings.TopK.HasValue)
+            if (allowTopK && settings.TopK.HasValue)
             {
                 payload["top_k"] = settings.TopK.Value;
             }
 
-            if (settings.RepeatPenalty.HasValue)
+            if (allowRepeatPenalty && settings.RepeatPenalty.HasValue)
             {
                 payload["repeat_penalty"] = settings.RepeatPenalty.Value;
             }

@@ -50,6 +50,38 @@ public sealed class AppConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public void TranslationProviderType_NumericValuesStayCompatibleWithExistingConfigs()
+    {
+        Assert.Equal(0, (int)TranslationProviderType.OpenAi);
+        Assert.Equal(1, (int)TranslationProviderType.XiaomiMiMo);
+        Assert.Equal(2, (int)TranslationProviderType.LmStudio);
+        Assert.Equal(3, (int)TranslationProviderType.Lemonade);
+        Assert.Equal(8, (int)TranslationProviderType.Ollama);
+    }
+
+    [Fact]
+    public void Load_PreservesLegacyNumericLmStudioProviderAfterOllamaAddition()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var service = new AppConfigService(_rootPath);
+        File.WriteAllText(
+            service.ConfigPath,
+            """
+            {
+              "ProviderType": 2,
+              "BaseUrl": "http://127.0.0.1:1234/v1",
+              "Model": "gemma"
+            }
+            """);
+
+        var actual = service.Load();
+
+        Assert.Equal(TranslationProviderType.LmStudio, actual.ProviderType);
+        Assert.Equal("http://127.0.0.1:1234/v1", actual.BaseUrl);
+        Assert.Equal("gemma", actual.Model);
+    }
+
+    [Fact]
     public void Load_UpgradesLegacyDefaultProtectedCharacters()
     {
         Directory.CreateDirectory(_rootPath);

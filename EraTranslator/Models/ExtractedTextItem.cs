@@ -58,8 +58,18 @@ public sealed class ExtractedTextItem : BindableBase
     public string TranslatedText
     {
         get => _translatedText;
-        set => SetProperty(ref _translatedText, value);
+        set
+        {
+            if (SetProperty(ref _translatedText, value))
+            {
+                RaisePropertyChanged(nameof(TranslatedTextGridPreview));
+            }
+        }
     }
+
+    public string OriginalTextGridPreview => FormatGridPreviewText(OriginalText);
+
+    public string TranslatedTextGridPreview => FormatGridPreviewText(_translatedText);
 
     public string Status
     {
@@ -291,6 +301,7 @@ public sealed class ExtractedTextItem : BindableBase
                 return;
         }
 
+        NormalizeBlankCompletedState();
         RaiseStateChangedProperties();
         _manualStatusOverrideVersion++;
         RaisePropertyChanged(nameof(ManualStatusOverrideVersion));
@@ -309,6 +320,7 @@ public sealed class ExtractedTextItem : BindableBase
         _translationSource = string.Empty;
         _canSave = canSave;
         _translatedText = translatedText ?? string.Empty;
+        NormalizeBlankCompletedState();
         RaiseStateChangedProperties();
     }
 
@@ -393,9 +405,61 @@ public sealed class ExtractedTextItem : BindableBase
             : status;
     }
 
+    private void NormalizeBlankCompletedState()
+    {
+        if (!RequiresNonBlankTranslation(_status, _validationStatus)
+            || !string.IsNullOrWhiteSpace(_translatedText))
+        {
+            return;
+        }
+
+        _translatedText = string.Empty;
+        _status = "번역 실패";
+        _validationStatus = "빈 번역문";
+        _translationError = "번역문이 비어 있어 완료 상태로 표시할 수 없습니다.";
+        _translationSource = string.Empty;
+        _canSave = false;
+    }
+
+    private static bool RequiresNonBlankTranslation(string status, string validationStatus)
+    {
+        return string.Equals(status, "번역 완료", StringComparison.Ordinal)
+            || string.Equals(status, "수동 수정", StringComparison.Ordinal)
+            || (string.Equals(status, "검수 필요", StringComparison.Ordinal)
+                && string.Equals(validationStatus, "통과", StringComparison.Ordinal));
+    }
+
+    private static string FormatGridPreviewText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Replace('\t', ' ');
+        var startsWithLineBreak = normalized.StartsWith('\n');
+        var lines = normalized
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.Length > 0)
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            return normalized.Contains('\n') ? "↵" : normalized.Trim();
+        }
+
+        var preview = string.Join(" ↵ ", lines);
+        return startsWithLineBreak ? $"↵ {preview}" : preview;
+    }
+
     private void RaiseStateChangedProperties()
     {
         RaisePropertyChanged(nameof(TranslatedText));
+        RaisePropertyChanged(nameof(TranslatedTextGridPreview));
         RaisePropertyChanged(nameof(Status));
         RaisePropertyChanged(nameof(TranslationError));
         RaisePropertyChanged(nameof(TranslationSource));
